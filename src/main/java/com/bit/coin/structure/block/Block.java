@@ -1,13 +1,154 @@
 package com.bit.coin.structure.block;
 
-
+import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.TxOutput;
+import com.bit.coin.structure.tx.UTXO;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import lombok.Data;
-import org.bitcoinj.core.Transaction;
+import org.bitcoinj.core.TransactionOutput;
+import tools.jackson.databind.annotation.JsonSerialize;
 
+
+import java.io.*;
+import java.util.ArrayList;
 import java.util.List;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
+
+@JsonPropertyOrder({
+        "hash",           // 区块哈希
+        "height",         // 区块高度
+        "blockHeader",    // 区块头
+        "transactions"    // 交易列表
+})
 @Data
 public class Block {
+    //非核心不参与序列化
+    @JsonSerialize(using = HexByteArraySerializer.class)
+    private byte[] hash;
+    private int height;
+    @JsonIgnore
+    private int size;
+    //核心
+    @JsonUnwrapped//输出json时去掉类属性
     private BlockHeader blockHeader;
     private List<Transaction> transactions;
+
+
+    public byte[] getHash(){
+        if (hash==null){
+            hash = blockHeader.calculateHash();
+        }
+        return hash;
+    }
+
+
+    //获取区块中全部的交易输出
+    @JsonIgnore
+    public List<UTXO> getUTXOs(){
+        List<UTXO> utxos = new ArrayList<>();
+        for (Transaction tx : transactions) {
+            for (int i = 0; i < tx.getOutputs().size(); i++) {
+                boolean coinbase = tx.isCoinbase();
+                TxOutput txOutput = tx.getOutputs().get(i);
+                UTXO utxo = new UTXO();
+                utxo.setCoinbase(coinbase);
+                utxo.setTxId(tx.getTxId());
+                utxo.setHeight(height);
+                utxo.setValue(txOutput.getValue());
+                utxo.setScript(txOutput.getScriptPubKey());
+                utxos.add(utxo);
+            }
+        }
+        return utxos;
+    }
+
+
+
+
+
+    //序列化反序列化
+    /**
+     * 序列化 Block 对象为字节数组
+     */
+    public byte[] serialize()  {
+        try{
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            // 序列化 BlockHeader
+            byte[] headerBytes = blockHeader.serialize();
+            dos.write(headerBytes);
+
+            // 序列化 Transaction 列表
+            dos.writeInt(transactions != null ? transactions.size() : 0);
+            if (transactions != null && !transactions.isEmpty()) {
+                for (Transaction tx : transactions) {
+                    byte[] txBytes = tx.serialize();
+                    dos.writeInt(txBytes.length);
+                    dos.write(txBytes);
+                }
+            }
+
+            dos.flush();
+            byte[] result = baos.toByteArray();
+            dos.close();
+            baos.close();
+
+            return result;
+        }catch (Exception e){
+            throw new  IllegalArgumentException("区块序列化失败",e);
+        }
+    }
+
+    /**
+     * 从字节数组反序列化为 Block 对象
+     */
+    public static Block deserialize(byte[] data)  {
+        try {
+            if (data == null || data.length == 0) {
+                return null;
+            }
+
+            ByteArrayInputStream bais = new ByteArrayInputStream(data);
+            DataInputStream dis = new DataInputStream(bais);
+            Block block = new Block();
+
+            try {
+                // 反序列化 BlockHeader
+                byte[] headerBytes = new byte[80];
+                dis.readFully(headerBytes);
+                block.setBlockHeader(BlockHeader.deserialize(headerBytes));
+
+                // 反序列化 Transaction 列表
+                int txCount = dis.readInt();
+                if (txCount > 0) {
+                    List<Transaction> txList = new ArrayList<>(txCount);
+                    for (int i = 0; i < txCount; i++) {
+                        int txLength = dis.readInt();
+                        byte[] txBytes = new byte[txLength];
+                        dis.readFully(txBytes);
+                        Transaction tx = Transaction.deserialize(txBytes);
+                        txList.add(tx);
+                    }
+                    block.setTransactions(txList);
+                } else {
+                    block.setTransactions(new ArrayList<>());
+                }
+
+            } finally {
+                dis.close();
+                bais.close();
+            }
+            return block;
+        }catch (Exception e){
+            throw new IllegalArgumentException("区块反序列化失败");
+        }
+    }
+
+
+
 }

@@ -1,1 +1,0 @@
-使用编译  protoc --proto_path=. --java_out=. structure.proto

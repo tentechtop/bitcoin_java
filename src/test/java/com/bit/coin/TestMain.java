@@ -1,4 +1,4 @@
-package com.bit.coin.structure;
+package com.bit.coin;
 
 
 import org.bitcoinj.core.*;
@@ -8,17 +8,18 @@ import org.bitcoinj.script.Script;
 import org.bitcoinj.script.ScriptBuilder;
 import org.bouncycastle.util.encoders.Hex;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
 
 public class TestMain {
 
     //main
     public static void main(String[] args) throws IOException {
+
+        NetworkParameters params = TestNet3Params.get(); // 使用测试网络
+
+        System.out.println("=== 区块创建与哈希计算测试 ===\n");
+
+
         // 选择网络参数：主网（MainNetParams）/ 测试网（TestNet3Params）
         NetworkParameters NET_PARAMS = MainNetParams.get(); // 测试网更适合开发调试
 

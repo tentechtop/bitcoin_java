@@ -5,6 +5,7 @@ import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.script.ScriptBuilder;
+import org.bitcoinj.script.ScriptOpCodes;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,9 +21,16 @@ public class P2PKHScriptExample {
         System.out.println("私钥(WIF): " + key.getPrivateKeyAsWiF(params));
         System.out.println("公钥(HEX): " + Utils.HEX.encode(key.getPubKey()));
 
+
+
+        System.out.println("私钥(WIF)长度: " + key.getPrivKey());
+        System.out.println("公钥(HEX)长度: " + key.getPubKey().length);
+
+
         // 2. 创建P2PKH锁定脚本
         Address address = LegacyAddress.fromKey(params, key);
         Script lockingScript = ScriptBuilder.createOutputScript(address);
+
 
         System.out.println("\n=== 锁定脚本 (scriptPubKey) ===");
         System.out.println("地址: " + address);
@@ -75,6 +83,10 @@ public class P2PKHScriptExample {
                 false
         );
 
+        byte[] bytes = txSig.encodeToBitcoin();
+        System.out.println("数组长度{}"+bytes.length);
+        byte[] pubKey = key.getPubKey();
+
         // 7. 创建解锁脚本 (包含签名和公钥)
         Script unlockingScript = new ScriptBuilder()
                 .data(txSig.encodeToBitcoin())
@@ -116,5 +128,10 @@ public class P2PKHScriptExample {
             System.err.println("❌ 脚本验证失败: " + e.getMessage());
             e.printStackTrace();
         }
+
+
+
     }
+
+
 }

@@ -1,0 +1,48 @@
+package com.bit.coin.api;
+
+import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.structure.block.Block;
+import com.bit.coin.structure.block.BlockHeader;
+import com.bit.coin.structure.tx.Transaction;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
+
+@Slf4j
+@RestController
+@RequestMapping("/chain")
+public class ChainApi {
+
+    @Autowired
+    private BlockChainServiceImpl blockChainService;
+
+    /**
+     * 根据Hash查询区块
+     */
+    @GetMapping("/getBlockByHash")
+    public Block getBlockByHash(String hash) {
+        Block block = blockChainService.getBlockByHash(hexToBytes(hash));
+        return block;
+    }
+
+    @GetMapping("/getBlockHeaderByHash")
+    public BlockHeader getBlockHeaderByHash(String hash) {
+        BlockHeader block = blockChainService.getBlockHeaderByHash(hexToBytes(hash));
+        return block;
+    }
+
+
+    /**
+     * 根据Hash查询区块
+     */
+    @GetMapping("/getTxByHash")
+    public Transaction getTxByHash(String hash) {
+        Transaction tx = blockChainService.getTxByHash(hexToBytes(hash));
+        return tx;
+    }
+
+}
