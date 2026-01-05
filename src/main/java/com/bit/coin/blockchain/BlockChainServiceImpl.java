@@ -48,8 +48,6 @@ public class BlockChainServiceImpl {
     //主链顶端Hash
     public static final byte[] MAIN_CHAIN_TIP_HASH_KEY = "MAIN_CHAIN_TIP_HASH_KEY".getBytes(StandardCharsets.UTF_8);
 
-
-
     @PostConstruct
     public void init() {
         dataBase = config.getDataBase();
@@ -132,6 +130,24 @@ public class BlockChainServiceImpl {
             log.info("创世区块Hash{}",bytesToHex(deserialize.getHash()));
         }
     }
+
+
+    //验证区块
+    public boolean verifyBlock(Block block) {
+
+
+        return true;
+    }
+
+
+
+
+
+
+
+
+
+
 
     public static Block createGenesisBlock() {
         Transaction coinbaseTx = createGenesisCoinbaseTransaction();
