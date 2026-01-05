@@ -38,10 +38,13 @@ public class Block {
     private BlockHeader blockHeader;
     //交易数量
     private int txCount;
+
+
     private List<Transaction> transactions;
 
     @JsonIgnore
     private long medianTime;
+
     @JsonIgnore
     private long chainWork;
 

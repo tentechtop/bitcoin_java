@@ -41,6 +41,9 @@ public class BlockChainServiceImpl {
     @Autowired
     private DataBase dataBase;
 
+    private static volatile Block mainTipBlock = null;
+
+
     //主链顶端高度 key
     public static final byte[] MAIN_CHAIN_TIP_HEIGHT_KEY = "MAIN_CHAIN_TIP_HEIGHT_KEY".getBytes(StandardCharsets.UTF_8);
     //主链顶端Hash
@@ -120,13 +123,21 @@ public class BlockChainServiceImpl {
             } else {
                 System.out.println("事务失败：未将区块加入到主链。");
             }
+            mainTipBlock=genesisBlock;
         }else {
             byte[] bytes = dataBase.get(TableEnum.BLOCK, hash);
             Block deserialize = Block.deserialize(bytes);
             assert deserialize != null;
             log.info("创世区块Hash{}",bytesToHex(deserialize.getHash()));
+            //查询并设置
+            mainTipBlock = deserialize;
         }
     }
+
+
+
+
+
 
 
     //验证区块
@@ -141,7 +152,9 @@ public class BlockChainServiceImpl {
 
 
 
-
+    public Block getMainLatestBlock() {
+        return mainTipBlock;
+    }
 
 
 
@@ -582,5 +595,6 @@ public class BlockChainServiceImpl {
         assert bytes!=null;
         return readLittleEndianInt(bytes);
     }
+
 
 }
