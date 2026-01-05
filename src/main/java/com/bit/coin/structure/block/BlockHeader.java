@@ -74,6 +74,37 @@ public class BlockHeader {
 
 
     /**
+     * 从bits字段解析出目标难度值
+     * bits格式：前1字节为指数(exponent)，后3字节为系数(coefficient)
+     * 目标值 = 系数 * 256^(指数-3)
+     * @return 目标难度值对应的BigInteger
+     */
+    @JsonIgnore
+    public BigInteger getTargetFromBits() {
+        // bits是4字节，以小端序存储
+        // 在Java中，bits已经是int类型，我们需要从中提取指数和系数
+        // 提取指数（最高位字节）
+        int exponent = (this.bits >>> 24) & 0xFF;
+        // 提取系数（低3个字节）
+        int coefficient = this.bits & 0x00FFFFFF;
+        // 计算目标值 = 系数 * 256^(指数-3)
+        BigInteger target = BigInteger.valueOf(coefficient);
+        // 计算指数偏移
+        int shift = 8 * (exponent - 3);
+        if (shift > 0) {
+            // 左移，表示乘以256^(指数-3)
+            target = target.shiftLeft(shift);
+        } else if (shift < 0) {
+            // 右移，表示除以256^(3-指数)
+            // 在比特币中，指数小于3的情况很少，但理论上存在
+            target = target.shiftRight(-shift);
+        }
+        // 如果shift=0，target保持不变
+        return target;
+    }
+
+
+    /**
      * 序列化区块头（严格遵循比特币协议）
      * 字段顺序：version(4字节) → previousHash(32字节) → merkleRoot(32字节) → time(4字节) → bits(4字节) → nonce(4字节)
      * 所有数值字段采用小端字节序（Little-Endian）
@@ -179,35 +210,7 @@ public class BlockHeader {
     public static final String INIT_DIFFICULTY_TARGET_HEX = "0000ffffffff0000000000000000000000000000000000000000000000000000";
     private static final BigInteger DIFFICULTY_1_TARGET = new BigInteger(INIT_DIFFICULTY_TARGET_HEX, 16);
 
-    /**
-     * 从bits字段解析出目标难度值
-     * bits格式：前1字节为指数(exponent)，后3字节为系数(coefficient)
-     * 目标值 = 系数 * 256^(指数-3)
-     * @return 目标难度值对应的BigInteger
-     */
-    @JsonIgnore
-    public BigInteger getTargetFromBits() {
-        // bits是4字节，以小端序存储
-        // 在Java中，bits已经是int类型，我们需要从中提取指数和系数
-        // 提取指数（最高位字节）
-        int exponent = (this.bits >>> 24) & 0xFF;
-        // 提取系数（低3个字节）
-        int coefficient = this.bits & 0x00FFFFFF;
-        // 计算目标值 = 系数 * 256^(指数-3)
-        BigInteger target = BigInteger.valueOf(coefficient);
-        // 计算指数偏移
-        int shift = 8 * (exponent - 3);
-        if (shift > 0) {
-            // 左移，表示乘以256^(指数-3)
-            target = target.shiftLeft(shift);
-        } else if (shift < 0) {
-            // 右移，表示除以256^(3-指数)
-            // 在比特币中，指数小于3的情况很少，但理论上存在
-            target = target.shiftRight(-shift);
-        }
-        // 如果shift=0，target保持不变
-        return target;
-    }
+
 
     /**
      * 计算区块的工作量（PoW）

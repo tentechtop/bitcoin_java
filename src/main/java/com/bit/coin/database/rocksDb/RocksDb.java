@@ -717,6 +717,88 @@ public class RocksDb implements DataBase {
         }
     }
 
+    /**
+     * 按照指定前缀遍历所有匹配的键值对。
+     *
+     * @param table   要操作的表（列族）。
+     * @param prefix  键的前缀（byte[] 格式）。
+     * @param handler 一个回调处理器，用于处理遍历到的每一个键值对。
+     *                如果 handler.handle() 返回 false，则会提前终止遍历。
+     */
+    public void iterateByPrefix(TableEnum table, byte[] prefix, KeyValueHandler handler) {
+        // 1. 参数校验
+        if (table == null || prefix == null || prefix.length == 0 || handler == null) {
+            log.warn("按前缀遍历失败：表、前缀或处理器不能为空");
+            return;
+        }
+
+        rwLock.readLock().lock();
+        RocksIterator iterator = null;
+        try {
+            // 2. 获取列族句柄和迭代器
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                log.warn("按前缀遍历失败：表[{}]不存在", table);
+                return;
+            }
+            iterator = db.newIterator(cfHandle);
+
+            // 3. 定位到第一个大于或等于前缀的键
+            iterator.seek(prefix);
+
+            // 4. 循环遍历并检查前缀
+            while (iterator.isValid()) {
+                byte[] currentKey = iterator.key();
+
+                // 核心判断：检查当前键是否仍然以目标前缀开头
+                // 如果不是，则说明所有前缀匹配的键已遍历完毕，退出循环
+                if (!startsWith(currentKey, prefix)) {
+                    break;
+                }
+
+                // 调用回调处理器处理当前键值对
+                // 如果处理器返回 false，则提前终止遍历
+                if (!handler.handle(currentKey, iterator.value())) {
+                    log.debug("处理器要求终止遍历，前缀: {}", Arrays.toString(prefix));
+                    break;
+                }
+
+                // 移动到下一个键
+                iterator.next();
+            }
+            log.debug("按前缀遍历完成，前缀: {}", Arrays.toString(prefix));
+
+        } finally {
+            // 5. 确保迭代器被关闭，释放资源
+            if (iterator != null) {
+                iterator.close();
+            }
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * 辅助方法：检查一个字节数组是否以另一个字节数组作为前缀。
+     *
+     * @param key    要检查的键。
+     * @param prefix 前缀。
+     * @return 如果 key 以 prefix 开头，则返回 true；否则返回 false。
+     */
+    private boolean startsWith(byte[] key, byte[] prefix) {
+        // 如果键的长度比前缀还短，肯定不匹配
+        if (key.length < prefix.length) {
+            return false;
+        }
+        // 逐字节比较前缀部分
+        for (int i = 0; i < prefix.length; i++) {
+            if (key[i] != prefix[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
     @Override
     public void batchDeleteRange(TableEnum table, byte[] startKey, byte[] endKey) {
         if (table == null || startKey == null || endKey == null) {

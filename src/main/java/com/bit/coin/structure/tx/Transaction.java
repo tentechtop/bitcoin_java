@@ -1,6 +1,7 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
@@ -171,23 +172,85 @@ public class Transaction {
      * @return Transaction对象
      * @throws IOException 如果发生I/O错误
      */
-    public static Transaction deserialize(byte[] data) throws IOException {
-        // 1. 检查数据长度是否足够
-        if (data.length < TX_ID_SIZE) {
-            throw new IOException("数据长度不足，无法反序列化交易。");
+    public static Transaction deserialize(byte[] data)  {
+        try {
+            // 1. 检查数据长度是否足够
+            if (data.length < TX_ID_SIZE) {
+                throw new IOException("数据长度不足，无法反序列化交易。");
+            }
+
+            // 2. 读取txId
+            byte[] txId = Arrays.copyOfRange(data, 0, TX_ID_SIZE);
+
+            // 3. 反序列化剩余的数据
+            byte[] txData = Arrays.copyOfRange(data, TX_ID_SIZE, data.length);
+            Transaction tx = deserializeWithOutTxId(txData);
+
+            // 4. 设置txId并返回
+            tx.setTxId(txId);
+            return tx;
+        }catch (Exception e){
+            throw new IllegalArgumentException("交易序列化失败",e);
+        }
+    }
+
+    /**
+     * 从 DataInputStream 反序列化整个交易（包含txId）。
+     * 这个方法是为了解决在流中定位交易边界的问题而创建的。
+     * @param dis 数据输入流
+     * @return Transaction 对象
+     * @throws IOException 如果发生I/O错误或数据格式不正确
+     */
+    public static Transaction deserializeFromStream(DataInputStream dis) throws IOException {
+        // 1. 读取交易ID (32字节)
+        byte[] txId = SerializeUtils.readFixedBytes(dis, TX_ID_SIZE);
+        if (txId == null) {
+            return null; // 流已读完
         }
 
-        // 2. 读取txId
-        byte[] txId = Arrays.copyOfRange(data, 0, TX_ID_SIZE);
+        // 2. 读取交易的其余部分（裸交易数据）
+        Transaction tx = deserializeWithOutTxId(dis);
 
-        // 3. 反序列化剩余的数据
-        byte[] txData = Arrays.copyOfRange(data, TX_ID_SIZE, data.length);
-        Transaction tx = deserializeWithOutTxId(txData);
-
-        // 4. 设置txId并返回
-        tx.setTxId(txId);
+        // 3. 设置交易ID并返回
+        if (tx != null) {
+            tx.setTxId(txId);
+        }
         return tx;
     }
+
+
+    /**
+     * 从 DataInputStream 反序列化交易数据（不包含txId）。
+     * @param dis 数据输入流
+     * @return Transaction 对象
+     * @throws IOException 如果发生I/O错误
+     */
+    public static Transaction deserializeWithOutTxId(DataInputStream dis) throws IOException {
+        Transaction tx = new Transaction();
+
+        // 读取版本号（小端字节序）
+        tx.setVersion(SerializeUtils.readLittleEndianInt(dis));
+
+        // 读取输入数量
+        int inputCount = SerializeUtils.readVarInt(dis);
+        for (int i = 0; i < inputCount; i++) {
+            TxInput input = TxInput.deserialize(dis);
+            tx.getInputs().add(input);
+        }
+
+        // 读取输出数量
+        int outputCount = SerializeUtils.readVarInt(dis);
+        for (int i = 0; i < outputCount; i++) {
+            TxOutput output = TxOutput.deserialize(dis);
+            tx.getOutputs().add(output);
+        }
+
+        // 读取锁定时间（小端字节序）
+        tx.setLockTime(SerializeUtils.readLittleEndianInt(dis) & 0xFFFFFFFFL);
+
+        return tx;
+    }
+
 
 
 

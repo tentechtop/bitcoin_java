@@ -22,6 +22,7 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
         "hash",           // 区块哈希
         "height",         // 区块高度
         "blockHeader",    // 区块头
+        "txCount",
         "transactions"    // 交易列表
 })
 @Data
@@ -35,7 +36,12 @@ public class Block {
     //核心
     @JsonUnwrapped//输出json时去掉类属性
     private BlockHeader blockHeader;
+    //交易数量
+    private int txCount;
     private List<Transaction> transactions;
+
+    private long medianTime;
+    private long chainWork;
 
 
     public byte[] getHash(){
@@ -83,6 +89,9 @@ public class Block {
             byte[] headerBytes = blockHeader.serialize();
             dos.write(headerBytes);
 
+            //交易数量
+            dos.writeInt(txCount);
+
             // 序列化 Transaction 列表
             dos.writeInt(transactions != null ? transactions.size() : 0);
             if (transactions != null && !transactions.isEmpty()) {
@@ -122,6 +131,9 @@ public class Block {
                 byte[] headerBytes = new byte[80];
                 dis.readFully(headerBytes);
                 block.setBlockHeader(BlockHeader.deserialize(headerBytes));
+
+                //交易数量
+                block.setTxCount(dis.readInt());
 
                 // 反序列化 Transaction 列表
                 int txCount = dis.readInt();

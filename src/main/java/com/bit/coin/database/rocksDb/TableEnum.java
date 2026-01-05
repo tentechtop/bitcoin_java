@@ -16,16 +16,16 @@ public enum TableEnum {
             (short) 1,
             "account",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            100,  //MB
-            60 * 60 * 60  //单位
+            10,  //MB
+            60
     ),
     // 链信息表：定义表标识、列族名称、列族配置
     CHAIN(
             (short) 2,
             "chain",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            100,  //MB
-            60 * 60
+            10,  //MB
+            60
     ),
     // 区块信息表：定义表标识、列族名称、列族配置 Hash->区块
     BLOCK(
@@ -33,17 +33,17 @@ public enum TableEnum {
             "block",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
-                            .setBlockCacheSize(128 * 1024 * 1024)  // 128MB缓存
+                            .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            100, //内存缓存 MB
-            60 * 60
+            10, //内存缓存 MB
+            60
     ),
     PEER(
             (short) 4,
             "peer",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            100,  //MB
-            60 * 60
+            10,  //MB
+            60 
     ),
     //主链高度到哈希的映射
     HEIGHT_TO_HASH(
@@ -51,60 +51,68 @@ public enum TableEnum {
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
-                            .setBlockCacheSize(128 * 1024 * 1024)  // 128MB缓存
+                            .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60 
     ),
     UTXO(
             (short) 6,
             "utxo",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
-                            .setBlockCacheSize(128 * 1024 * 1024)  // 128MB缓存
+                            .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60 
     ),
     TX_TO_BLOCK(
             (short) 7,
             "tx_to_block",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
-                            .setBlockCacheSize(128 * 1024 * 1024)  // 128MB缓存
+                            .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60
     ),
     ADDR_TO_UTXO(
             (short) 8,
             "addr_to_utxo",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
-                            .setBlockCacheSize(128 * 1024 * 1024)  // 128MB缓存
+                            .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60 
     ),
+    ADDR_TO_TX(
+            (short) 9,
+            "addr_to_tx",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(1024 * 1024)  
+                            .setCacheIndexAndFilterBlocks(true)),
+            1, //内存缓存 MB
+            60 
+    ),
+    
 
     TEST1(
             (short) 10,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60 
     ),
 
     TEST2(
             (short) 11,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
-            100, //内存缓存 MB
-            60 * 60
+            1, //内存缓存 MB
+            60 
     ),
-
-
-
 
 
     ;

@@ -18,12 +18,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import static com.bit.coin.database.rocksDb.TableEnum.*;
 import static com.bit.coin.structure.block.BlockHeader.convertTargetToBits;
 import static com.bit.coin.utils.SerializeUtils.*;
 import static org.bouncycastle.util.Pack.intToLittleEndian;
@@ -37,6 +42,13 @@ public class BlockChainServiceImpl {
     private SystemConfig config;
 
     private DataBase dataBase;
+
+    //主链顶端高度 key
+    public static final byte[] MAIN_CHAIN_TIP_HEIGHT_KEY = "MAIN_CHAIN_TIP_HEIGHT_KEY".getBytes(StandardCharsets.UTF_8);
+    //主链顶端Hash
+    public static final byte[] MAIN_CHAIN_TIP_HASH_KEY = "MAIN_CHAIN_TIP_HASH_KEY".getBytes(StandardCharsets.UTF_8);
+
+
 
     @PostConstruct
     public void init() {
@@ -73,7 +85,7 @@ public class BlockChainServiceImpl {
                 ));
                 //地址到UTXO value是金额 帮助快速找到地址的UTXO
                 operations.add(new RocksDb.DbOperation(
-                        TableEnum.UTXO,
+                        ADDR_TO_UTXO,
                         utxo.getAddressKey(),
                         longToLittleEndian(utxo.getValue()),
                         RocksDb.DbOperation.OpType.INSERT
@@ -91,7 +103,22 @@ public class BlockChainServiceImpl {
                         blockIndex,
                         RocksDb.DbOperation.OpType.INSERT
                 ));
+                //地址到交易的索引
+
             }
+            //最新链信息
+            operations.add(new RocksDb.DbOperation(
+                    TableEnum.CHAIN,
+                    MAIN_CHAIN_TIP_HEIGHT_KEY,
+                    intToLittleEndian(0),
+                    RocksDb.DbOperation.OpType.INSERT
+            ));
+            operations.add(new RocksDb.DbOperation(
+                    TableEnum.CHAIN,
+                    MAIN_CHAIN_TIP_HASH_KEY,
+                    genesisBlock.getHash(),
+                    RocksDb.DbOperation.OpType.INSERT
+            ));
             boolean success = dataBase.dataTransaction(operations);
             if (success) {
                 System.out.println("事务成功：将区块加入到主链。");
@@ -115,6 +142,7 @@ public class BlockChainServiceImpl {
         genesisBlock.setHeight(0); // 创世区块高度为0
         BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 98456);
         genesisBlock.setBlockHeader(blockHeader);
+        genesisBlock.setTxCount(1);
         genesisBlock.setTransactions(transactions);
         genesisBlock.setHash(blockHeader.calculateHash());
         return genesisBlock;
@@ -178,7 +206,7 @@ public class BlockChainServiceImpl {
         TxInput input = new TxInput();
         input.setTxId(new byte[32]); // 全零交易ID
         input.setIndex(0); // 特殊值表示CoinBase交易
-        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes();
+        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);//69字节
         input.setScriptSig(bytes);
         List<TxInput> inputs = new ArrayList<>();
         inputs.add(input);
@@ -204,6 +232,10 @@ public class BlockChainServiceImpl {
 
 
     public static void main(String[] args) {
+        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);
+        log.info("长度{}",bytes.length);
+
+      /*
         Transaction coinbaseTx = createGenesisCoinbaseTransaction();
         List<Transaction> transactions = new ArrayList<>();
         transactions.add(coinbaseTx);
@@ -318,7 +350,7 @@ public class BlockChainServiceImpl {
             System.out.println("事务成功：用户和订单已原子性地创建。");
         } else {
             System.out.println("事务失败：用户和订单都没有被创建。");
-        }
+        }*/
 
     }
 
@@ -331,16 +363,37 @@ public class BlockChainServiceImpl {
         }
     }
 
+    /**
+     * 根据交易哈希获取交易对象。
+     * 此方法现在可以处理包含多笔交易的区块。
+     *
+     * @param txId 交易哈希 (32字节)
+     * @return 找到的 Transaction 对象，如果未找到或发生错误则返回 null
+     */
     public Transaction getTxByHash(byte[] txId) {
-        byte[] blockIndex = dataBase.get(TableEnum.TX_TO_BLOCK,txId);
-        Map<String, Object> stringObjectMap = Transaction.parseBlockIndex(blockIndex);
-        byte[] hash = (byte[])stringObjectMap.get("hash");
-        int index = (int)stringObjectMap.get("index");
-        byte[] bytes = dataBase.get(TableEnum.BLOCK, hash);
-        Block deserialize = Block.deserialize(bytes);
+        // 1. 从 "tx_to_block" 表中获取区块索引信息
+        byte[] blockIndexBytes = dataBase.get(TableEnum.TX_TO_BLOCK, txId);
+        if (blockIndexBytes == null) {
+            return null; // 未找到该交易的记录
+        }
+
+        // 2. 解析区块哈希和交易在区块内的索引
+        Map<String, Object> blockIndexMap = Transaction.parseBlockIndex(blockIndexBytes);
+        byte[] blockHash = (byte[]) blockIndexMap.get("hash");
+        int txIndexInBlock = (int) blockIndexMap.get("index");
+
+        // 3. 从 "block" 表中获取完整的区块数据
+        byte[] blockData = dataBase.get(TableEnum.BLOCK, blockHash);
+        if (blockData == null) {
+            return null; // 区块数据不存在
+        }
+        Block deserialize = Block.deserialize(blockData);
         assert deserialize != null;
-        return deserialize.getTransactions().get(index);
+        return deserialize.getTransactions().get(txIndexInBlock);
     }
+
+
+
 
     public BlockHeader getBlockHeaderByHash(byte[] hash) {
         byte[] bytes = dataBase.get(TableEnum.BLOCK,hash);
@@ -353,4 +406,141 @@ public class BlockChainServiceImpl {
             return null;
         }
     }
+
+    public Map<String, Object> getUTXOs(String address) {
+        //key:total value:long
+        //key:utxoList: value:List<UTXO>
+        byte[] pubkey = Base58.decode(address);
+        byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
+        //总额
+        AtomicLong total = new AtomicLong();
+        //UTXOLIST
+        ArrayList<UTXO> utxos = new ArrayList<>();
+        dataBase.iterateByPrefix(ADDR_TO_UTXO,addr, (key, value) -> {
+            // 在这里处理您找到的每一个键值对
+            //ADDR_TO_UTXO 表中 key是 [地址 20字节][交易ID 32字节][索引4字节] value是小端金额
+            log.info("HEX{}",bytesToHex((byte[]) key));
+            //去除地址 获得UTXOkey
+            byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
+            byte[] bytes = dataBase.get(UTXO, utxoKey);
+            UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
+            utxos.add(deserialize);
+            //金额
+            long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
+            log.info("金额{}",amount);
+            total.addAndGet(amount);
+            return true;
+        });
+        return Map.of("total",total.get(),"utxos",utxos);
+    }
+
+    public Block getBlockByHeight(int height) {
+        byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);
+        assert blockHash != null;
+        byte[] blockData = dataBase.get(BLOCK, blockHash);
+        assert blockData != null;
+        return Block.deserialize(blockData);
+    }
+
+    /**
+     * 已经上链的交易
+     * @param address
+     * @return
+     */
+    public List<Transaction> getTxListByAddres(String address) {
+
+        return null;
+    }
+
+
+    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 2016; // 每2016个区块调整一次
+    private static final int TARGET_BLOCK_SPACING_SECONDS = 10 * 60; // 目标出块时间：10分钟
+    private static final long EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL = (long) DIFFICULTY_ADJUSTMENT_INTERVAL * TARGET_BLOCK_SPACING_SECONDS; // 2016个区块的预期总时间
+
+    private static final BigInteger MAX_TARGET = new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16);
+
+
+    public int calculateNextBlockDifficulty() {
+        // 1. 获取当前链的高度
+        // 假设你有一个方法可以获取当前链的高度
+        int currentHeight = getCurrentChainHeight();
+        if (currentHeight == -1) {
+            log.error("无法获取当前链高度，无法计算难度。");
+            // 返回一个默认的安全难度值
+            return convertTargetToBits(MAX_TARGET);
+        }
+
+        // 2. 检查是否需要调整难度
+        if ((currentHeight + 1) % DIFFICULTY_ADJUSTMENT_INTERVAL != 0) {
+            // 如果不是调整间隔的区块，则难度与上一个区块相同
+            Block lastBlock = getBlockByHeight(currentHeight);
+            if (lastBlock != null) {
+                return lastBlock.getBlockHeader().getBits();
+            }
+            log.warn("无法获取高度为 {} 的区块，返回默认难度。", currentHeight);
+            return convertTargetToBits(MAX_TARGET);
+        }
+
+        log.info("达到难度调整间隔，正在计算新区块难度...");
+
+        // 3. 获取用于计算的两个关键区块：当前最新区块和2016个区块之前的锚定区块
+        Block lastBlock = getBlockByHeight(currentHeight);
+        Block anchorBlock = getBlockByHeight(currentHeight - DIFFICULTY_ADJUSTMENT_INTERVAL + 1);
+
+        if (lastBlock == null || anchorBlock == null) {
+            log.error("获取用于难度调整的区块失败。lastBlock: {}, anchorBlock: {}",
+                    lastBlock != null, anchorBlock != null);
+            // 如果历史数据不完整，无法安全调整，保持当前难度
+            return lastBlock != null ? lastBlock.getBlockHeader().getBits() : convertTargetToBits(MAX_TARGET);
+        }
+
+        // 4. 计算实际耗时
+        long actualTimeSpent = lastBlock.getBlockHeader().getTime() - anchorBlock.getBlockHeader().getTime();
+        log.info("过去 {} 个区块的实际耗时: {} 秒 (目标: {} 秒)",
+                DIFFICULTY_ADJUSTMENT_INTERVAL, actualTimeSpent, EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL);
+
+        // 5. 计算难度调整系数
+        // 使用 BigInteger 进行精确计算
+        BigInteger adjustmentFactor = BigInteger.valueOf(actualTimeSpent);
+        adjustmentFactor = adjustmentFactor.multiply(BigInteger.valueOf(100000000)); // 乘以一个大数以避免浮点数精度问题
+        adjustmentFactor = adjustmentFactor.divide(BigInteger.valueOf(EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL));
+        // 现在 adjustmentFactor 是一个以 100000000 为基数的定点数
+
+        // 6. 获取当前目标值
+        BigInteger currentTarget = lastBlock.getBlockHeader().getTargetFromBits();
+
+        // 7. 计算新目标值
+        BigInteger newTarget = currentTarget.multiply(adjustmentFactor);
+        newTarget = newTarget.divide(BigInteger.valueOf(100000000)); // 除以基数，得到最终结果
+
+        // 8. 边界检查：确保新目标值不会低于协议允许的最小值（即难度不会无限增大）
+        // 同时也不能高于最大值（即难度不能低于创世区块）
+        if (newTarget.compareTo(MAX_TARGET) > 0) {
+            log.warn("计算出的新目标值过高，已将其限制在最大值: {}", MAX_TARGET.toString(16));
+            newTarget = MAX_TARGET;
+        }
+
+        // 比特币协议还规定了难度调整的最大幅度为4倍（即最多降低到1/4，或增加到4倍）
+
+        BigInteger lowerBound = currentTarget.divide(BigInteger.valueOf(4));
+        BigInteger upperBound = currentTarget.multiply(BigInteger.valueOf(4));
+        if (newTarget.compareTo(lowerBound) < 0) newTarget = lowerBound;
+        if (newTarget.compareTo(upperBound) > 0) newTarget = upperBound;
+
+        // 9. 将新目标值转换为 bits 格式
+        int newBits = convertTargetToBits(newTarget);
+
+        log.info("难度调整完成。旧目标: {} (bits: {}), 新目标: {} (bits: {})",
+                currentTarget.toString(16), lastBlock.getBlockHeader().getBits(),
+                newTarget.toString(16), newBits);
+
+        return newBits;
+    }
+
+    private int getCurrentChainHeight() {
+        byte[] bytes = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
+        assert bytes!=null;
+        return readLittleEndianInt(bytes);
+    }
+
 }

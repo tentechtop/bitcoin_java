@@ -1,6 +1,8 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 import tools.jackson.databind.annotation.JsonSerialize;
 
@@ -11,6 +13,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 @Data
+@JsonPropertyOrder({"txId", "index", "value","script","coinbase","height"})  // 按指定顺序输出
 public class UTXO {
     //..............................核心字段..................................
 
@@ -50,6 +53,7 @@ public class UTXO {
     /**
      * UTXO状态
      */
+    @JsonIgnore
     private int status;
 
     // 常量定义
@@ -129,12 +133,16 @@ public class UTXO {
      * @return UTXO对象
      * @throws IOException 如果发生I/O错误
      */
-    public static UTXO deserialize(byte[] data) throws IOException {
-        ByteArrayInputStream bais = new ByteArrayInputStream(data);
-        DataInputStream dis = new DataInputStream(bais);
-        UTXO utxo = deserialize(dis);
-        dis.close();
-        return utxo;
+    public static UTXO deserialize(byte[] data)  {
+        try {
+            ByteArrayInputStream bais = new ByteArrayInputStream(data);
+            DataInputStream dis = new DataInputStream(bais);
+            UTXO utxo = deserialize(dis);
+            dis.close();
+            return utxo;
+        }catch (Exception e){
+            throw new IllegalArgumentException("UTXO序列化失败");
+        }
     }
 
     /**
@@ -164,7 +172,6 @@ public class UTXO {
         byte[] statusBytes = new byte[4];
         dis.readFully(statusBytes);
         utxo.setStatus(com.bit.coin.utils.SerializeUtils.littleEndianToInt(statusBytes));
-
         return utxo;
     }
 
@@ -184,11 +191,14 @@ public class UTXO {
 
 
     //获取KEY [交易ID][索引]
+    @JsonIgnore
     public byte[] getKey() {
         return com.bit.coin.utils.SerializeUtils.concat(txId, com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
     }
 
+
     //获取地址索引 [地址][交易ID][索引]
+    @JsonIgnore
     public byte[] getAddressKey() {
         return com.bit.coin.utils.SerializeUtils.concat(script,getKey());
     }

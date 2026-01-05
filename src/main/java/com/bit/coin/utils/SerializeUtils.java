@@ -212,6 +212,15 @@ public class SerializeUtils {
         return littleEndianToInt(bytes);
     }
 
+    public static int readLittleEndianInt(byte[] intValueBytes) {
+        assert intValueBytes!=null;
+        // 小端序：最低有效字节在前
+        return ((intValueBytes[0] & 0xFF))        |  // 字节0 -> 最低8位
+                ((intValueBytes[1] & 0xFF) << 8)   |  // 字节1 -> 8-15位
+                ((intValueBytes[2] & 0xFF) << 16) |  // 字节2 -> 16-23位
+                ((intValueBytes[3] & 0xFF) << 24);   // 字节3 -> 最高8位
+    }
+
     /**
      * 十六进制字符串转字节数组
      */

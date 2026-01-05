@@ -219,6 +219,8 @@ public interface DataBase {
      */
     void iterate(TableEnum table, KeyValueHandler handler);
 
+    void iterateByPrefix(TableEnum table, byte[] prefix, KeyValueHandler handler);
+
 
     /**
      * 批量删除指定范围的键（比逐条删除更高效）
