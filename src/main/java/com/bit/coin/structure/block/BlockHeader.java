@@ -220,7 +220,6 @@ public class BlockHeader {
      *
      * @return 工作量的 BigInteger 表示
      */
-    @JsonIgnore
     public BigInteger getWork() {
         // 当前区块的目标难度
         BigInteger currentTarget = getTargetFromBits();

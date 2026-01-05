@@ -40,7 +40,9 @@ public class Block {
     private int txCount;
     private List<Transaction> transactions;
 
+    @JsonIgnore
     private long medianTime;
+    @JsonIgnore
     private long chainWork;
 
 

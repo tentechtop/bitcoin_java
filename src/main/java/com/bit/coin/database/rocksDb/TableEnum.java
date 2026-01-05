@@ -56,7 +56,7 @@ public enum TableEnum {
             1, //内存缓存 MB
             60 
     ),
-    UTXO(
+    TUTXO(
             (short) 6,
             "utxo",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
@@ -102,16 +102,16 @@ public enum TableEnum {
             (short) 10,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
-            1, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
 
     TEST2(
             (short) 11,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
-            1, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
 
 

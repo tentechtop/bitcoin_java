@@ -57,11 +57,13 @@ public class RocksDb implements DataBase {
 
         // 初始化时为每个表创建缓存（在createDatabase中）
         for (TableEnum table : TableEnum.values()) {
-            Cache<byte[], byte[]> cache = Caffeine.newBuilder()
-                    .maximumSize(getCacheMaxSize(table)) // 按表配置大小
-                    .expireAfterWrite(getCacheTtl(table), TimeUnit.MINUTES) // 按表配置过期时间
-                    .build();
-            tableCaches.put(table, cache);
+            if (getCacheMaxSize(table)!=0){
+                Cache<byte[], byte[]> cache = Caffeine.newBuilder()
+                        .maximumSize(getCacheMaxSize(table)) // 按表配置大小
+                        .expireAfterWrite(getCacheTtl(table), TimeUnit.MINUTES) // 按表配置过期时间
+                        .build();
+                tableCaches.put(table, cache);
+            }
         }
 
         try {

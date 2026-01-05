@@ -62,6 +62,7 @@ public class UTXO {
     public static final int SERIALIZED_LENGTH = 69;    // 核心字段序列化总长度: 32+4+8+1+4+20=69字节
     public static final int WITH_STATUS_LENGTH = 73;   // 包含状态字段长度: 69+4=73字节
 
+
     /**
      * 验证核心字段长度
      */
@@ -194,6 +195,11 @@ public class UTXO {
     @JsonIgnore
     public byte[] getKey() {
         return com.bit.coin.utils.SerializeUtils.concat(txId, com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
+    }
+
+    @JsonIgnore
+    public static byte[] getKey(byte[] txId1, int index) {
+        return com.bit.coin.utils.SerializeUtils.concat(txId1, com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
     }
 
 

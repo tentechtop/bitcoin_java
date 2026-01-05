@@ -33,17 +33,22 @@ public class TxInput {
      */
     private int index;
 
+
     /**
-     * [可变长度] 解锁脚本
-     * 包含签名和公钥 [64][32]
+     * 解锁脚本
+     * 包含签名和公钥 [固定64字节签名][1字节签名类型][32公钥]
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptSig;
 
 
     // 常量定义
-    public static final int SCRIPT_SIG_LENGTH = 96; // 解锁脚本长度: 64+32
-    public static final int SERIALIZED_LENGTH = 132; // 序列化总长度: 32+4+96=132字节
+    public static final int SCRIPT_SIG_LENGTH = 97; // 解锁脚本长度: 64+1+32
+    public static final int SIGNATURE_LENGTH = 64;
+    public static final int SIGNATURE_TYPE_LENGTH = 1; // <-- 新增常量
+    public static final int PUBLIC_KEY_LENGTH = 32;
+    public static final int SERIALIZED_LENGTH = 133; // 序列化总长度: 32+4+1+96=133字节
+
 
 
     /**
@@ -79,46 +84,82 @@ public class TxInput {
 
     /**
      * 获取签名字节（解锁脚本的前64字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
      */
     @JsonIgnore
     public byte[] getSignature() {
-        if (scriptSig == null || scriptSig.length < 64) {
+        // 校验脚本长度是否足够容纳签名、类型和公钥
+        if (scriptSig == null || scriptSig.length < SCRIPT_SIG_LENGTH) { // SCRIPT_SIG_LENGTH 应为 97
+            log.warn("解锁脚本长度不足，无法提取签名，返回空字节数组。");
             return new byte[64];
         }
         byte[] signature = new byte[64];
+        // 从索引 0 开始，复制 64 个字节
         System.arraycopy(scriptSig, 0, signature, 0, 64);
         return signature;
     }
 
     /**
      * 获取公钥字节（解锁脚本的后32字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
      */
     @JsonIgnore
     public byte[] getPublicKey() {
-        if (scriptSig == null || scriptSig.length < 96) {
+        // 校验脚本长度是否足够容纳签名、类型和公钥
+        if (scriptSig == null || scriptSig.length < SCRIPT_SIG_LENGTH) { // SCRIPT_SIG_LENGTH 应为 97
+            log.warn("解锁脚本长度不足，无法提取公钥，返回空字节数组。");
             return new byte[32];
         }
         byte[] publicKey = new byte[32];
-        System.arraycopy(scriptSig, 64, publicKey, 0, 32);
+        // 公钥的起始索引变为 64 (签名) + 1 (类型) = 65
+        System.arraycopy(scriptSig, 65, publicKey, 0, 32);
         return publicKey;
     }
+
+    /**
+     * 获取签名类型（解锁脚本的第65个字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
+     * @return 签名类型的无符号整数值 (0-255)，如果脚本无效则返回 -1
+     */
+    @JsonIgnore
+    public byte getSignatureType() {
+        // 校验脚本长度是否足够容纳签名和签名类型
+        if (scriptSig == null || scriptSig.length < SIGNATURE_LENGTH + SIGNATURE_TYPE_LENGTH) {
+            log.warn("解锁脚本长度不足，无法提取签名类型。");
+            return -1; // 返回一个无效值
+        }
+        // 获取第65个字节（索引为64），并转换为无符号int
+        return scriptSig[64];
+    }
+
+
 
     /**
      * 设置签名和公钥
      * @param signature 64字节签名字节数组
      * @param publicKey 32字节公钥字节数组
      */
-    public void setSignatureAndPublicKey(byte[] signature, byte[] publicKey) {
-        if (signature == null || signature.length != 64) {
-            throw new IllegalArgumentException("签名必须为64字节");
+    /**
+     * 设置签名、签名类型和公钥，以构建解锁脚本
+     * @param signature 64字节签名字节数组
+     * @param signatureType 1字节签名类型
+     * @param publicKey 32字节公钥字节数组
+     */
+    public void setSignatureAndPublicKey(byte[] signature, byte signatureType, byte[] publicKey) {
+        if (signature == null || signature.length != SIGNATURE_LENGTH) {
+            throw new IllegalArgumentException("签名必须为" + SIGNATURE_LENGTH + "字节");
         }
-        if (publicKey == null || publicKey.length != 32) {
-            throw new IllegalArgumentException("公钥必须为32字节");
+        if (publicKey == null || publicKey.length != PUBLIC_KEY_LENGTH) {
+            throw new IllegalArgumentException("公钥必须为" + PUBLIC_KEY_LENGTH + "字节");
         }
 
         byte[] scriptSig = new byte[SCRIPT_SIG_LENGTH];
-        System.arraycopy(signature, 0, scriptSig, 0, 64);
-        System.arraycopy(publicKey, 0, scriptSig, 64, 32);
+        System.arraycopy(signature, 0, scriptSig, 0, SIGNATURE_LENGTH);
+        scriptSig[SIGNATURE_LENGTH] = signatureType; // 设置签名类型
+        System.arraycopy(publicKey, 0, scriptSig, SIGNATURE_LENGTH + SIGNATURE_TYPE_LENGTH, PUBLIC_KEY_LENGTH);
         this.setScriptSig(scriptSig);
     }
 

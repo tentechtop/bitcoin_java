@@ -1,6 +1,7 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -14,9 +15,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Data
@@ -49,13 +52,121 @@ public class Transaction {
     private List<TxOutput> outputs = new ArrayList<>();
 
 
+
+    //..............................扩展字段不参与序列化.........................
+    /**
+     * 参与交易待花费的UTXO
+     */
+    @JsonIgnore
+    private Map<byte[],UTXO> utxoMap;
+
+
+
+    //验证交易合法性
+    public boolean validate(){
+        // 1. 基础格式校验
+        if (inputs == null || inputs.isEmpty() || outputs == null || outputs.isEmpty()) {
+            log.warn("交易验证失败：交易必须包含至少一个输入和一个输出。");
+            return false;
+        }
+        if (utxoMap==null){
+            log.warn("交易验证失败：UTXO视图为空");
+            return false;
+        }
+        if (isCoinbase()) {
+            //TODO
+            // 铸币交易的特殊逻辑
+            // 通常，铸币交易只有一个输入，并且其引用的交易ID为全0。
+            // 这里我们只做简单检查。更复杂的验证（如区块高度、coinbase奖励金额上限等）通常在区块层面进行。
+            if (inputs.size() != 1 || !Arrays.equals(inputs.getFirst().getTxId(), new byte[32])) {
+                log.warn("交易验证失败：铸币交易格式不正确。");
+                return false;
+            }
+            log.info("铸币交易逻辑验证通过。");
+        }else {
+            // 2. 签名验证
+            // 遍历每一个输入，验证其签名
+            for (int i = 0; i < inputs.size(); i++) {
+                TxInput input = inputs.get(i);
+                byte[] sourceTxId = input.getTxId();
+                int sourceIndex = input.getIndex();
+
+                // 从UTXO集合中查找对应的UTXO
+                UTXO referencedUtxo = utxoMap.get(UTXO.getKey(sourceTxId, sourceIndex));
+                if (referencedUtxo == null) {
+                    log.warn("交易验证失败：输入引用了一个不存在的UTXO (txId: {}, index: {})。", SerializeUtils.bytesToHex(sourceTxId), sourceIndex);
+                    return false;
+                }
+
+                // 从输入中提取签名和公钥
+                byte[] signature = input.getSignature();
+                byte[] publicKey = input.getPublicKey();
+
+                // 从引用的UTXO中获取锁定脚本
+                byte[] scriptPubKey = referencedUtxo.getScript();
+                byte signatureType = input.getSignatureType();
+                // 重新准备用于签名的数据
+                // 注意：这里的 sighashType 是从签名脚本中解析出来的。
+                // 为了简化，我们假设使用 SIGHASH_ALL。在实际实现中，你需要从解锁脚本中读取它。
+                byte[] dataToVerify = prepareDataForSigning(i, scriptPubKey, signatureType);
+
+                // 使用公钥和数据验证签名
+                if (!Ed25519Signer.fastVerify(publicKey, Sha.applySHA256(dataToVerify), signature)) {
+                    log.warn("交易验证失败：输入 {} 的签名无效。", i);
+                    return false;
+                }
+            }
+            log.info("所有输入签名验证通过。");
+            // 3. 交易逻辑和金额校验
+            // 普通交易的金额平衡校验
+            BigInteger totalInputValue = BigInteger.ZERO;
+            BigInteger totalOutputValue = BigInteger.ZERO;
+
+            // 计算总输入金额
+            for (TxInput input : inputs) {
+                UTXO utxo = utxoMap.get(UTXO.getKey(input.getTxId(), input.getIndex()));
+                if (utxo == null) {
+                    // 理论上前面签名验证已经通过，这里不应该发生
+                    log.error("金额校验失败：找不到UTXO。");
+                    return false;
+                }
+                totalInputValue = totalInputValue.add(BigInteger.valueOf(utxo.getValue()));
+            }
+
+            // 计算总输出金额
+            for (TxOutput output : outputs) {
+                totalOutputValue = totalOutputValue.add(BigInteger.valueOf(output.getValue()));
+            }
+
+            // 检查输入是否大于等于输出（允许矿工费）
+            if (totalInputValue.compareTo(totalOutputValue) < 0) {
+                log.warn("交易验证失败：输入总金额 ({}) 小于输出总金额 ({})。", totalInputValue, totalOutputValue);
+                return false;
+            }
+            log.info("金额平衡验证通过。输入: {}, 输出: {}, 矿工费: {}",
+                    totalInputValue, totalOutputValue, totalInputValue.subtract(totalOutputValue));
+        }
+
+        // 4. 交易ID自洽性校验
+        byte[] calculatedTxId = calculateTxId();
+        if (!Arrays.equals(this.txId, calculatedTxId)) {
+            log.warn("交易验证失败：交易头中的txId与计算出的txId不符。存储的: {}, 计算的: {}",
+                    SerializeUtils.bytesToHex(this.txId), SerializeUtils.bytesToHex(calculatedTxId));
+            return false;
+        }
+        log.info("交易ID自洽性验证通过。");
+        return true;
+    }
+
+
+
     public static final int TX_ID_LENGTH = 32;      // 交易ID长度
 
     // SIGHASH类型
-    public static final int SIGHASH_ALL = 0x01;
-    public static final int SIGHASH_NONE = 0x02;
-    public static final int SIGHASH_SINGLE = 0x03;
-    public static final int SIGHASH_ANYONECANPAY = 0x80;
+    public static final byte SIGHASH_ALL = 0x01;//锁定输入和输出 不允许篡改
+    public static final byte SIGHASH_NONE = 0x02;//锁定所有输入 不锁定输出
+    public static final byte SIGHASH_SINGLE = 0x03; //所有输入 只签名对应的输出 第 1 个输入的签名只锁定第 1 个输出。如果输入比输出多，多余的输入对应的输出视为 “空”。这用于需要将多个输入的资金分别发送到不同地址的场景。
+    public static final byte SIGHASH_ANYONECANPAY = (byte) 0x80; // 只保留当前输入
 
 
 
@@ -77,6 +188,153 @@ public class Transaction {
         byte[] serialize = this.serializeWithOutTxId();
         return Sha.applySHA256(serialize);
     }
+
+
+    //使用私钥给一笔交易签名(交易所有输入数据的解锁脚本都为空)
+    public void sign(byte[] privateKey, byte[] publicKey) {
+        //创建临时交易用于签名
+        for (int i = 0; i < inputs.size(); i++){
+            TxInput input = inputs.get(i);
+            byte[] txId1 = input.getTxId();
+            int index = input.getIndex();
+            UTXO utxo = utxoMap.get(UTXO.getKey(txId1, index));
+            byte[] scriptPubKey = utxo.getScript();
+            byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(prepareDataForSigning(i, scriptPubKey, SIGHASH_ALL)));
+            //将签名和公钥组合为解锁脚本
+            input.setSignatureAndPublicKey(signature,SIGHASH_ALL, publicKey);
+        }
+    }
+
+
+    /**
+     * 准备签名数据（支持所有 SIGHASH 类型）。
+     * 此方法会根据给定的 sighashType 创建一个交易副本，并对其进行修改，
+     * 以生成最终用于哈希计算的字节数组。
+     *
+     * @param inputIndex   当前正在签名的输入的索引。
+     * @param scriptPubKey 与当前输入关联的前一个输出的锁定脚本。
+     * @param sighashType  签名哈希类型 (e.g., SIGHASH_ALL, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)。
+     * @return 用于 SHA256(SHA256(data)) 哈希计算的字节数组。
+     */
+    private byte[] prepareDataForSigning(int inputIndex, byte[] scriptPubKey, byte sighashType) {
+        try {
+            // 1. 解析 sighash 标志
+            // 低3位用于区分 ALL, NONE, SINGLE
+            int baseSigHash = sighashType & 0x1F;
+            // 最高位(0x80)是 ANYONECANPAY 标志
+            boolean anyoneCanPay = (sighashType & SIGHASH_ANYONECANPAY) != 0;
+
+            // 2. 创建交易副本
+            Transaction txCopy = new Transaction();
+            txCopy.setVersion(this.version);
+            txCopy.setLockTime(this.lockTime);
+
+            // 3. 处理输入 (Inputs)
+            if (anyoneCanPay) {
+                // SIGHASH_ANYONECANPAY: 只保留当前要签名的输入
+                TxInput input = this.inputs.get(inputIndex);
+                TxInput inputCopy = new TxInput();
+                inputCopy.setTxId(input.getTxId());
+                inputCopy.setIndex(input.getIndex());
+                // 将要签名的输入的解锁脚本替换为其对应的锁定脚本
+                inputCopy.setScriptSig(scriptPubKey);
+                txCopy.getInputs().add(inputCopy);
+            } else {
+                // 不使用 ANYONECANPAY: 保留所有输入
+                for (int i = 0; i < this.inputs.size(); i++) {
+                    TxInput input = this.inputs.get(i);
+                    TxInput inputCopy = new TxInput();
+                    inputCopy.setTxId(input.getTxId());
+                    inputCopy.setIndex(input.getIndex());
+                    // 将要签名的输入的解锁脚本替换为其对应的锁定脚本，其他输入的解锁脚本清空
+                    if (i == inputIndex) {
+                        inputCopy.setScriptSig(scriptPubKey);
+                    } else {
+                        inputCopy.setScriptSig(new byte[0]);
+                    }
+                    txCopy.getInputs().add(inputCopy);
+                }
+            }
+
+            // 4. 处理输出 (Outputs)
+            // 这部分逻辑由 baseSigHash (ALL, NONE, SINGLE) 决定
+            switch (baseSigHash) {
+                case SIGHASH_NONE:
+                    // SIGHASH_NONE: 不锁定任何输出，清空输出列表
+                    txCopy.getOutputs().clear();
+                    break;
+
+                case SIGHASH_SINGLE:
+                    // SIGHASH_SINGLE: 只锁定与当前输入索引对应的输出
+                    // 如果输入索引 >= 输出数量，这是一个特殊情况，比特币协议规定将输出列表清空，并将 sighashType 置为 0
+                    if (inputIndex >= this.outputs.size()) {
+                        txCopy.getOutputs().clear();
+                        // 在最终序列化时，我们会处理 sighashType 为 0 的情况
+                    } else {
+                        // 创建一个与原输出列表大小相同的新列表
+                        List<TxOutput> newOutputs = new ArrayList<>(this.outputs.size());
+                        for (int i = 0; i < this.outputs.size(); i++) {
+                            if (i < inputIndex) {
+                                // 索引小于当前输入索引的输出，保留原样
+                                TxOutput originalOutput = this.outputs.get(i);
+                                TxOutput outputCopy = new TxOutput();
+                                outputCopy.setValue(originalOutput.getValue());
+                                outputCopy.setScriptPubKey(originalOutput.getScriptPubKey());
+                                newOutputs.add(outputCopy);
+                            } else if (i == inputIndex) {
+                                // 索引等于当前输入索引的输出，保留原样
+                                TxOutput originalOutput = this.outputs.get(i);
+                                TxOutput outputCopy = new TxOutput();
+                                outputCopy.setValue(originalOutput.getValue());
+                                outputCopy.setScriptPubKey(originalOutput.getScriptPubKey());
+                                newOutputs.add(outputCopy);
+                            } else { // i > inputIndex
+                                // 索引大于当前输入索引的输出，设置为“空”输出 (value=-1, script empty)
+                                TxOutput emptyOutput = new TxOutput();
+                                emptyOutput.setValue(-1L); // 特殊值，表示空输出
+                                emptyOutput.setScriptPubKey(new byte[0]);
+                                newOutputs.add(emptyOutput);
+                            }
+                        }
+                        txCopy.setOutputs(newOutputs);
+                    }
+                    break;
+
+                case SIGHASH_ALL:
+                default: // 默认或其他未定义类型都按 SIGHASH_ALL 处理
+                    // SIGHASH_ALL: 锁定所有输出，直接复制
+                    for (TxOutput output : this.outputs) {
+                        TxOutput outputCopy = new TxOutput();
+                        outputCopy.setValue(output.getValue());
+                        outputCopy.setScriptPubKey(output.getScriptPubKey());
+                        txCopy.getOutputs().add(outputCopy);
+                    }
+                    break;
+            }
+
+            // 5. 序列化交易副本并附加 SIGHASH 类型
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            // 对于 SIGHASH_SINGLE 的特殊情况，序列化时使用 sighashType 0
+            int finalSigHashType = (baseSigHash == SIGHASH_SINGLE && inputIndex >= this.outputs.size()) ? 0 : sighashType;
+
+            dos.write(txCopy.serializeWithOutTxId());
+            // 写入4字节的 sighashType，小端序
+            dos.writeInt(Integer.reverseBytes(finalSigHashType));
+
+            dos.close();
+            return baos.toByteArray();
+
+        } catch (IOException e) {
+            throw new RuntimeException("准备签名数据失败", e);
+        }
+    }
+
+
+
+
+
 
     /**
      * 序列化交易为字节数组

@@ -21,10 +21,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -41,6 +38,7 @@ public class BlockChainServiceImpl {
     @Autowired
     private SystemConfig config;
 
+    @Autowired
     private DataBase dataBase;
 
     //主链顶端高度 key
@@ -50,7 +48,6 @@ public class BlockChainServiceImpl {
 
     @PostConstruct
     public void init() {
-        dataBase = config.getDataBase();
         //检查创世区块 int转字节
         byte[] hash = dataBase.get(TableEnum.HEIGHT_TO_HASH, 0);
         if (hash==null){
@@ -76,7 +73,7 @@ public class BlockChainServiceImpl {
             List<UTXO> utxOs = genesisBlock.getUTXOs();
             for (UTXO utxo : utxOs){
                 operations.add(new RocksDb.DbOperation(
-                        TableEnum.UTXO,
+                        TableEnum.TUTXO,
                         utxo.getKey(),
                         utxo.serialize(),
                         RocksDb.DbOperation.OpType.INSERT
@@ -138,6 +135,7 @@ public class BlockChainServiceImpl {
 
         return true;
     }
+
 
 
 
@@ -241,6 +239,8 @@ public class BlockChainServiceImpl {
         return coinbaseTx;
     }
 
+
+    //获取交易手续费
 
 
 
@@ -405,10 +405,34 @@ public class BlockChainServiceImpl {
         }
         Block deserialize = Block.deserialize(blockData);
         assert deserialize != null;
+        Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
+        Map<byte[], UTXO> utxOsByTx = getUTXOsByTx(transaction);
+        transaction.setUtxoMap(utxOsByTx);
+        boolean validate = transaction.validate();
         return deserialize.getTransactions().get(txIndexInBlock);
     }
 
 
+    //获取一笔交易所有参与交易待花费的UTXO
+    public Map<byte[],UTXO> getUTXOsByTx(Transaction transaction) {
+        List<TxInput> inputs = transaction.getInputs();
+        Map<byte[],UTXO> utxos = new HashMap<>();
+        for (TxInput txInput:inputs){
+            byte[] txId = txInput.getTxId();
+            int index = txInput.getIndex();
+            //交易ID是全零且index=0 则是一个铸币输入
+            if (Arrays.equals(txId, new byte[32]) && index == 0) {
+                log.info("这是一个铸币输入");
+            }else {
+                byte[] key = UTXO.getKey(txId, index);
+                byte[] bytes = dataBase.get(TableEnum.TUTXO, key);
+                assert bytes != null;
+                UTXO deserialize = UTXO.deserialize(bytes);
+                utxos.put(key,deserialize);
+            }
+        }
+        return utxos;
+    }
 
 
     public BlockHeader getBlockHeaderByHash(byte[] hash) {
@@ -438,7 +462,7 @@ public class BlockChainServiceImpl {
             log.info("HEX{}",bytesToHex((byte[]) key));
             //去除地址 获得UTXOkey
             byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
-            byte[] bytes = dataBase.get(UTXO, utxoKey);
+            byte[] bytes = dataBase.get(TUTXO, utxoKey);
             UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
             utxos.add(deserialize);
             //金额
