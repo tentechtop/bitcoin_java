@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -912,4 +913,66 @@ public class RocksDb implements DataBase {
     private long getCacheTtl(TableEnum table) {
         return table.getCacheTL(); // 区块表缓存更多
     }
+
+    // int 转 byte[]（您已提供的代码）
+    public static byte[] intToBytes(int value){
+        return ByteBuffer.allocate(4).putInt(value).array();
+    }
+
+    // long 转 byte[]（您已提供的代码）
+    public static byte[] longToBytes(long value){
+        return ByteBuffer.allocate(8).putLong(value).array();
+    }
+
+    // byte[] 转 int
+    public static int bytesToInt(byte[] bytes) {
+        return ByteBuffer.wrap(bytes).getInt();
+    }
+
+    // byte[] 转 long
+    public static long bytesToLong(byte[] bytes) {
+        return ByteBuffer.wrap(bytes).getLong();
+    }
+
+    // 支持字节序的增强版本
+    public static int bytesToInt(byte[] bytes, ByteOrder byteOrder) {
+        return ByteBuffer.wrap(bytes).order(byteOrder).getInt();
+    }
+
+    public static long bytesToLong(byte[] bytes, ByteOrder byteOrder) {
+        return ByteBuffer.wrap(bytes).order(byteOrder).getLong();
+    }
+
+    // 支持偏移量的版本
+    public static int bytesToInt(byte[] bytes, int offset) {
+        return ByteBuffer.wrap(bytes, offset, 4).getInt();
+    }
+
+    public static long bytesToLong(byte[] bytes, int offset) {
+        return ByteBuffer.wrap(bytes, offset, 8).getInt();
+    }
+
+    // 手动位运算实现（备选方案）
+    public static int bytesToIntManual(byte[] bytes) {
+        if (bytes.length < 4) {
+            throw new IllegalArgumentException("字节数组长度至少为4");
+        }
+        return ((bytes[0] & 0xFF) << 24) |
+                ((bytes[1] & 0xFF) << 16) |
+                ((bytes[2] & 0xFF) << 8) |
+                (bytes[3] & 0xFF);
+    }
+
+    public static long bytesToLongManual(byte[] bytes) {
+        if (bytes.length < 8) {
+            throw new IllegalArgumentException("字节数组长度至少为8");
+        }
+        long value = 0;
+        for (int i = 0; i < 8; i++) {
+            value |= ((long) (bytes[i] & 0xFF)) << (56 - 8 * i);
+        }
+        return value;
+    }
+
+
 }

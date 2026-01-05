@@ -4,6 +4,7 @@ import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
@@ -11,24 +12,28 @@ import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
 import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.utils.Sha;
+import com.bit.coin.utils.TimeGenerator;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import static com.bit.coin.database.rocksDb.RocksDb.bytesToInt;
 import static com.bit.coin.database.rocksDb.TableEnum.*;
 import static com.bit.coin.structure.block.BlockHeader.convertTargetToBits;
 import static com.bit.coin.utils.SerializeUtils.*;
-import static org.bouncycastle.util.Pack.intToLittleEndian;
+
 
 
 @Slf4j
@@ -49,6 +54,8 @@ public class BlockChainServiceImpl {
     //主链顶端Hash
     public static final byte[] MAIN_CHAIN_TIP_HASH_KEY = "MAIN_CHAIN_TIP_HASH_KEY".getBytes(StandardCharsets.UTF_8);
 
+
+
     @PostConstruct
     public void init() {
         //检查创世区块 int转字节
@@ -56,24 +63,95 @@ public class BlockChainServiceImpl {
         if (hash==null){
             //初始化
             Block genesisBlock = createGenesisBlock();
-            //hash - > 区块
-            //高度到 -> hash
-            //将区块中的UTXO加入到UTXO集合
+            addBlockToChain(genesisBlock,true);
+            mainTipBlock=genesisBlock;
+            log.info("新创建创世区块高度{} 最新Hash{}",genesisBlock.getHeight(),bytesToHex(genesisBlock.getHash()));
+        }else {
+            byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
+            byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
+            byte[] bytes = dataBase.get(TBLOCK, tipHash);
+            Block deserialize = Block.deserialize(bytes);
+            assert deserialize != null;
+            deserialize.setHeight(bytesToInt(tipHeight));
+            deserialize.setHash(tipHash);
+            mainTipBlock=deserialize;
+            log.info("最新区块高度{} 最新Hash{}",deserialize.getHeight(),bytesToHex(tipHash));
+        }
+    }
 
-            List<RocksDb.DbOperation> operations = new ArrayList<>();
-            operations.add(new RocksDb.DbOperation(
-                    TableEnum.BLOCK,
-                    genesisBlock.getHash(),
-                    genesisBlock.serialize(),
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
+
+
+    //验证区块
+    public boolean verifyBlock(Block block) {
+        log.info("区块高度{} 区块哈希{}",block.getHeight(),bytesToHex(block.getHash()));
+        //基础格式验证
+        byte[] hash = block.getHash();
+
+        //Hash验证
+
+        //工作量验证
+
+        //区块中所有交易验证
+
+        //是否主链延续
+        if (Arrays.equals(block.getBlockHeader().getPreviousHash(), mainTipBlock.getHash())){
+
+            log.info("是主链的延续");
+
+            //将区块加入到区块链
+            addBlockToChain(block,true);
+            mainTipBlock = block;
+        }else {
+            //非主链延续
+            byte[] previousHash = block.getBlockHeader().getPreviousHash();
+            byte[] bytes = dataBase.get(TBLOCK, previousHash);
+            if (bytes==null){
+                //孤块（Orphan Block）
+
+                //处理孤块
+
+            }else {
+                //分叉区块（Fork Block）
+                //分叉总工作量
+                Block previousBlock = Block.deserialize(bytes);
+                assert previousBlock != null;
+                long chainWork = previousBlock.getChainWork();
+
+
+            }
+        }
+
+
+        return true;
+    }
+
+
+    //计算区块链工作总量
+    public byte[] calculateChainWork() {
+
+        return null;
+    }
+
+
+
+    //将区块加入到主链
+    public void addBlockToChain(Block block,boolean isMainChain) {
+        List<RocksDb.DbOperation> operations = new ArrayList<>();
+        operations.add(new RocksDb.DbOperation(
+                TableEnum.TBLOCK,
+                block.getHash(),
+                block.serialize(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
+        if (isMainChain){
             operations.add(new RocksDb.DbOperation(
                     TableEnum.HEIGHT_TO_HASH,
-                    intToLittleEndian(0),
-                    genesisBlock.getHash(),
+                    intHeightToBytes,
+                    block.getHash(),
                     RocksDb.DbOperation.OpType.INSERT
             ));
-            List<UTXO> utxOs = genesisBlock.getUTXOs();
+            List<UTXO> utxOs = block.getUTXOs();
             for (UTXO utxo : utxOs){
                 operations.add(new RocksDb.DbOperation(
                         TableEnum.TUTXO,
@@ -89,63 +167,46 @@ public class BlockChainServiceImpl {
                         RocksDb.DbOperation.OpType.INSERT
                 ));
             }
-            //交易到区块的索引
-            List<Transaction> transactions = genesisBlock.getTransactions();
-            for (int i = 0; i < transactions.size(); i++) {
-                Transaction transaction = transactions.get(i);
-                byte[] txId = transaction.getTxId();
-                byte[] blockIndex = transaction.getBlockIndex(genesisBlock.getHash(),i);
-                operations.add(new RocksDb.DbOperation(
-                        TableEnum.TX_TO_BLOCK,
-                        txId,
-                        blockIndex,
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-                //地址到交易的索引
 
-            }
             //最新链信息
             operations.add(new RocksDb.DbOperation(
                     TableEnum.CHAIN,
                     MAIN_CHAIN_TIP_HEIGHT_KEY,
-                    intToLittleEndian(0),
+                    intHeightToBytes,
                     RocksDb.DbOperation.OpType.INSERT
             ));
             operations.add(new RocksDb.DbOperation(
                     TableEnum.CHAIN,
                     MAIN_CHAIN_TIP_HASH_KEY,
-                    genesisBlock.getHash(),
+                    block.getHash(),
                     RocksDb.DbOperation.OpType.INSERT
             ));
-            boolean success = dataBase.dataTransaction(operations);
-            if (success) {
-                System.out.println("事务成功：将区块加入到主链。");
-            } else {
-                System.out.println("事务失败：未将区块加入到主链。");
-            }
-            mainTipBlock=genesisBlock;
-        }else {
-            byte[] bytes = dataBase.get(TableEnum.BLOCK, hash);
-            Block deserialize = Block.deserialize(bytes);
-            assert deserialize != null;
-            log.info("创世区块Hash{}",bytesToHex(deserialize.getHash()));
-            //查询并设置
-            mainTipBlock = deserialize;
+        }
+        //交易到区块的索引
+        List<Transaction> transactions = block.getTransactions();
+        for (int i = 0; i < transactions.size(); i++) {
+            Transaction transaction = transactions.get(i);
+            byte[] txId = transaction.getTxId();
+            byte[] blockIndex = transaction.getBlockIndex(block.getHash(),i);
+            operations.add(new RocksDb.DbOperation(
+                    TableEnum.TX_TO_BLOCK,
+                    txId,
+                    blockIndex,
+                    RocksDb.DbOperation.OpType.INSERT
+            ));
+            //地址到交易的索引
+        }
+        boolean success = dataBase.dataTransaction(operations);
+        if (success) {
+            System.out.println("事务成功：将区块加入到主链。");
+        } else {
+            System.out.println("事务失败：未将区块加入到主链。");
         }
     }
 
 
 
 
-
-
-
-    //验证区块
-    public boolean verifyBlock(Block block) {
-
-
-        return true;
-    }
 
 
 
@@ -175,9 +236,50 @@ public class BlockChainServiceImpl {
         return genesisBlock;
     }
 
+    public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee) {
+        // 获取当前时间毫秒数
+        long currentTimeMillis = System.nanoTime();
+
+        byte[] timeBytes = longToLittleEndian(currentTimeMillis);
+        // 对时间字节数组进行第一次SHA256哈希
+        byte[] firstHash = Sha.applySHA256(timeBytes);
+        // 生成随机数（使用安全随机数生成器）
+        SecureRandom secureRandom = new SecureRandom();
+        long randomNumber = secureRandom.nextLong();
+        byte[] randomBytes = longToLittleEndian(randomNumber);
+        // 拼接第一次哈希结果和随机数字节数组
+        byte[] combined = new byte[firstHash.length + randomBytes.length];
+        System.arraycopy(firstHash, 0, combined, 0, firstHash.length);
+        System.arraycopy(randomBytes, 0, combined, firstHash.length, randomBytes.length);
+        // 对拼接后的数组进行第二次SHA256哈希
+        byte[] secondHash = Sha.applyRIPEMD160(combined);
+        byte[] extraNonce = Arrays.copyOfRange(secondHash, 0, 16);
+        Transaction coinbaseTx = new Transaction();
+        TxInput input = new TxInput();
+        input.setTxId(new byte[32]); // 全零交易ID
+        input.setIndex(0); // 特殊值表示CoinBase交易
+        input.setScriptSig(extraNonce);
+        List<TxInput> inputs = new ArrayList<>();
+        inputs.add(input);
+        coinbaseTx.setVersion(0);
+        coinbaseTx.setInputs(inputs);
+        // 创建输出（初始奖励50 BTC = 50*1e8聪）
+        TxOutput output = new TxOutput();
+        //根据高度计算奖励
+        //TODO
+        output.setValue((50L * 100000000)+fee); // 50 BTC in satoshi
+        output.setScriptPubKey(Sha.applyRIPEMD160(Sha.applySHA256(Base58.decode(minerAddress))));
+        List<TxOutput> outputs = new ArrayList<>();
+        outputs.add(output);
+        coinbaseTx.setOutputs(outputs);
+        // 计算交易ID
+        byte[] txId = coinbaseTx.calculateTxId();
+        coinbaseTx.setTxId(txId);
+        return coinbaseTx;
+    }
 
 
-    private static byte[] calculateMerkleRoot(List<Transaction> transactions) {
+    public static byte[] calculateMerkleRoot(List<Transaction> transactions) {
         if (transactions == null || transactions.isEmpty()) {
             return new byte[32]; // 空交易列表返回零哈希
         }
@@ -237,6 +339,7 @@ public class BlockChainServiceImpl {
         input.setScriptSig(bytes);
         List<TxInput> inputs = new ArrayList<>();
         inputs.add(input);
+        coinbaseTx.setVersion(0);
         coinbaseTx.setInputs(inputs);
         // 创建输出（初始奖励50 BTC = 50*1e8聪）
         TxOutput output = new TxOutput();
@@ -254,137 +357,23 @@ public class BlockChainServiceImpl {
 
 
     //获取交易手续费
+    public  long calculateTransactionFee(Transaction transaction) {
 
+        return 0;
+    }
+    public  long calculateTransactionFee(List<Transaction> transactions) {
 
-
-
-
-
-    public static void main(String[] args) {
-        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);
-        log.info("长度{}",bytes.length);
-
-      /*
-        Transaction coinbaseTx = createGenesisCoinbaseTransaction();
-        List<Transaction> transactions = new ArrayList<>();
-        transactions.add(coinbaseTx);
-        byte[] merkleRoot = calculateMerkleRoot(transactions);
-
-
-        // 创世区块的已知信息
-        int version = 1;
-        byte[] prevBlockHash = new byte[32]; // 前一个区块哈希全0
-        int timestamp = 1754287472; // 2017年2月3日
-        int bits = convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16));
-
-        // 挖矿参数
-        BigInteger target = new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16);
-        int maxNonce = Integer.MAX_VALUE; // 最大nonce值
-        int nonce = 0;
-        boolean found = false;
-
-        System.out.println("开始挖矿...");
-        System.out.println("目标值: " + target.toString(16));
-        System.out.println("目标bits: " + bits);
-
-        long startTime = System.currentTimeMillis();
-
-
-        // 挖矿循环
-        for (nonce = 0; nonce < maxNonce; nonce++) {
-            // 创建区块头
-            BlockHeader blockHeader = new BlockHeader(version, prevBlockHash, merkleRoot, timestamp, bits, nonce);
-
-            // 计算区块哈希
-            byte[] blockHashBytes = blockHeader.calculateHash();
-            BigInteger hashValue = new BigInteger(1, blockHashBytes);
-
-            // 检查是否小于等于目标值
-            if (hashValue.compareTo(target) <= 0) {
-                found = true;
-                break;
-            }
-
-            // 每100万次打印一次进度
-            if (nonce % 1000000 == 0 && nonce > 0) {
-                long elapsedTime = System.currentTimeMillis() - startTime;
-                double hashRate = nonce / (elapsedTime / 1000.0);
-                System.out.println(String.format("尝试次数: %d, 哈希率: %.2f H/s",
-                        nonce, hashRate));
-            }
-        }
-
-        if (found) {
-            long elapsedTime = System.currentTimeMillis() - startTime;
-            double elapsedSeconds = elapsedTime / 1000.0;
-            double hashRate = nonce / elapsedSeconds;
-
-            System.out.println("\n挖矿成功！");
-            System.out.println("找到的nonce: " + nonce);
-            System.out.println("尝试次数: " + nonce);
-            System.out.println("耗时: " + elapsedSeconds + " 秒");
-            System.out.println("平均哈希率: " + String.format("%.2f", hashRate) + " H/s");
-
-            // 创建最终的创世区块
-            Block genesisBlock = new Block();
-            genesisBlock.setHeight(0);
-            BlockHeader finalHeader = new BlockHeader(version, prevBlockHash, merkleRoot, timestamp, bits, nonce);
-            genesisBlock.setBlockHeader(finalHeader);
-            genesisBlock.setTransactions(transactions);
-
-            // 输出区块信息
-            byte[] finalHash = finalHeader.calculateHash();
-            System.out.println("\n创世区块哈希: " + bytesToHex(finalHash));
-            System.out.println("区块头哈希值(十六进制): " + new BigInteger(1, finalHash).toString(16));
-
-        } else {
-            System.out.println("挖矿失败，未找到有效的nonce");
-        }
-
-
-
-        byte[] userKey = "user_123".getBytes();
-        byte[] userValue = "{\"name\":\"Alice\"}".getBytes();
-
-        byte[] orderKey = "order_456".getBytes();
-        byte[] orderValue = "{\"item\":\"Book\"}".getBytes();
-
-
-        // 2. 创建跨表的操作列表
-        List<RocksDb.DbOperation> operations = new ArrayList<>();
-
-
-        // 操作1：向 USER_TABLE 插入数据
-        operations.add(new RocksDb.DbOperation(
-                TableEnum.TEST1,
-                userKey,
-                userValue,
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-
-
-        // 操作2：向 ORDER_TABLE 插入数据
-        operations.add(new RocksDb.DbOperation(
-                TableEnum.TEST2,
-                orderKey,
-                orderValue,
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-
-
-        // 3. 执行原子事务
-        boolean success = new RocksDb().dataTransaction(operations);
-
-        if (success) {
-            System.out.println("事务成功：用户和订单已原子性地创建。");
-        } else {
-            System.out.println("事务失败：用户和订单都没有被创建。");
-        }*/
-
+        return 0;
     }
 
+
+
+
+
+
+
     public Block getBlockByHash(byte[] hash) {
-        byte[] bytes = dataBase.get(TableEnum.BLOCK,hash);
+        byte[] bytes = dataBase.get(TableEnum.TBLOCK,hash);
         if (bytes!=null){
            return Block.deserialize(bytes);
         }else {
@@ -412,7 +401,7 @@ public class BlockChainServiceImpl {
         int txIndexInBlock = (int) blockIndexMap.get("index");
 
         // 3. 从 "block" 表中获取完整的区块数据
-        byte[] blockData = dataBase.get(TableEnum.BLOCK, blockHash);
+        byte[] blockData = dataBase.get(TableEnum.TBLOCK, blockHash);
         if (blockData == null) {
             return null; // 区块数据不存在
         }
@@ -449,7 +438,7 @@ public class BlockChainServiceImpl {
 
 
     public BlockHeader getBlockHeaderByHash(byte[] hash) {
-        byte[] bytes = dataBase.get(TableEnum.BLOCK,hash);
+        byte[] bytes = dataBase.get(TableEnum.TBLOCK,hash);
         if (bytes!=null){
             //获取前80字节
             byte[] headerBytes = Arrays.copyOfRange(bytes, 0, 80);
@@ -489,8 +478,10 @@ public class BlockChainServiceImpl {
 
     public Block getBlockByHeight(int height) {
         byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);
-        assert blockHash != null;
-        byte[] blockData = dataBase.get(BLOCK, blockHash);
+        if (blockHash==null){
+            return null;
+        }
+        byte[] blockData = dataBase.get(TBLOCK, blockHash);
         assert blockData != null;
         return Block.deserialize(blockData);
     }
@@ -593,8 +584,92 @@ public class BlockChainServiceImpl {
     private int getCurrentChainHeight() {
         byte[] bytes = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
         assert bytes!=null;
-        return readLittleEndianInt(bytes);
+        return bytesToInt(bytes);
     }
 
 
+
+
+    public static void main(String[] args) {
+        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);
+        log.info("长度{}",bytes.length);
+
+        Transaction coinbaseTx = createGenesisCoinbaseTransaction();
+        List<Transaction> transactions = new ArrayList<>();
+        transactions.add(coinbaseTx);
+        byte[] merkleRoot = calculateMerkleRoot(transactions);
+
+
+        // 创世区块的已知信息
+        int version = 1;
+        byte[] prevBlockHash = new byte[32]; // 前一个区块哈希全0
+        int timestamp = 1754287472; // 2017年2月3日
+        int bits = convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16));
+
+        // 挖矿参数
+        BigInteger target = new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16);
+        int maxNonce = Integer.MAX_VALUE; // 最大nonce值
+        int nonce = 0;
+        boolean found = false;
+
+        System.out.println("开始挖矿...");
+        System.out.println("目标值: " + target.toString(16));
+        System.out.println("目标bits: " + bits);
+
+        long startTime = System.currentTimeMillis();
+
+
+        // 挖矿循环
+        for (nonce = 0; nonce < maxNonce; nonce++) {
+            // 创建区块头
+            BlockHeader blockHeader = new BlockHeader(version, prevBlockHash, merkleRoot, timestamp, bits, nonce);
+
+            // 计算区块哈希
+            byte[] blockHashBytes = blockHeader.calculateHash();
+            BigInteger hashValue = new BigInteger(1, blockHashBytes);
+
+            // 检查是否小于等于目标值
+            if (hashValue.compareTo(target) <= 0) {
+                found = true;
+                break;
+            }
+
+            // 每100万次打印一次进度
+            if (nonce % 1000000 == 0 && nonce > 0) {
+                long elapsedTime = System.currentTimeMillis() - startTime;
+                double hashRate = nonce / (elapsedTime / 1000.0);
+                System.out.println(String.format("尝试次数: %d, 哈希率: %.2f H/s",
+                        nonce, hashRate));
+            }
+        }
+
+        if (found) {
+            long elapsedTime = System.currentTimeMillis() - startTime;
+            double elapsedSeconds = elapsedTime / 1000.0;
+            double hashRate = nonce / elapsedSeconds;
+
+            System.out.println("\n挖矿成功！");
+            System.out.println("找到的nonce: " + nonce);
+            System.out.println("尝试次数: " + nonce);
+            System.out.println("耗时: " + elapsedSeconds + " 秒");
+            System.out.println("平均哈希率: " + String.format("%.2f", hashRate) + " H/s");
+
+            // 创建最终的创世区块
+            Block genesisBlock = new Block();
+            genesisBlock.setHeight(0);
+            BlockHeader finalHeader = new BlockHeader(version, prevBlockHash, merkleRoot, timestamp, bits, nonce);
+            genesisBlock.setBlockHeader(finalHeader);
+            genesisBlock.setTransactions(transactions);
+
+            // 输出区块信息
+            byte[] finalHash = finalHeader.calculateHash();
+            System.out.println("\n创世区块哈希: " + bytesToHex(finalHash));
+            System.out.println("区块头哈希值(十六进制): " + new BigInteger(1, finalHash).toString(16));
+
+        } else {
+            System.out.println("挖矿失败，未找到有效的nonce");
+        }
+
+
+    }
 }

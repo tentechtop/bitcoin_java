@@ -28,9 +28,9 @@ public enum TableEnum {
             60
     ),
     // 区块信息表：定义表标识、列族名称、列族配置 Hash->区块
-    BLOCK(
+    TBLOCK(
             (short) 3,
-            "block",  // 列族实际存储名称
+            "TBLOCK",  // 列族实际存储名称
             new ColumnFamilyOptions()  // 列族配置
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
@@ -53,7 +53,7 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            1, //内存缓存 MB
+            0, //内存缓存 MB
             60 
     ),
     TUTXO(
@@ -96,10 +96,12 @@ public enum TableEnum {
             1, //内存缓存 MB
             60 
     ),
+
+
     
 
     TEST1(
-            (short) 10,
+            (short) 100,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
             0, //内存缓存 MB
@@ -107,7 +109,7 @@ public enum TableEnum {
     ),
 
     TEST2(
-            (short) 11,
+            (short) 110,
             "height_to_hash",  // 列族实际存储名称
             new ColumnFamilyOptions(),
             0, //内存缓存 MB

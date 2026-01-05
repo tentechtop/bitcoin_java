@@ -1,6 +1,7 @@
 package com.bit.coin.api;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
@@ -23,6 +24,9 @@ public class ChainApi {
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
+
+    @Autowired
+    private MiningServiceImpl miningService;
 
     /**
      * 根据Hash查询区块
@@ -80,5 +84,20 @@ public class ChainApi {
     public int calculateNextBlockDifficulty() {
         return blockChainService.calculateNextBlockDifficulty();
     }
+
+
+    @GetMapping("/startMining")
+    public Block startMining() throws Exception {
+        miningService.startMining();
+        return blockChainService.getMainLatestBlock();
+    }
+
+    @GetMapping("/mingOneBlock")
+    public Block mingOneBlock() throws Exception {
+        miningService.initAllResources();
+        Block block = miningService.mineOneBlock();
+        return block;
+    }
+
 
 }

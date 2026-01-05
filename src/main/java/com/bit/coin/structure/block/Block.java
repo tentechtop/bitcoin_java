@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.TransactionOutput;
 import tools.jackson.databind.annotation.JsonSerialize;
 
@@ -25,6 +26,7 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
         "txCount",
         "transactions"    // 交易列表
 })
+@Slf4j
 @Data
 public class Block {
     //非核心不参与序列化
@@ -47,6 +49,7 @@ public class Block {
 
     @JsonIgnore
     private long chainWork;
+
 
 
     public byte[] getHash(){
@@ -93,7 +96,8 @@ public class Block {
             // 序列化 BlockHeader
             byte[] headerBytes = blockHeader.serialize();
             dos.write(headerBytes);
-
+            log.info("序列化时的高度{}",height);
+            dos.writeInt(height);
             //交易数量
             dos.writeInt(txCount);
 
@@ -137,6 +141,7 @@ public class Block {
                 dis.readFully(headerBytes);
                 block.setBlockHeader(BlockHeader.deserialize(headerBytes));
 
+                block.setHeight(dis.readInt());
                 //交易数量
                 block.setTxCount(dis.readInt());
 

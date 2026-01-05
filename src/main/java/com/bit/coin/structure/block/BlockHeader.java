@@ -72,7 +72,6 @@ public class BlockHeader {
     }
 
 
-
     /**
      * 从bits字段解析出目标难度值
      * bits格式：前1字节为指数(exponent)，后3字节为系数(coefficient)
@@ -488,7 +487,16 @@ public class BlockHeader {
         System.out.println("反序列化区块验证结果: " + (deserializedValid ? "✅ 有效" : "❌ 无效"));
     }
 
-
+    public BlockHeader clone() {
+        BlockHeader blockHeaderCopy = new BlockHeader();
+        blockHeaderCopy.setVersion(this.getVersion());
+        blockHeaderCopy.setPreviousHash(this.getPreviousHash());
+        blockHeaderCopy.setMerkleRoot(this.getMerkleRoot());
+        blockHeaderCopy.setTime(this.getTime() );
+        blockHeaderCopy.setBits(this.getBits());
+        blockHeaderCopy.setNonce(this.getNonce());
+        return blockHeaderCopy;
+    }
 
 
 
