@@ -219,7 +219,7 @@ public class TxPoolImpl implements TxPool{
 
             // 3. 计算手续费
             long newFee = calculateFee(tx);
-            long originalFee = tx.getFee();
+            long originalFee = originalTx.getFee();
 
             // 4. 检查手续费是否满足RBF规则（至少增加25%）
             if (newFee < originalFee * RBF_FEE_INCREASE_RATIO) {
