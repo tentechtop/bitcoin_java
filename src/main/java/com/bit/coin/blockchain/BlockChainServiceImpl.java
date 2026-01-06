@@ -8,6 +8,7 @@ import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.txpool.TxPool;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
 import com.bit.coin.structure.tx.UTXO;
@@ -45,6 +46,9 @@ public class BlockChainServiceImpl {
 
     @Autowired
     private DataBase dataBase;
+
+    @Autowired
+    private TxPool txPool;
 
     private static volatile Block mainTipBlock = null;
 
@@ -101,6 +105,10 @@ public class BlockChainServiceImpl {
             //将区块加入到区块链
             addBlockToChain(block,true);
             mainTipBlock = block;
+
+            // 上链成功后，从交易池删除已确认的交易
+            removeConfirmedTxsFromPool(block);
+
         }else {
             //非主链延续
             byte[] previousHash = block.getBlockHeader().getPreviousHash();
@@ -123,6 +131,29 @@ public class BlockChainServiceImpl {
 
 
         return true;
+    }
+
+    /**
+     * 从交易池删除已上链的交易
+     */
+    private void removeConfirmedTxsFromPool(Block block) {
+        List<Transaction> transactions = block.getTransactions();
+        if (transactions == null || transactions.isEmpty()) {
+            return;
+        }
+
+        // 收集所有已确认的交易（跳过coinbase交易）
+        List<Transaction> confirmedTxs = new ArrayList<>();
+        for (Transaction tx : transactions) {
+            if (!tx.isCoinbase()) {
+                confirmedTxs.add(tx);
+            }
+        }
+
+        // 从交易池删除已确认的交易
+        if (!confirmedTxs.isEmpty()) {
+            txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]));
+        }
     }
 
 
@@ -165,6 +196,22 @@ public class BlockChainServiceImpl {
                         utxo.getAddressKey(),
                         longToLittleEndian(utxo.getValue()),
                         RocksDb.DbOperation.OpType.INSERT
+                ));
+            }
+
+            List<UTXO> spentUTXOKeys = block.getSpentUTXOKeys();
+            for (UTXO utxo : spentUTXOKeys){
+                operations.add(new RocksDb.DbOperation(
+                        TableEnum.TUTXO,
+                        utxo.getKey(),
+                        null,
+                        RocksDb.DbOperation.OpType.DELETE
+                ));
+                operations.add(new RocksDb.DbOperation(
+                        ADDR_TO_UTXO,
+                        utxo.getAddressKey(),
+                        null,
+                        RocksDb.DbOperation.OpType.DELETE
                 ));
             }
 
@@ -357,15 +404,20 @@ public class BlockChainServiceImpl {
 
 
     //获取交易手续费
-    public  long calculateTransactionFee(Transaction transaction) {
-
-        return 0;
+    public long calculateTransactionFee(Transaction transaction) {
+        return transaction.getFee();
     }
-    public  long calculateTransactionFee(List<Transaction> transactions) {
-
-        return 0;
+    public long calculateTransactionFee(List<Transaction> transactions) {
+        if (transactions == null || transactions.isEmpty()) {
+            return 0L; // 处理空列表或null值的情况
+        }
+        long totalFee = 0L;
+        for (Transaction transaction : transactions) {
+            // 假设Transaction类中有一个getFee()方法返回手续费
+            totalFee += transaction.getFee();
+        }
+        return totalFee;
     }
-
 
 
 
@@ -407,18 +459,14 @@ public class BlockChainServiceImpl {
         }
         Block deserialize = Block.deserialize(blockData);
         assert deserialize != null;
-        Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
-        Map<byte[], UTXO> utxOsByTx = getUTXOsByTx(transaction);
-        transaction.setUtxoMap(utxOsByTx);
-        boolean validate = transaction.validate();
         return deserialize.getTransactions().get(txIndexInBlock);
     }
 
 
     //获取一笔交易所有参与交易待花费的UTXO
-    public Map<byte[],UTXO> getUTXOsByTx(Transaction transaction) {
+    public Map<String,UTXO> getUTXOsByTx(Transaction transaction) {
         List<TxInput> inputs = transaction.getInputs();
-        Map<byte[],UTXO> utxos = new HashMap<>();
+        Map<String,UTXO> utxos = new HashMap<>();
         for (TxInput txInput:inputs){
             byte[] txId = txInput.getTxId();
             int index = txInput.getIndex();
@@ -430,7 +478,7 @@ public class BlockChainServiceImpl {
                 byte[] bytes = dataBase.get(TableEnum.TUTXO, key);
                 assert bytes != null;
                 UTXO deserialize = UTXO.deserialize(bytes);
-                utxos.put(key,deserialize);
+                utxos.put(bytesToHex(key),deserialize);
             }
         }
         return utxos;
@@ -457,19 +505,22 @@ public class BlockChainServiceImpl {
         //总额
         AtomicLong total = new AtomicLong();
         //UTXOLIST
+        log.info("前缀{}",bytesToHex(addr));
         ArrayList<UTXO> utxos = new ArrayList<>();
         dataBase.iterateByPrefix(ADDR_TO_UTXO,addr, (key, value) -> {
             // 在这里处理您找到的每一个键值对
             //ADDR_TO_UTXO 表中 key是 [地址 20字节][交易ID 32字节][索引4字节] value是小端金额
-            log.info("HEX{}",bytesToHex((byte[]) key));
             //去除地址 获得UTXOkey
             byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
+            log.info("UTXOKey: {}",bytesToHex(utxoKey));
             byte[] bytes = dataBase.get(TUTXO, utxoKey);
             UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
+            byte[] addressKey = deserialize.getAddressKey();
+            log.info("ADDUTXOKey: {}",bytesToHex(addressKey));
+
             utxos.add(deserialize);
             //金额
             long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
-            log.info("金额{}",amount);
             total.addAndGet(amount);
             return true;
         });
@@ -671,5 +722,10 @@ public class BlockChainServiceImpl {
         }
 
 
+    }
+
+    public UTXO getUtxo(String key) {
+        byte[] bytes = dataBase.get(TUTXO, hexToBytes(key));
+        return UTXO.deserialize(bytes);
     }
 }

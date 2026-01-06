@@ -26,7 +26,7 @@ public class UTXO {
     /**
      * [4字节] 输出索引
      */
-    private long index;
+    private int index;
 
     /**
      * [8字节] 金额
@@ -88,7 +88,7 @@ public class UTXO {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
             com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, txId, TX_ID_LENGTH);
-            dos.write(com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
+            dos.write(com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
             dos.write(com.bit.coin.utils.SerializeUtils.longToLittleEndian(value));
             com.bit.coin.utils.SerializeUtils.writeBoolean(dos, coinbase);
             com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, height);
@@ -110,9 +110,9 @@ public class UTXO {
         UTXO utxo = new UTXO();
         byte[] txId = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, TX_ID_LENGTH);
         utxo.setTxId(txId);
-        byte[] indexBytes = new byte[8];
+        byte[] indexBytes = new byte[4];
         dis.readFully(indexBytes);
-        utxo.setIndex(com.bit.coin.utils.SerializeUtils.littleEndianToLong(indexBytes));
+        utxo.setIndex(com.bit.coin.utils.SerializeUtils.readLittleEndianBytesToInt(indexBytes));
         byte[] valueBytes = new byte[8];
         dis.readFully(valueBytes);
         utxo.setValue(com.bit.coin.utils.SerializeUtils.littleEndianToLong(valueBytes));
@@ -194,12 +194,12 @@ public class UTXO {
     //获取KEY [交易ID][索引]
     @JsonIgnore
     public byte[] getKey() {
-        return com.bit.coin.utils.SerializeUtils.concat(txId, com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
+        return com.bit.coin.utils.SerializeUtils.concat(txId, com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
     }
 
     @JsonIgnore
     public static byte[] getKey(byte[] txId1, int index) {
-        return com.bit.coin.utils.SerializeUtils.concat(txId1, com.bit.coin.utils.SerializeUtils.longToLittleEndian(index));
+        return com.bit.coin.utils.SerializeUtils.concat(txId1, com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
     }
 
 
@@ -208,5 +208,7 @@ public class UTXO {
     public byte[] getAddressKey() {
         return com.bit.coin.utils.SerializeUtils.concat(script,getKey());
     }
+
+
 
 }

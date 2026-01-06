@@ -76,6 +76,16 @@ public class ChainApi {
     }
 
 
+    @GetMapping("/getUtxo")
+    public UTXO getUtxo(String key) {
+        byte[] bytes = hexToBytes(key);
+        log.info("打印Key{}",bytes);
+        return blockChainService.getUtxo(key);
+    }
+
+
+
+
     /**
      * 下一个区块应有难度
      * @return

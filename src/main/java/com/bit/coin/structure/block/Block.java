@@ -1,6 +1,7 @@
 package com.bit.coin.structure.block;
 
 import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
 import com.bit.coin.structure.tx.UTXO;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -15,6 +16,7 @@ import tools.jackson.databind.annotation.JsonSerialize;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
@@ -74,11 +76,38 @@ public class Block {
                 utxo.setHeight(height);
                 utxo.setValue(txOutput.getValue());
                 utxo.setScript(txOutput.getScriptPubKey());
+                utxo.setIndex(i);
                 utxos.add(utxo);
             }
         }
         return utxos;
     }
+
+    /**
+     * 获取参与交易的UTXO
+     * @return
+     */
+    @JsonIgnore
+    public List<UTXO> getSpentUTXOKeys(){
+        List<UTXO> utxos = new ArrayList<>();
+        for (Transaction tx : transactions) {
+            for (int i = 0; i < tx.getInputs().size(); i++) {
+                boolean coinbase = tx.isCoinbase();
+                if (!coinbase){
+                    Map<String, UTXO> utxoMap = tx.getUtxoMap();
+                    TxInput txInput = tx.getInputs().get(i);
+                    int index = txInput.getIndex();
+                    byte[] txId = txInput.getTxId();
+                    byte[] key = UTXO.getKey(txId, index);
+                    UTXO utxo = utxoMap.get(bytesToHex(key));
+                    utxos.add(utxo);
+                }
+            }
+        }
+        return utxos;
+    }
+
+
 
 
 

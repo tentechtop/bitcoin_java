@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 
 @Slf4j
@@ -728,6 +729,12 @@ public class RocksDb implements DataBase {
      * @param handler 一个回调处理器，用于处理遍历到的每一个键值对。
      *                如果 handler.handle() 返回 false，则会提前终止遍历。
      */
+    /**
+     * 安全地遍历具有指定前缀的键值对（修复版）
+     * @param table    要操作的表（列族）
+     * @param prefix   键的前缀（byte[] 格式）
+     * @param handler  回调处理器，处理每一个键值对。返回false则终止遍历
+     */
     public void iterateByPrefix(TableEnum table, byte[] prefix, KeyValueHandler handler) {
         // 1. 参数校验
         if (table == null || prefix == null || prefix.length == 0 || handler == null) {
@@ -737,30 +744,35 @@ public class RocksDb implements DataBase {
 
         rwLock.readLock().lock();
         RocksIterator iterator = null;
+        ReadOptions readOptions = null;
+
         try {
-            // 2. 获取列族句柄和迭代器
+            // 2. 获取列族句柄
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
                 log.warn("按前缀遍历失败：表[{}]不存在", table);
                 return;
             }
-            iterator = db.newIterator(cfHandle);
 
-            // 3. 定位到第一个大于或等于前缀的键
+            // 3. 配置ReadOptions启用前缀扫描模式
+            readOptions = new ReadOptions().setPrefixSameAsStart(true);
+            iterator = db.newIterator(cfHandle, readOptions);
+
+            // 4. 定位到第一个大于或等于前缀的键
             iterator.seek(prefix);
 
-            // 4. 循环遍历并检查前缀
+            // 5. 循环遍历
             while (iterator.isValid()) {
                 byte[] currentKey = iterator.key();
 
-                // 核心判断：检查当前键是否仍然以目标前缀开头
-                // 如果不是，则说明所有前缀匹配的键已遍历完毕，退出循环
+                // 关键修复：在处理前先检查前缀匹配
                 if (!startsWith(currentKey, prefix)) {
-                    break;
+                    log.info("前缀{}",bytesToHex(prefix));
+                    log.info("当前Key{}",bytesToHex(currentKey));
+                    break; // 遇到不匹配前缀的键，立即终止
                 }
 
-                // 调用回调处理器处理当前键值对
-                // 如果处理器返回 false，则提前终止遍历
+                // 调用处理器处理当前键值对
                 if (!handler.handle(currentKey, iterator.value())) {
                     log.debug("处理器要求终止遍历，前缀: {}", Arrays.toString(prefix));
                     break;
@@ -769,12 +781,18 @@ public class RocksDb implements DataBase {
                 // 移动到下一个键
                 iterator.next();
             }
+
             log.debug("按前缀遍历完成，前缀: {}", Arrays.toString(prefix));
 
+        } catch (Exception e) {
+            log.error("按前缀遍历异常，前缀: {}", Arrays.toString(prefix), e);
         } finally {
-            // 5. 确保迭代器被关闭，释放资源
+            // 6. 确保资源释放
             if (iterator != null) {
                 iterator.close();
+            }
+            if (readOptions != null) {
+                readOptions.close();
             }
             rwLock.readLock().unlock();
         }

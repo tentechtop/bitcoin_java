@@ -6,12 +6,14 @@ import com.bit.coin.structure.Result;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.txpool.TxPool;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.*;
@@ -34,8 +36,11 @@ public class MiningServiceImpl {
     @Autowired
     private DataBase dataBase;
 
+    @Autowired
+    private TxPool txPool;
+
     //矿工地址
-    private static final String MINER_ADDRESS = "J5JGY238f6TGBuscTBs5AQjDu6Jpau1mUaFYq89ty3GR";
+    private static final String MINER_ADDRESS = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
 
 
     volatile public static boolean isMining = false;
@@ -166,15 +171,20 @@ public class MiningServiceImpl {
     }
 
     public synchronized Block mineOneBlock() throws Exception {
-        // 2. 获取最新区块信息（确保基于最新主链打包）
+        // 1. 获取最新区块信息（确保基于最新主链打包）
         byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
         byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
         byte[] bytes = dataBase.get(TBLOCK, tipHash);
         Block latestBlock = Block.deserialize(bytes);
         int newBlockHeight = bytesToInt(tipHeight) + 1;
-        // 3. 从交易池筛选有效交易（高优先级+不超过区块大小限制）
-        List<Transaction> selectedTxs = new ArrayList<>();
-        // 4. 构建新区块（含CoinBase交易、Merkle根等）
+
+        // 2. 从交易池提取交易到区块（自动标记为打包中）
+        Transaction[] extractedTxs = txPool.extractTxsForBlock();
+        List<Transaction> selectedTxs = new ArrayList<>(extractedTxs.length);
+        selectedTxs.addAll(Arrays.asList(extractedTxs));
+
+        // 3. 构建新区块（含CoinBase交易、Merkle根等）
+        assert latestBlock != null;
         Block newBlock = buildNewBlock(latestBlock, selectedTxs, newBlockHeight);
         MiningResult result = executeMining(newBlock);
         handleMiningResult(newBlock, result, selectedTxs);
@@ -311,18 +321,21 @@ public class MiningServiceImpl {
 
 
     /**
-     * 处理挖矿结果（成功则提交区块，失败则直接重试）
+     * 处理挖矿结果（成功则提交区块，失败则回退交易到交易池）
      */
     private void handleMiningResult(Block newBlock, MiningResult result, List<Transaction> selectedTxs) {
         if (result != null && result.found) {
             log.info("区块 #{} 挖矿成功", newBlock.getHeight());
-            // 挖矿成功：提交区块+清理交易池
+            // 挖矿成功：提交区块（上链后自动删除交易池交易）
             newBlock.getBlockHeader().setNonce(result.nonce);
             newBlock.setHash(result.hash);
             blockChainService.verifyBlock(newBlock);
         } else {
-            // 挖矿失败/超时：直接重试（无需释放资源）
-            log.info("区块 #{} 挖矿失败，准备重新打包...", newBlock.getHeight());
+            // 挖矿失败：回退交易到交易池，允许重新参与打包
+            log.info("区块 #{} 挖矿失败，回退交易到交易池", newBlock.getHeight());
+            if (!selectedTxs.isEmpty()) {
+                txPool.onBlockFailed(selectedTxs.toArray(new Transaction[0]));
+            }
         }
     }
 

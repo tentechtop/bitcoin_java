@@ -21,6 +21,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+
 @Slf4j
 @Data
 @JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs"})  // 按指定顺序输出
@@ -58,12 +60,20 @@ public class Transaction {
      * 参与交易待花费的UTXO
      */
     @JsonIgnore
-    private Map<byte[],UTXO> utxoMap;
+    private Map<String,UTXO> utxoMap;
 
     /**
      * 手续费
      */
+    @JsonIgnore
     private long fee;
+
+
+    /**
+     * 状态
+     */
+    @JsonIgnore
+    private long status;
 
 
 
@@ -97,9 +107,9 @@ public class Transaction {
                 int sourceIndex = input.getIndex();
 
                 // 从UTXO集合中查找对应的UTXO
-                UTXO referencedUtxo = utxoMap.get(UTXO.getKey(sourceTxId, sourceIndex));
+                UTXO referencedUtxo = utxoMap.get(bytesToHex(UTXO.getKey(sourceTxId, sourceIndex)));
                 if (referencedUtxo == null) {
-                    log.warn("交易验证失败：输入引用了一个不存在的UTXO (txId: {}, index: {})。", SerializeUtils.bytesToHex(sourceTxId), sourceIndex);
+                    log.warn("交易验证失败：输入引用了一个不存在的UTXO (txId: {}, index: {})。", bytesToHex(sourceTxId), sourceIndex);
                     return false;
                 }
 
@@ -129,7 +139,7 @@ public class Transaction {
 
             // 计算总输入金额
             for (TxInput input : inputs) {
-                UTXO utxo = utxoMap.get(UTXO.getKey(input.getTxId(), input.getIndex()));
+                UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
                 if (utxo == null) {
                     // 理论上前面签名验证已经通过，这里不应该发生
                     log.error("金额校验失败：找不到UTXO。");
@@ -156,7 +166,7 @@ public class Transaction {
         byte[] calculatedTxId = calculateTxId();
         if (!Arrays.equals(this.txId, calculatedTxId)) {
             log.warn("交易验证失败：交易头中的txId与计算出的txId不符。存储的: {}, 计算的: {}",
-                    SerializeUtils.bytesToHex(this.txId), SerializeUtils.bytesToHex(calculatedTxId));
+                    bytesToHex(this.txId), bytesToHex(calculatedTxId));
             return false;
         }
         log.info("交易ID自洽性验证通过。");
@@ -202,7 +212,7 @@ public class Transaction {
             TxInput input = inputs.get(i);
             byte[] txId1 = input.getTxId();
             int index = input.getIndex();
-            UTXO utxo = utxoMap.get(UTXO.getKey(txId1, index));
+            UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(txId1, index)));
             byte[] scriptPubKey = utxo.getScript();
             byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(prepareDataForSigning(i, scriptPubKey, SIGHASH_ALL)));
             //将签名和公钥组合为解锁脚本
@@ -611,7 +621,7 @@ public class Transaction {
         System.out.println("\n=== 序列化交易 ===");
         byte[] serialized = tx1.serializeWithOutTxId();
         System.out.println("序列化后字节长度: " + serialized.length + " 字节");
-        System.out.println("序列化结果（前64字节）: " + com.bit.coin.utils.SerializeUtils.bytesToHex(
+        System.out.println("序列化结果（前64字节）: " + bytesToHex(
             serialized.length > 64 ? java.util.Arrays.copyOf(serialized, 64) : serialized));
 
         // 反序列化

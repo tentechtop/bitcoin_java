@@ -30,6 +30,13 @@ public interface TxPool {
     //根据地址查询交易池中待确认的UTXO
     Transaction[] getUTXOsByAddress(String address);
 
+    // 从交易池提取交易到区块（将交易移入打包状态，返回可打包的交易数组）
+    Transaction[] extractTxsForBlock();
 
+    // 区块上链成功，从交易池删除已确认的交易
+    void onBlockConfirmed(Transaction[] confirmedTxs);
+
+    // 区块上链失败，回退交易到交易池（将交易从打包状态释放回可用状态）
+    void onBlockFailed(Transaction[] failedTxs);
 
 }

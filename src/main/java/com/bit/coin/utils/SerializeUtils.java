@@ -62,15 +62,7 @@ public class SerializeUtils {
         }
     }
 
-    /**
-     * int转小端字节序字节数组（4字节）
-     */
-    public byte[] intToLittleEndian(int value) {
-        return ByteBuffer.allocate(4)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(value)
-                .array();
-    }
+
 
     /**
      * 小端字节序字节数组转int（4字节）
@@ -91,6 +83,27 @@ public class SerializeUtils {
                 .putLong(value)
                 .array();
     }
+
+    public static byte[] intToLittleEndian(int value) {
+        return new byte[] {
+                (byte) (value),         // 最低位字节（LSB）
+                (byte) (value >> 8),    // 次低位字节
+                (byte) (value >> 16),   // 次高位字节
+                (byte) (value >> 24)    // 最高位字节（MSB）
+        };
+    }
+
+    public static int readLittleEndianBytesToInt(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) {
+            throw new IllegalArgumentException("字节数组长度必须至少为4");
+        }
+        return (bytes[0] & 0xFF) |           // 最低位字节
+                ((bytes[1] & 0xFF) << 8) |    // 次低位字节
+                ((bytes[2] & 0xFF) << 16) |   // 次高位字节
+                ((bytes[3] & 0xFF) << 24);    // 最高位字节
+    }
+
+
 
     // 辅助方法: 小端字节序转long
     public static long littleEndianToLong(byte[] bytes) {

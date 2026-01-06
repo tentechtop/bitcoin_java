@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.util.Arrays;
 
 import static com.bit.coin.structure.tx.Transaction.TX_ID_LENGTH;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
@@ -215,7 +216,8 @@ public class TxInput {
                     dos.write(scriptSig);
                 }
             }else {
-                com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, scriptSig, SCRIPT_SIG_LENGTH);
+                log.info("解锁脚本{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
+                com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, scriptSig, scriptSig.length);
             }
             dos.close();
             return baos.toByteArray();
