@@ -60,6 +60,11 @@ public class Transaction {
     @JsonIgnore
     private Map<byte[],UTXO> utxoMap;
 
+    /**
+     * 手续费
+     */
+    private long fee;
+
 
 
     //验证交易合法性
