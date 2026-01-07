@@ -4,6 +4,16 @@ import com.bit.coin.structure.tx.Transaction;
 
 public interface TxPool {
 
+    //查询交易
+
+    //查询UTXO
+
+    //根据地址查询可以用于新交易的UTXO
+
+    //根据地址查询交易
+
+
+
     //验证交易
     boolean verifyTx(Transaction tx);
 
