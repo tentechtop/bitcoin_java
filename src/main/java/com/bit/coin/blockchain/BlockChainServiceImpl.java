@@ -8,11 +8,8 @@ import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
-import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.*;
 import com.bit.coin.txpool.TxPool;
-import com.bit.coin.structure.tx.TxInput;
-import com.bit.coin.structure.tx.TxOutput;
-import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.utils.Sha;
 import com.bit.coin.utils.TimeGenerator;
 import jakarta.annotation.PostConstruct;
@@ -444,6 +441,11 @@ public class BlockChainServiceImpl {
      * @return 找到的 Transaction 对象，如果未找到或发生错误则返回 null
      */
     public Transaction getTxByHash(byte[] txId) {
+        //先查询是否在交易池中
+        Transaction tx = txPool.getTx(txId);
+        if (tx!=null){
+            return tx;
+        }
         // 1. 从 "tx_to_block" 表中获取区块索引信息
         byte[] blockIndexBytes = dataBase.get(TableEnum.TX_TO_BLOCK, txId);
         if (blockIndexBytes == null) {
@@ -462,7 +464,19 @@ public class BlockChainServiceImpl {
         }
         Block deserialize = Block.deserialize(blockData);
         assert deserialize != null;
-        return deserialize.getTransactions().get(txIndexInBlock);
+        Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
+
+        long status = 0;
+        //交易所在的区块是否主连
+        int height = deserialize.getHeight();
+        byte[] bytes = dataBase.get(HEIGHT_TO_HASH, height);
+        if (Arrays.equals(bytes, deserialize.getHash())){
+            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
+        }else {
+            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
+        }
+        transaction.setStatus(status);
+        return transaction;
     }
 
 

@@ -3,12 +3,11 @@ package com.bit.coin.txpool;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
-import com.bit.coin.structure.tx.Transaction;
-import com.bit.coin.structure.tx.TransactionStatusResolver;
-import com.bit.coin.structure.tx.TxInput;
-import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.structure.tx.*;
 import com.bit.coin.utils.SerializeUtils;
+import com.bit.coin.utils.Sha;
 import lombok.extern.slf4j.Slf4j;
+import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -44,6 +43,15 @@ public class TxPoolImpl implements TxPool{
     // RBF手续费增加比例阈值（至少增加25%）
     private static final double RBF_FEE_INCREASE_RATIO = 1.25;
 
+
+    //花费中待确认UTXO key
+    Set<String> spendingSet = ConcurrentHashMap.newKeySet();
+    //到账中待确认的UTXO key
+    Set<String> processingSet = ConcurrentHashMap.newKeySet();
+
+
+
+
     @Override
     public boolean verifyTx(Transaction tx) {
         try {
@@ -78,6 +86,10 @@ public class TxPoolImpl implements TxPool{
                 UTXO utxo = utxoCache.getUTXO(key);
                 if (utxo == null) {
                     log.warn("交易验证失败：UTXO不存在，txId={}, index={}", bytesToHex(txId), index);
+                    return false;
+                }
+                if (!utxo.isSpendable()){
+                    log.warn("交易验证失败：UTXO不可花费，txId={}, index={}", bytesToHex(txId), index);
                     return false;
                 }
                 utxoMap.put(bytesToHex(key), utxo);
@@ -215,8 +227,11 @@ public class TxPoolImpl implements TxPool{
 
             log.info("交易添加成功：txId={}, fee={}, status={}",
                     txIdStr, fee, TransactionStatusResolver.toString(status));
-
             utxoCache.addPendingTx(tx);
+            List<String> utxoList = tx.getSpendingUTXOKeyList();
+            spendingSet.addAll(utxoList);
+            List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
+            processingSet.addAll(pendingConfirmationOfReceipt);
             return true;
         } catch (Exception e) {
             log.error("添加交易异常", e);
@@ -428,6 +443,8 @@ public class TxPoolImpl implements TxPool{
 
     @Override
     public Transaction[] getTxsByAddress(String address) {
+        byte[] decode = Base58.decode(address);
+        address = bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(decode)));
         if (address == null) {
             return new Transaction[0];
         }
@@ -444,11 +461,6 @@ public class TxPoolImpl implements TxPool{
                 .toArray(Transaction[]::new);
     }
 
-    @Override
-    public Transaction[] getUTXOsByAddress(String address) {
-        // 返回地址相关的待确认UTXO（即交易池中输出到该地址的交易）
-        return getTxsByAddress(address);
-    }
 
     // =============== 辅助方法 ===============
 
@@ -545,6 +557,7 @@ public class TxPoolImpl implements TxPool{
     private void buildAddressMapping(Transaction tx, byte[] txId) {
         for (var output : tx.getOutputs()) {
             String address = bytesToHex(output.getScriptPubKey());
+            log.info("地址到交易的索引{}",address);
             addressToTxs.computeIfAbsent(address, k -> ConcurrentHashMap.newKeySet()).add(txId);
         }
     }
@@ -569,7 +582,6 @@ public class TxPoolImpl implements TxPool{
         if (confirmedTxs == null || confirmedTxs.length == 0) {
             return;
         }
-
         try {
             for (Transaction tx : confirmedTxs) {
                 if (tx == null || tx.isCoinbase()) {
@@ -596,6 +608,12 @@ public class TxPoolImpl implements TxPool{
                             txIdStr, TransactionStatusResolver.toString(status));
                 }
                 utxoCache.addConfirmedTx(tx,height);
+
+                List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
+                //去除
+                spendingUTXOKeyList.forEach(spendingSet::remove);
+                List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
+                pendingConfirmationOfReceipt.forEach(processingSet::remove);
             }
             log.info("区块上链成功，共删除 {} 笔交易", confirmedTxs.length);
         } catch (Exception e) {
@@ -629,6 +647,11 @@ public class TxPoolImpl implements TxPool{
                             txIdStr, TransactionStatusResolver.toString(status));
                 }
                 utxoCache.revokePendingTx(tx);
+                List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
+                //去除
+                spendingUTXOKeyList.forEach(spendingSet::remove);
+                List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
+                pendingConfirmationOfReceipt.forEach(processingSet::remove);
             }
             log.info("区块上链失败，已回退 {} 笔交易到交易池", failedTxs.length);
         } catch (Exception e) {

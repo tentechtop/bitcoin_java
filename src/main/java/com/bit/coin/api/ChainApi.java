@@ -7,6 +7,7 @@ import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.txpool.TxPool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,6 +32,9 @@ public class ChainApi {
 
     @Autowired
     private UTXOCache utxoCache;
+
+    @Autowired
+    private TxPool txPool;
 
     /**
      * 根据Hash查询区块
@@ -104,6 +108,15 @@ public class ChainApi {
     public List<Transaction> getTxListByAddres(String address) {
         return blockChainService.getTxListByAddres(address);
     }
+
+    /**
+     * 查询地址下所有的交易
+     */
+    @GetMapping("/getTxListByAddresInPool")
+    public List<Transaction> getTxListByAddresInPool(String address) {
+        return List.of(txPool.getTxsByAddress(address));
+    }
+
 
 
     @GetMapping("/getUtxo")

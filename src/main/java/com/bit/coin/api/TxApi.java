@@ -61,7 +61,7 @@ public class TxApi {
 
 
     @RequestMapping("/transfer")
-    public String transfer(@RequestBody  TransferDTO transferDTO) throws Exception {
+    public Transaction transfer(@RequestBody  TransferDTO transferDTO) throws Exception {
 
         // 1. 解析私钥
         byte[] privateKey = SerializeUtils.hexToBytes(transferDTO.getPrivateKeyHex());
@@ -175,6 +175,6 @@ public class TxApi {
         log.info("转账交易创建成功: txId={}, 输入金额={}, 输出金额={}, 手续费={}, 找零={}",
                 txIdHex, totalInput, transferDTO.getValue() + change, fee, change);
 
-        return txIdHex;
+        return tx;
     }
 }

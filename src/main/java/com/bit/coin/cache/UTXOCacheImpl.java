@@ -66,11 +66,6 @@ public class UTXOCacheImpl implements UTXOCache {
             .recordStats()
             .build();
 
-    //正在花费中待确认的UTXO
-
-    //新生成待确认的UTXO
-
-
     //锁定脚本到UTXO
     private final Map<String, Set<String>> addressCache = new ConcurrentHashMap<>();
 

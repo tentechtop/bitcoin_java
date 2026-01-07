@@ -18,6 +18,7 @@ public class TransactionStatusResolver {
     public static final long REJECTED         = 1L << 5;  // 已拒绝（验证失败）
     public static final long REPLACED         = 1L << 6;  // 已被替换（RBF）
     public static final long EXPIRED          = 1L << 7;  // 已过期（超时未确认）
+    public static final long FORK             = 1L << 8;  // 所在区块非主链
 
     // 主要状态掩码（用于清除操作）
     public static final long LIFECYCLE_MASK =
@@ -66,6 +67,9 @@ public class TransactionStatusResolver {
     public static final long MULTISIG_TX       = 1L << (FLAG_OFFSET + 23); // 多重签名交易
     public static final long CONTRACT_TX        = 1L << (FLAG_OFFSET + 24); // 合约交易
     public static final long WITNESS_TX        = 1L << (FLAG_OFFSET + 25); // 隔离见证交易
+
+
+
 
     // ======================== 常用状态组合 ========================
     // 交易池中已验证的普通交易
@@ -319,6 +323,7 @@ public class TransactionStatusResolver {
         if (hasFlag(statusMask, MULTISIG_TX)) parts.add("多重签名");
         if (hasFlag(statusMask, CONTRACT_TX)) parts.add("合约交易");
         if (hasFlag(statusMask, WITNESS_TX)) parts.add("隔离见证");
+
 
         return String.join(" | ", parts);
     }

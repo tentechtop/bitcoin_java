@@ -1,16 +1,13 @@
 package com.bit.coin.txpool;
 
 import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.UTXO;
+
+import java.util.List;
 
 public interface TxPool {
 
-    //查询交易
 
-    //查询UTXO
-
-    //根据地址查询可以用于新交易的UTXO
-
-    //根据地址查询交易
 
 
 
@@ -36,9 +33,6 @@ public interface TxPool {
 
     //根据地址查询交易池中的交易
     Transaction[] getTxsByAddress(String address);
-
-    //根据地址查询交易池中待确认的UTXO
-    Transaction[] getUTXOsByAddress(String address);
 
     // 从交易池提取交易到区块（将交易移入打包状态，返回可打包的交易数组）
     Transaction[] extractTxsForBlock();

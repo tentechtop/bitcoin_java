@@ -13,6 +13,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 import static com.bit.coin.structure.tx.UTXOStatusResolver.PENDING_SPENT;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Data
 @JsonPropertyOrder({"txId", "index", "value","script","coinbase","height"})  // 按指定顺序输出
@@ -207,9 +208,20 @@ public class UTXO {
     }
 
     @JsonIgnore
+    public String getKeyStr() {
+        return bytesToHex(getKey());
+    }
+
+    @JsonIgnore
     public static byte[] getKey(byte[] txId1, int index) {
         return com.bit.coin.utils.SerializeUtils.concat(txId1, com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
     }
+
+    @JsonIgnore
+    public static String getKeyStr(byte[] txId1, int index) {
+        return bytesToHex(getKey(txId1,index));
+    }
+
 
 
     //获取地址索引 [地址][交易ID][索引]
@@ -232,4 +244,7 @@ public class UTXO {
         return utxo;
     }
 
+    public boolean isSpendable() {
+        return UTXOStatusResolver.isSpendable(status);
+    }
 }

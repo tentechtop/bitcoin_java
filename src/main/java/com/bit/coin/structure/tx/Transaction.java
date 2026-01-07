@@ -75,6 +75,13 @@ public class Transaction {
     @JsonIgnore
     private long status;
 
+    private String statusStr;
+
+    public String getStatusStr(){
+        return TransactionStatusResolver.toString(status);
+    }
+
+
 
 
     //验证交易合法性
@@ -727,4 +734,34 @@ public class Transaction {
         return result;
     }
 
+    @JsonIgnore
+    public List<String> getSpendingUTXOKeyList() {
+        boolean coinbase = isCoinbase();
+        if (coinbase){
+            return null;
+        }
+        ArrayList<String> utxos = new ArrayList<>();
+        for (int i = 0; i < inputs.size(); i++) {
+            TxInput input = inputs.get(i);
+            int index = input.getIndex();
+            byte[] txId1 = input.getTxId();
+            utxos.add(UTXO.getKeyStr(txId1, index));
+        }
+        return utxos;
+    }
+
+
+    @JsonIgnore
+    public List<String> getPendingConfirmationOfReceipt() {
+        boolean coinbase = isCoinbase();
+        if (coinbase){
+            return null;
+        }
+        ArrayList<String> utxos = new ArrayList<>();
+        for (int i = 0; i < outputs.size(); i++) {
+            String keyStr = UTXO.getKeyStr(getTxId(), i);
+            utxos.add(keyStr);
+        }
+        return utxos;
+    }
 }
