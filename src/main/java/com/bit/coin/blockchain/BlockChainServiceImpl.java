@@ -1,5 +1,6 @@
 package com.bit.coin.blockchain;
 
+import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.RocksDb;
@@ -49,6 +50,8 @@ public class BlockChainServiceImpl {
 
     @Autowired
     private TxPool txPool;
+
+
 
     private static volatile Block mainTipBlock = null;
 
@@ -152,7 +155,7 @@ public class BlockChainServiceImpl {
 
         // 从交易池删除已确认的交易
         if (!confirmedTxs.isEmpty()) {
-            txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]));
+            txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]),block.getHeight());
         }
     }
 
@@ -512,12 +515,8 @@ public class BlockChainServiceImpl {
             //ADDR_TO_UTXO 表中 key是 [地址 20字节][交易ID 32字节][索引4字节] value是小端金额
             //去除地址 获得UTXOkey
             byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
-            log.info("UTXOKey: {}",bytesToHex(utxoKey));
             byte[] bytes = dataBase.get(TUTXO, utxoKey);
             UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
-            byte[] addressKey = deserialize.getAddressKey();
-            log.info("ADDUTXOKey: {}",bytesToHex(addressKey));
-
             utxos.add(deserialize);
             //金额
             long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
@@ -526,6 +525,9 @@ public class BlockChainServiceImpl {
         });
         return Map.of("total",total.get(),"utxos",utxos);
     }
+
+
+
 
     public Block getBlockByHeight(int height) {
         byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);

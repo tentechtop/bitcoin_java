@@ -12,6 +12,8 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.PENDING_SPENT;
+
 @Data
 @JsonPropertyOrder({"txId", "index", "value","script","coinbase","height"})  // 按指定顺序输出
 public class UTXO {
@@ -54,7 +56,14 @@ public class UTXO {
      * UTXO状态
      */
     @JsonIgnore
-    private int status;
+    private long status;
+
+    private String statusStr;
+
+    public String getStatusStr(){
+        return UTXOStatusResolver.toString(status);
+    }
+
 
     // 常量定义
     public static final int TX_ID_LENGTH = 32;         // 交易ID长度
@@ -155,7 +164,7 @@ public class UTXO {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
         dos.write(serialize());
-        com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, status);
+        com.bit.coin.utils.SerializeUtils.writeLittleEndianLong(dos, status);
         dos.close();
         return baos.toByteArray();
     }
@@ -170,9 +179,9 @@ public class UTXO {
         UTXO utxo = deserialize(dis);
 
         // 读取状态（小端字节序）
-        byte[] statusBytes = new byte[4];
+        byte[] statusBytes = new byte[8];
         dis.readFully(statusBytes);
-        utxo.setStatus(com.bit.coin.utils.SerializeUtils.littleEndianToInt(statusBytes));
+        utxo.setStatus(com.bit.coin.utils.SerializeUtils.littleEndianToLong(statusBytes));
         return utxo;
     }
 
@@ -210,5 +219,17 @@ public class UTXO {
     }
 
 
+    //克隆
+    public UTXO clone() {
+        UTXO utxo = new UTXO();
+        utxo.setTxId(txId);
+        utxo.setIndex(index);
+        utxo.setValue(value);
+        utxo.setCoinbase(coinbase);
+        utxo.setHeight(height);
+        utxo.setScript(script);
+        utxo.setStatus(status);
+        return utxo;
+    }
 
 }

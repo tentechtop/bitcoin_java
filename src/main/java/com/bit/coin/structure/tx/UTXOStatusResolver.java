@@ -15,6 +15,8 @@ public class UTXOStatusResolver {
     public static final long SPENT               = 1L << 3;  // 已花费（输入交易已确认）
     public static final long ORPHANED            = 1L << 4;  // 被孤立/被回滚
 
+
+
     // 主要状态掩码（用于清除操作）
     public static final long LIFECYCLE_MASK =
             UNCONFIRMED_OUTPUT | CONFIRMED_UNSPENT | PENDING_SPENT | SPENT | ORPHANED;

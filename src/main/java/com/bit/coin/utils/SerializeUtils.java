@@ -23,6 +23,10 @@ public class SerializeUtils {
                 .array());
     }
 
+    public static void writeLittleEndianLong(DataOutputStream dos, long value) throws IOException {
+        dos.writeLong(Long.reverseBytes(value));
+    }
+
     /**
      * 将一个整数作为可变长度整数 (VarInt) 写入流中。
      *

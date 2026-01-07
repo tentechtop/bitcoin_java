@@ -1,6 +1,7 @@
 package com.bit.coin.api;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
@@ -27,6 +28,9 @@ public class ChainApi {
 
     @Autowired
     private MiningServiceImpl miningService;
+
+    @Autowired
+    private UTXOCache utxoCache;
 
     /**
      * 根据Hash查询区块
@@ -66,6 +70,32 @@ public class ChainApi {
     public Map<String,Object> getUTXOs(String address) {
         return blockChainService.getUTXOs(address);
     }
+
+
+    /**
+     * 根据地址查询地址下所有的UTXO
+     */
+    @GetMapping("/getUTXOListByAddresInCaChe")
+    public List<UTXO> getUTXOListByAddresInCaChe(String address) {
+        return utxoCache.getUTXOsByAddress(address);
+    }
+
+    /**
+     * 查询地址下所有的UTXO
+     */
+    @GetMapping("/getUTXOsByAddres")
+    public List<UTXO> getUTXOsByAddres(String address) {
+        return utxoCache.getAddressAllUTXO(address);
+    }
+
+    /**
+     * 查询地址下所有的UTXO
+     */
+    @GetMapping("/getAddressAllUTXO")
+    public List<UTXO> getAddressAllUTXOByStatus(String address,long status) {
+        return utxoCache.getAddressAllUTXOByStatus(address,status);
+    }
+
 
     /**
      * 查询地址下所有的交易
@@ -108,6 +138,9 @@ public class ChainApi {
         Block block = miningService.mineOneBlock();
         return block;
     }
+
+
+
 
 
 }

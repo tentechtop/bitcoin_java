@@ -1,5 +1,6 @@
 package com.bit.coin.txpool;
 
+import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.structure.tx.Transaction;
@@ -23,6 +24,9 @@ public class TxPoolImpl implements TxPool{
 
     @Autowired
     private DataBase dataBase;
+
+    @Autowired
+    private UTXOCache utxoCache;
 
     // 内存池：hex txId -> Transaction
     private final Map<String, Transaction> mempool = new ConcurrentHashMap<>();
@@ -71,13 +75,11 @@ public class TxPoolImpl implements TxPool{
                 log.info("UTXOKey{}",bytesToHex(key));
 
                 // 3.1 检查UTXO是否存在于数据库
-                byte[] bytes = dataBase.get(TableEnum.TUTXO, key);
-                if (bytes == null) {
+                UTXO utxo = utxoCache.getUTXO(key);
+                if (utxo == null) {
                     log.warn("交易验证失败：UTXO不存在，txId={}, index={}", bytesToHex(txId), index);
                     return false;
                 }
-
-                UTXO utxo = UTXO.deserialize(bytes);
                 utxoMap.put(bytesToHex(key), utxo);
                 utxoList.add(utxo);
             }
@@ -90,13 +92,11 @@ public class TxPoolImpl implements TxPool{
                         byte[] memKey = UTXO.getKey(memInput.getTxId(), memInput.getIndex());
                         if (Arrays.equals(key, memKey)) {
                             log.warn("交易验证失败：UTXO已在交易池中被使用");
-
                             // 标记双花嫌疑状态
                             long status = tx.getStatus();
                             status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.REJECTED);
                             status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.DOUBLE_SPEND_FLAG);
                             tx.setStatus(status);
-
                             return false;
                         }
                     }
@@ -215,8 +215,9 @@ public class TxPoolImpl implements TxPool{
 
             log.info("交易添加成功：txId={}, fee={}, status={}",
                     txIdStr, fee, TransactionStatusResolver.toString(status));
-            return true;
 
+            utxoCache.addPendingTx(tx);
+            return true;
         } catch (Exception e) {
             log.error("添加交易异常", e);
             return false;
@@ -465,9 +466,8 @@ public class TxPoolImpl implements TxPool{
         // 计算总输入
         for (TxInput input : tx.getInputs()) {
             byte[] key = UTXO.getKey(input.getTxId(), input.getIndex());
-            byte[] bytes = dataBase.get(TableEnum.TUTXO, key);
-            if (bytes != null) {
-                UTXO utxo = UTXO.deserialize(bytes);
+            UTXO utxo = utxoCache.getUTXO(key);
+            if (utxo != null) {
                 totalInput += utxo.getValue();
             }
         }
@@ -565,7 +565,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public void onBlockConfirmed(Transaction[] confirmedTxs) {
+    public void onBlockConfirmed(Transaction[] confirmedTxs,int height) {
         if (confirmedTxs == null || confirmedTxs.length == 0) {
             return;
         }
@@ -595,6 +595,7 @@ public class TxPoolImpl implements TxPool{
                     log.info("区块上链成功，从交易池删除交易：{}，状态={}",
                             txIdStr, TransactionStatusResolver.toString(status));
                 }
+                utxoCache.addConfirmedTx(tx,height);
             }
             log.info("区块上链成功，共删除 {} 笔交易", confirmedTxs.length);
         } catch (Exception e) {
@@ -627,6 +628,7 @@ public class TxPoolImpl implements TxPool{
                     log.debug("区块上链失败，回退交易到交易池：{}，状态={}",
                             txIdStr, TransactionStatusResolver.toString(status));
                 }
+                utxoCache.revokePendingTx(tx);
             }
             log.info("区块上链失败，已回退 {} 笔交易到交易池", failedTxs.length);
         } catch (Exception e) {

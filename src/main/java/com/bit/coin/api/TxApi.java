@@ -1,6 +1,7 @@
 package com.bit.coin.api;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.structure.tx.Transaction;
@@ -22,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
@@ -33,6 +35,9 @@ public class TxApi {
 
     @Autowired
     private TxPool txPool;
+
+    @Autowired
+    private UTXOCache utxoCache;
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -73,8 +78,9 @@ public class TxApi {
 
         // 3. 获取发送方的UTXO
         String senderAddress = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
-        Map<String, Object> utxOs = blockChainService.getUTXOs(senderAddress);
-        List<UTXO> utxos = (ArrayList<UTXO>) utxOs.get("utxos");
+        Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress,CONFIRMED_UNSPENT);
+
+        List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
         long total = (long) utxOs.get("total");
 
         // 4. 检查余额是否足够
