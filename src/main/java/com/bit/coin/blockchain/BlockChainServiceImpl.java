@@ -241,7 +241,22 @@ public class BlockChainServiceImpl {
                     blockIndex,
                     RocksDb.DbOperation.OpType.INSERT
             ));
-            //地址到交易的索引
+            //地址到交易的索引 获取输出列表所有的锁定脚本
+            List<TxOutput> outputs = transaction.getOutputs();
+            // 使用LinkedHashSet进行去重，并保留顺序
+            Set<byte[]> seenScripts = new LinkedHashSet<>();
+            for (TxOutput output : outputs) {
+                byte[] scriptPubKey = output.getScriptPubKey();
+                // 如果add方法返回true，说明是首次添加，不是重复项
+                if (seenScripts.add(scriptPubKey)) {
+                    operations.add(new RocksDb.DbOperation(
+                            TableEnum.ADDR_TO_TX,
+                            scriptPubKey,
+                            txId,
+                            RocksDb.DbOperation.OpType.INSERT
+                    ));
+                }
+            }
         }
         boolean success = dataBase.dataTransaction(operations);
         if (success) {
@@ -250,13 +265,6 @@ public class BlockChainServiceImpl {
             System.out.println("事务失败：未将区块加入到主链。");
         }
     }
-
-
-
-
-
-
-
 
 
 

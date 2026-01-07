@@ -36,6 +36,18 @@ public class ChainApi {
     @Autowired
     private TxPool txPool;
 
+
+    /**
+     * 分页查询区块
+     */
+
+    /**
+     * 分页查询交易
+     */
+
+
+
+
     /**
      * 根据Hash查询区块
      */
