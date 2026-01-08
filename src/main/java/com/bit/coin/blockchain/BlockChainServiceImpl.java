@@ -99,7 +99,7 @@ public class BlockChainServiceImpl {
 
 
     //验证区块
-    public boolean verifyBlock(Block block) {
+    synchronized public boolean verifyBlock(Block block) {
         if (block == null) {
             log.error("验证失败：区块为空");
             return false;
@@ -138,7 +138,7 @@ public class BlockChainServiceImpl {
     /**
      * 区块基础格式验证
      */
-    private boolean validateBlockFormat(Block block) {
+    synchronized private boolean validateBlockFormat(Block block) {
         // 验证区块头不为空
         if (block.getBlockHeader() == null) {
             log.error("区块头为空");
@@ -185,7 +185,7 @@ public class BlockChainServiceImpl {
     /**
      * 区块 Hash 验证
      */
-    private boolean validateBlockHash(Block block) {
+    synchronized private boolean validateBlockHash(Block block) {
         byte[] blockHash = block.getHash();
 
         // 验证 Hash 不为空且长度为32字节
@@ -396,7 +396,7 @@ public class BlockChainServiceImpl {
     /**
      * 处理区块链接关系（主链延续、孤块、分叉）
      */
-    private boolean handleBlockConnection(Block block) {
+    synchronized private boolean handleBlockConnection(Block block) {
         if (block.getHeight()==0){
             // 将区块加入到主链
             addBlockToChain(block, true);
@@ -416,9 +416,11 @@ public class BlockChainServiceImpl {
 
             // 获取父区块工作总量
             Block parentBlock = getBlockByHash(previousHash);
+            int height = parentBlock.getHeight();
             UInt256 previousChainWork = parentBlock.getChainWork();
             UInt256 newBlockChainWork = previousChainWork.add(UInt256.fromBigInteger(block.getBlockHeader().getWork()));
             block.setChainWork(newBlockChainWork);
+            block.setHeight(height+1);
 
             // 检查是否为主链的延续
             if (Arrays.equals(previousHash, mainTipBlock.getHash())) {
@@ -427,26 +429,20 @@ public class BlockChainServiceImpl {
                 // 将区块加入到主链
                 addBlockToChain(block, true);
                 mainTipBlock = block;
-
                 // 上链成功后，从交易池删除已确认的交易
                 removeConfirmedTxsFromPool(block);
-
                 // 尝试处理孤块
                 processOrphanBlocks();
-
                 return true;
             }
-
             // 计算当前主链的链工作量
             UInt256 mainChainWork = mainTipBlock.getChainWork();
-
             log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
-
             // 比较工作量，决定是否进行重组
             int i = newBlockChainWork.compareTo(mainChainWork);
             if (i > 0) {
                 log.info("新链工作量更大，执行链重组");
-                return performChainReorg(block, parentBlock, newBlockChainWork);
+                return performChainReorg(block);
             } else {
                 log.info("新链工作量较小，暂时作为侧链区块");
                 // 将区块加入到侧链（不更新UTXO，但存储区块数据）
@@ -459,173 +455,17 @@ public class BlockChainServiceImpl {
     /**
      * 执行链重组（Reorganization）
      */
-    private boolean performChainReorg(Block newBlock, Block forkPoint, UInt256 newChainWork) {
-        log.info("开始链重组，forkPoint高度:{}, hash:{}",
-            forkPoint.getHeight(), bytesToHex(forkPoint.getHash()));
+    synchronized private boolean performChainReorg(Block newBlock) {
+        //newBlock 作为新的顶端
 
-        try {
-            // 1. 找出需要回退的区块（从主链tip到forkPoint）
-            List<Block> blocksToRevert = new ArrayList<>();
-            Block current = mainTipBlock;
-            while (current != null && current.getHeight() > forkPoint.getHeight()) {
-                blocksToRevert.add(current);
-                byte[] parentHash = current.getBlockHeader().getPreviousHash();
-                Block parentBlock = getBlockByHash(parentHash);
-                if (parentBlock == null) {
-                    log.error("链重组失败：找不到父区块 {}", bytesToHex(parentHash));
-                    return false;
-                }
-                current = parentBlock;
-            }
-
-            if (current == null || !Arrays.equals(current.getHash(), forkPoint.getHash())) {
-                log.error("链重组失败：forkPoint不在主链上");
-                return false;
-            }
-
-            // 2. 回退区块（从新到旧）
-            for (int i = blocksToRevert.size() - 1; i >= 0; i--) {
-                Block blockToRevert = blocksToRevert.get(i);
-                revertBlock(blockToRevert);
-            }
-
-            // 3. 构建新链（从forkPoint到newBlock）
-            List<Block> newChainBlocks = new ArrayList<>();
-            current = newBlock;
-            while (current != null && current.getHeight() > forkPoint.getHeight()) {
-                newChainBlocks.add(current);
-                byte[] parentHash = current.getBlockHeader().getPreviousHash();
-                if (Arrays.equals(parentHash, forkPoint.getHash())) {
-                    break;
-                }
-                Block parentBlock = getBlockByHash(parentHash);
-                if (parentBlock == null) {
-                    log.error("链重组失败：新链找不到父区块");
-                    return false;
-                }
-                current = parentBlock;
-            }
-            Collections.reverse(newChainBlocks); // 从低到高排序
-
-            // 4. 将新区块链添加到主链
-            for (Block newChainBlock : newChainBlocks) {
-                addBlockToChain(newChainBlock, true);
-            }
-
-            // 5. 更新主链tip
-            mainTipBlock = newBlock;
-
-            log.info("链重组成功，回退了{}个区块，添加了{}个新区块",
-                blocksToRevert.size(), newChainBlocks.size());
-
-            // 6. 从交易池删除已确认的交易
-            removeConfirmedTxsFromPool(newBlock);
-
-            // 7. 尝试处理孤块
-            processOrphanBlocks();
-
-            return true;
-
-        } catch (Exception e) {
-            log.error("链重组失败", e);
-            // 尝试恢复（这里简化处理，实际需要更复杂的恢复逻辑）
-            return false;
-        }
+        return false;
     }
 
     /**
      * 回退区块（从主链移除）
      */
-    private void revertBlock(Block block) {
-        log.info("回退区块 高度:{} hash:{}", block.getHeight(), bytesToHex(block.getHash()));
+    synchronized private void revertBlock(Block block) {
 
-        List<RocksDb.DbOperation> operations = new ArrayList<>();
-
-        // 1. 恢复被花费的UTXO
-        List<UTXO> spentUTXOs = block.getSpentUTXOKeys();
-        for (UTXO spentUtxo : spentUTXOs) {
-            byte[] utxoBytes = dataBase.get(TUTXO, spentUtxo.getKey());
-            if (utxoBytes != null) {
-                // UTXO已经存在，说明被重新添加了，无需操作
-                continue;
-            }
-            // 从父区块或其他地方获取被花费的UTXO数据
-            // 这里需要从历史区块中查找，简化处理
-            // 实际应该从已花费UTXO的来源区块获取数据
-            byte[] parentHash = block.getBlockHeader().getPreviousHash();
-            Block sourceBlockBlock = getBlockByHash(parentHash);
-            if (sourceBlockBlock != null) {
-                // 这里简化处理，实际需要从交易历史重建UTXO
-                // 可以维护一个spentUtxo的备份表
-            }
-
-            // 暂时从备份恢复（需要在添加区块时备份）
-            operations.add(new RocksDb.DbOperation(
-                TableEnum.TUTXO,
-                spentUtxo.getKey(),
-                spentUtxo.serialize(),
-                RocksDb.DbOperation.OpType.INSERT
-            ));
-
-            // 恢复地址到UTXO的索引
-            operations.add(new RocksDb.DbOperation(
-                ADDR_TO_UTXO,
-                spentUtxo.getAddressKey(),
-                longToLittleEndian(spentUtxo.getValue()),
-                RocksDb.DbOperation.OpType.INSERT
-            ));
-        }
-
-        // 2. 删除本区块创建的UTXO
-        List<UTXO> newUTXOs = block.getUTXOs();
-        for (UTXO newUtxo : newUTXOs) {
-            operations.add(new RocksDb.DbOperation(
-                TableEnum.TUTXO,
-                newUtxo.getKey(),
-                null,
-                RocksDb.DbOperation.OpType.DELETE
-            ));
-
-            operations.add(new RocksDb.DbOperation(
-                ADDR_TO_UTXO,
-                newUtxo.getAddressKey(),
-                null,
-                RocksDb.DbOperation.OpType.DELETE
-            ));
-        }
-
-        // 3. 删除高度到Hash的映射
-        byte[] heightBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
-        operations.add(new RocksDb.DbOperation(
-            HEIGHT_TO_HASH,
-            heightBytes,
-            null,
-            RocksDb.DbOperation.OpType.DELETE
-        ));
-
-        // 4. 更新主链tip
-        byte[] newTipHeightBytes = ByteBuffer.allocate(4).putInt(block.getHeight() - 1).array();
-        byte[] newTipHashBytes = block.getBlockHeader().getPreviousHash();
-        operations.add(new RocksDb.DbOperation(
-            CHAIN,
-            MAIN_CHAIN_TIP_HEIGHT_KEY,
-            newTipHeightBytes,
-            RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-            CHAIN,
-            MAIN_CHAIN_TIP_HASH_KEY,
-            newTipHashBytes,
-            RocksDb.DbOperation.OpType.INSERT
-        ));
-
-        // 执行事务
-        boolean success = dataBase.dataTransaction(operations);
-        if (success) {
-            log.info("区块回退成功");
-        } else {
-            log.error("区块回退失败");
-        }
     }
 
     private void addOrphanBlock(Block block) {
@@ -746,7 +586,7 @@ public class BlockChainServiceImpl {
 
 
     //将区块加入到主链
-    public void addBlockToChain(Block block,boolean isMainChain) {
+    synchronized public void addBlockToChain(Block block,boolean isMainChain) {
         List<RocksDb.DbOperation> operations = new ArrayList<>();
 /*        operations.add(new RocksDb.DbOperation(
                 TableEnum.TBLOCK,

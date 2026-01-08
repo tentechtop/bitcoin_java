@@ -222,6 +222,7 @@ public class Block {
         return block;
     }
 
+    @JsonIgnore
     public BlockBody getBlockBody(){
         BlockBody blockBody = new BlockBody();
         blockBody.setTransactions(transactions);
