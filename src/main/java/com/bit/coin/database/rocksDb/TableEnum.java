@@ -106,7 +106,26 @@ public enum TableEnum {
             5, //内存缓存 MB
             60 
     ),
-
+    TBLOCK_HEADER(
+            (short) 11,
+            "TBLOCK_HEADER",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(1024 * 1024)
+                            .setCacheIndexAndFilterBlocks(true)),
+            10, //内存缓存 MB
+            60
+    ),
+    TBLOCK_BODY(
+            (short) 12,
+            "TBLOCK_BODY",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(1024 * 1024)
+                            .setCacheIndexAndFilterBlocks(true)),
+            10, //内存缓存 MB
+            60
+    ),
 
     
 

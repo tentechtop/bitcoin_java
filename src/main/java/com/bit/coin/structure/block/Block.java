@@ -4,6 +4,7 @@ import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
 import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
@@ -25,8 +26,10 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
         "hash",           // 区块哈希
         "height",         // 区块高度
         "blockHeader",    // 区块头
+        "chainWorkDecimal",
         "txCount",
-        "transactions"    // 交易列表
+        "transactions",    // 交易列表
+
 })
 @Slf4j
 @Data
@@ -43,15 +46,22 @@ public class Block {
     //交易数量
     private int txCount;
 
+    @JsonIgnore
+    private UInt256 chainWork;
 
     private List<Transaction> transactions;
 
     @JsonIgnore
     private long medianTime;
 
-    @JsonIgnore
-    private long chainWork;
 
+
+    public String getChainWorkDecimal(){
+        if (chainWork==null){
+            chainWork = UInt256.fromLong(0L);
+        }
+        return chainWork.toDecimalString();
+    }
 
 
     public byte[] getHash(){
@@ -128,6 +138,7 @@ public class Block {
             dos.writeInt(height);
             //交易数量
             dos.writeInt(txCount);
+            //读取32字节
 
             // 序列化 Transaction 列表
             dos.writeInt(transactions != null ? transactions.size() : 0);
@@ -200,5 +211,22 @@ public class Block {
     }
 
 
+    //根据区块头和区块体组合成完整区块
+    public static Block buildBlock(BlockHeader blockHeader,BlockBody blockBody) {
+        Block block = new Block();
+        block.setBlockHeader(blockHeader);
+        block.setTransactions(blockBody.getTransactions());
+        block.setHeight(blockBody.getHeight());
+        block.setTxCount(blockBody.getTxCount());
+        return block;
+    }
+
+    public BlockBody getBlockBody(){
+        BlockBody blockBody = new BlockBody();
+        blockBody.setTransactions(transactions);
+        blockBody.setHeight(height);
+        blockBody.setTxCount(txCount);
+        return blockBody;
+    }
 
 }

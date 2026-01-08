@@ -174,8 +174,7 @@ public class MiningServiceImpl {
         // 1. 获取最新区块信息（确保基于最新主链打包）
         byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
         byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-        byte[] bytes = dataBase.get(TBLOCK, tipHash);
-        Block latestBlock = Block.deserialize(bytes);
+        Block latestBlock = blockChainService.getBlockByHash(tipHash);
         int newBlockHeight = bytesToInt(tipHeight) + 1;
 
         // 2. 从交易池提取交易到区块（自动标记为打包中）

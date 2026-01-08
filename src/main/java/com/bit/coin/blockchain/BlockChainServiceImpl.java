@@ -5,13 +5,15 @@ import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
-import com.bit.coin.mining.MiningServiceImpl;
+
 import com.bit.coin.structure.block.Block;
+import com.bit.coin.structure.block.BlockBody;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.*;
 import com.bit.coin.txpool.TxPool;
 import com.bit.coin.utils.Sha;
 import com.bit.coin.utils.TimeGenerator;
+import com.bit.coin.utils.UInt256;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.annotation.PostConstruct;
@@ -76,9 +78,7 @@ public class BlockChainServiceImpl {
         }else {
             byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
             byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-            byte[] bytes = dataBase.get(TBLOCK, tipHash);
-            Block deserialize = Block.deserialize(bytes);
-            assert deserialize != null;
+            Block deserialize = getBlockByHash(tipHash);
             deserialize.setHeight(bytesToInt(tipHeight));
             deserialize.setHash(tipHash);
             mainTipBlock=deserialize;
@@ -417,7 +417,7 @@ public class BlockChainServiceImpl {
         }
 
         // 检查是否为孤块（父区块不存在）
-        byte[] parentBlockBytes = dataBase.get(TBLOCK, previousHash);
+        byte[] parentBlockBytes = dataBase.get(TBLOCK_HEADER, previousHash);
         if (parentBlockBytes == null) {
             log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
                 bytesToHex(previousHash));
@@ -430,15 +430,16 @@ public class BlockChainServiceImpl {
         assert parentBlock != null;
 
         // 计算新区块的链工作量
-        long newBlockChainWork = parentBlock.getChainWork() + block.getBlockHeader().getWork().longValue();
+        UInt256 newBlockChainWork = parentBlock.getChainWork().add(UInt256.fromBigInteger(block.getBlockHeader().getWork())) ;
 
         // 计算当前主链的链工作量
-        long mainChainWork = mainTipBlock.getChainWork();
+        UInt256 mainChainWork = mainTipBlock.getChainWork();
 
         log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
 
         // 比较工作量，决定是否进行重组
-        if (newBlockChainWork > mainChainWork) {
+        int i = newBlockChainWork.compareTo(mainChainWork);
+        if (i > 0) {
             log.info("新链工作量更大，执行链重组");
             return performChainReorg(block, parentBlock, newBlockChainWork);
         } else {
@@ -452,7 +453,7 @@ public class BlockChainServiceImpl {
     /**
      * 执行链重组（Reorganization）
      */
-    private boolean performChainReorg(Block newBlock, Block forkPoint, long newChainWork) {
+    private boolean performChainReorg(Block newBlock, Block forkPoint, UInt256 newChainWork) {
         log.info("开始链重组，forkPoint高度:{}, hash:{}",
             forkPoint.getHeight(), bytesToHex(forkPoint.getHash()));
 
@@ -463,12 +464,12 @@ public class BlockChainServiceImpl {
             while (current != null && current.getHeight() > forkPoint.getHeight()) {
                 blocksToRevert.add(current);
                 byte[] parentHash = current.getBlockHeader().getPreviousHash();
-                byte[] parentBytes = dataBase.get(TBLOCK, parentHash);
-                if (parentBytes == null) {
+                Block parentBlock = getBlockByHash(parentHash);
+                if (parentBlock == null) {
                     log.error("链重组失败：找不到父区块 {}", bytesToHex(parentHash));
                     return false;
                 }
-                current = Block.deserialize(parentBytes);
+                current = parentBlock;
             }
 
             if (current == null || !Arrays.equals(current.getHash(), forkPoint.getHash())) {
@@ -491,12 +492,12 @@ public class BlockChainServiceImpl {
                 if (Arrays.equals(parentHash, forkPoint.getHash())) {
                     break;
                 }
-                byte[] parentBytes = dataBase.get(TBLOCK, parentHash);
-                if (parentBytes == null) {
+                Block parentBlock = getBlockByHash(parentHash);
+                if (parentBlock == null) {
                     log.error("链重组失败：新链找不到父区块");
                     return false;
                 }
-                current = Block.deserialize(parentBytes);
+                current = parentBlock;
             }
             Collections.reverse(newChainBlocks); // 从低到高排序
 
@@ -546,8 +547,8 @@ public class BlockChainServiceImpl {
             // 这里需要从历史区块中查找，简化处理
             // 实际应该从已花费UTXO的来源区块获取数据
             byte[] parentHash = block.getBlockHeader().getPreviousHash();
-            byte[] sourceBlockBytes = dataBase.get(TBLOCK, parentHash);
-            if (sourceBlockBytes != null) {
+            Block sourceBlockBlock = getBlockByHash(parentHash);
+            if (sourceBlockBlock != null) {
                 // 这里简化处理，实际需要从交易历史重建UTXO
                 // 可以维护一个spentUtxo的备份表
             }
@@ -748,10 +749,24 @@ public class BlockChainServiceImpl {
     //将区块加入到主链
     public void addBlockToChain(Block block,boolean isMainChain) {
         List<RocksDb.DbOperation> operations = new ArrayList<>();
-        operations.add(new RocksDb.DbOperation(
+/*        operations.add(new RocksDb.DbOperation(
                 TableEnum.TBLOCK,
                 block.getHash(),
                 block.serialize(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));*/
+        BlockHeader blockHeader = block.getBlockHeader();
+        BlockBody blockBody = block.getBlockBody();
+        operations.add(new RocksDb.DbOperation(
+                TBLOCK_HEADER,
+                block.getHash(),
+                blockHeader.serialize(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        operations.add(new RocksDb.DbOperation(
+                TBLOCK_BODY,
+                block.getHash(),
+                blockBody.serialize(),
                 RocksDb.DbOperation.OpType.INSERT
         ));
         byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
@@ -1013,9 +1028,13 @@ public class BlockChainServiceImpl {
 
 
     public Block getBlockByHash(byte[] hash) {
-        byte[] bytes = dataBase.get(TableEnum.TBLOCK,hash);
-        if (bytes!=null){
-           return Block.deserialize(bytes);
+        //获取区块头 区块体
+        byte[] header_bytes = dataBase.get(TBLOCK_HEADER,hash);
+        byte[] body_bytes = dataBase.get(TBLOCK_BODY,hash);
+        if (header_bytes!=null && body_bytes!=null){
+            BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
+            BlockBody blockBody = BlockBody.deserialize(body_bytes);
+            return Block.buildBlock(blockHeader,blockBody);
         }else {
             return null;
         }
@@ -1046,11 +1065,11 @@ public class BlockChainServiceImpl {
         int txIndexInBlock = (int) blockIndexMap.get("index");
 
         // 3. 从 "block" 表中获取完整的区块数据
-        byte[] blockData = dataBase.get(TableEnum.TBLOCK, blockHash);
-        if (blockData == null) {
+        byte[] blockBodyData = dataBase.get(TBLOCK_BODY, blockHash);
+        if (blockBodyData == null) {
             return null; // 区块数据不存在
         }
-        Block deserialize = Block.deserialize(blockData);
+        BlockBody deserialize = BlockBody.deserialize(blockBodyData);
         assert deserialize != null;
         Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
 
@@ -1058,11 +1077,7 @@ public class BlockChainServiceImpl {
         //交易所在的区块是否主连
         int height = deserialize.getHeight();
         byte[] bytes = dataBase.get(HEIGHT_TO_HASH, height);
-        if (Arrays.equals(bytes, deserialize.getHash())){
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
-        }else {
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
-        }
+        status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
         transaction.setStatus(status);
         return transaction;
     }
@@ -1136,9 +1151,7 @@ public class BlockChainServiceImpl {
         if (blockHash==null){
             return null;
         }
-        byte[] blockData = dataBase.get(TBLOCK, blockHash);
-        assert blockData != null;
-        return Block.deserialize(blockData);
+        return getBlockByHash(blockHash);
     }
 
     /**
