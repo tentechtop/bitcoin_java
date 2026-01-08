@@ -96,6 +96,16 @@ public enum TableEnum {
             1, //内存缓存 MB
             60 
     ),
+    ORPHAN(
+            (short) 10,
+            "orphan",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(512 * 1024)  
+                            .setCacheIndexAndFilterBlocks(true)),
+            5, //内存缓存 MB
+            60 
+    ),
 
 
     

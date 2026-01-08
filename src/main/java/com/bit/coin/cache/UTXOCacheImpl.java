@@ -206,7 +206,6 @@ public class UTXOCacheImpl implements UTXOCache {
             long status1 = 0L;
             status1 = setLifecycleStatus(status1, UNCONFIRMED_OUTPUT);//新生成未确认
             utxo.setStatus(status1);
-            log.info("添加一笔待确认的交易{}",bytesToHex(utxo.getScript()));
             addUTXO(utxo);
         }
     }

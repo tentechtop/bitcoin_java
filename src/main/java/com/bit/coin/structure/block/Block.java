@@ -125,7 +125,6 @@ public class Block {
             // 序列化 BlockHeader
             byte[] headerBytes = blockHeader.serialize();
             dos.write(headerBytes);
-            log.info("序列化时的高度{}",height);
             dos.writeInt(height);
             //交易数量
             dos.writeInt(txCount);

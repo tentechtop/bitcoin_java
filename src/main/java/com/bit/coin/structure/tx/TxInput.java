@@ -216,7 +216,6 @@ public class TxInput {
                     dos.write(scriptSig);
                 }
             }else {
-                log.info("解锁脚本{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
                 com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, scriptSig, scriptSig.length);
             }
             dos.close();

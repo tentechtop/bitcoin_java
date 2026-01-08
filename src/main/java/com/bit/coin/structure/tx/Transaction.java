@@ -68,6 +68,8 @@ public class Transaction {
     @JsonIgnore
     private long fee;
 
+    private long size;
+
 
     /**
      * 状态
@@ -764,4 +766,51 @@ public class Transaction {
         }
         return utxos;
     }
+
+    //每一笔交易最小手续费是1000 + size*(10 * 交易池拥塞程度)
+
+    /**
+     * 获取交易大小（字节数）
+     * 计算交易序列化（不含txId）后的实际字节长度，用于手续费计算
+     * @return 交易的字节大小
+     */
+    public long getSize() {
+        // 初始化大小为0，使用long避免整数溢出
+        long totalSize = 0;
+
+        try {
+            // 1. 版本号：固定4字节（小端序）
+            totalSize += VERSION_SIZE;
+
+            // 2. 输入数量的VarInt编码字节数
+            totalSize += estimateVarIntSize(inputs.size());
+
+            // 3. 所有交易输入的字节大小（逐个计算每个输入的序列化长度）
+            for (TxInput input : inputs) {
+                totalSize += input.serialize().length;
+            }
+
+            // 4. 输出数量的VarInt编码字节数
+            totalSize += estimateVarIntSize(outputs.size());
+
+            // 5. 所有交易输出的字节大小（逐个计算每个输出的序列化长度）
+            for (TxOutput output : outputs) {
+                totalSize += output.serialize().length;
+            }
+
+            // 6. 锁定时间：固定4字节（小端序）
+            totalSize += LOCK_TIME_SIZE;
+
+            // 将计算结果赋值给实例变量size，保持数据一致性
+            this.size =  totalSize;
+
+            return totalSize;
+        } catch (Exception e) {
+            log.error("计算交易大小失败", e);
+            // 异常时返回0，也可根据业务需求调整为抛出异常
+            return 0;
+        }
+    }
+
+
 }

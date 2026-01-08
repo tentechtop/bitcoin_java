@@ -203,7 +203,6 @@ public class BlockHeader {
         return buf;
     }
 
-
     public static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);
     //难度目标 0000ffffffff0000000000000000000000000000000000000000000000000000
     public static final String INIT_DIFFICULTY_TARGET_HEX = "0000ffffffff0000000000000000000000000000000000000000000000000000";
@@ -212,14 +211,30 @@ public class BlockHeader {
 
 
     /**
-     * 计算区块的工作量（PoW）
-     * 工作量 = 初始难度目标 / 当前区块的目标难度
-     * 这表示当前区块的挖矿难度相对于初始难度（即难度1）的倍数。
-     * 此方法返回一个 BigInteger，执行的是整数除法（向零取整）。
-     *
-     * @return 工作量的 BigInteger 表示
+     * work = 2^256 / (target + 1)
      */
+
     public BigInteger getWork() {
+        BigInteger currentTarget = getTargetFromBits();
+
+        // 防御性判断：target不能为0（理论上不可能）
+        if (currentTarget.signum() == 0) {
+            return BigInteger.ZERO;
+        }
+
+        // 核心公式：work = 2^256 / (target + 1)
+        BigInteger denominator = currentTarget.add(BigInteger.ONE);
+        // 使用BigInteger的除法（向零取整，符合比特币核心实现）
+        return LARGEST_HASH.divide(denominator);
+    }
+
+
+    /**
+     * 难度倍数
+     * @return
+     */
+    @JsonIgnore
+    public BigInteger getDifficulty() {
         // 当前区块的目标难度
         BigInteger currentTarget = getTargetFromBits();
         if (currentTarget.signum() == 0) {

@@ -12,6 +12,8 @@ import com.bit.coin.structure.tx.*;
 import com.bit.coin.txpool.TxPool;
 import com.bit.coin.utils.Sha;
 import com.bit.coin.utils.TimeGenerator;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
@@ -25,6 +27,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -85,53 +88,630 @@ public class BlockChainServiceImpl {
 
 
 
+    //孤块缓存: previousHash -> 等待处理的区块列表
+    private final Cache<String, List<Block>> orphanBlocks = Caffeine.newBuilder()
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .initialCapacity(100)
+            .maximumSize(100)
+            .recordStats()
+            .build();
+
+
+
     //验证区块
     public boolean verifyBlock(Block block) {
-        log.info("区块高度{} 区块哈希{}",block.getHeight(),bytesToHex(block.getHash()));
-        //基础格式验证
-        byte[] hash = block.getHash();
+        if (block == null) {
+            log.error("验证失败：区块为空");
+            return false;
+        }
 
-        //Hash验证
+        log.info("开始验证区块 高度:{} 区块哈希:{}",block.getHeight(),bytesToHex(block.getHash()));
 
-        //工作量验证
+        // 1. 区块基础格式验证
+        if (!validateBlockFormat(block)) {
+            log.error("区块基础格式验证失败");
+            return false;
+        }
 
-        //区块中所有交易验证
+        // 2. 区块 Hash 验证
+        if (!validateBlockHash(block)) {
+            log.error("区块Hash验证失败");
+            return false;
+        }
 
-        //是否主链延续
-        if (Arrays.equals(block.getBlockHeader().getPreviousHash(), mainTipBlock.getHash())){
+        // 3. 工作量证明验证
+        if (!validateProofOfWork(block)) {
+            log.error("工作量证明验证失败");
+            return false;
+        }
 
-            log.info("是主链的延续");
+        // 4. 区块交易验证
+        if (!validateBlockTransactions(block)) {
+            log.error("区块交易验证失败");
+            return false;
+        }
 
-            //将区块加入到区块链
-            addBlockToChain(block,true);
+        // 5. 链接关系处理（主链延续、孤块、分叉）
+        return handleBlockConnection(block);
+    }
+
+    /**
+     * 区块基础格式验证
+     */
+    private boolean validateBlockFormat(Block block) {
+        // 验证区块头不为空
+        if (block.getBlockHeader() == null) {
+            log.error("区块头为空");
+            return false;
+        }
+
+        // 验证交易列表不为空
+        if (block.getTransactions() == null || block.getTransactions().isEmpty()) {
+            log.error("区块必须包含至少一笔交易");
+            return false;
+        }
+
+        // 验证第一笔交易是 Coinbase 交易
+        if (!block.getTransactions().getFirst().isCoinbase()) {
+            log.error("区块的第一笔交易必须是Coinbase交易");
+            return false;
+        }
+
+        // 验证其余交易不是 Coinbase 交易
+        for (int i = 1; i < block.getTransactions().size(); i++) {
+            if (block.getTransactions().get(i).isCoinbase()) {
+                log.error("区块中只能有一笔Coinbase交易（必须是第一笔）");
+                return false;
+            }
+        }
+
+        // 验证交易数量与txCount字段一致
+        if (block.getTxCount() != block.getTransactions().size()) {
+            log.error("交易数量不匹配，txCount:{}, 实际:{}",
+                block.getTxCount(), block.getTransactions().size());
+            return false;
+        }
+
+        // 验证区块高度合理
+        if (block.getHeight() < 0) {
+            log.error("区块高度不能为负数: {}", block.getHeight());
+            return false;
+        }
+
+        log.info("区块基础格式验证通过");
+        return true;
+    }
+
+    /**
+     * 区块 Hash 验证
+     */
+    private boolean validateBlockHash(Block block) {
+        byte[] blockHash = block.getHash();
+
+        // 验证 Hash 不为空且长度为32字节
+        if (blockHash == null || blockHash.length != 32) {
+            log.error("区块Hash长度必须为32字节");
+            return false;
+        }
+
+        // 验证存储的Hash与计算的Hash一致
+        byte[] calculatedHash = block.getBlockHeader().calculateHash();
+        if (!Arrays.equals(blockHash, calculatedHash)) {
+            log.error("区块Hash不一致，存储的:{} 计算的:{}",
+                bytesToHex(blockHash), bytesToHex(calculatedHash));
+            return false;
+        }
+
+        // 验证默克尔根
+        byte[] calculatedMerkleRoot = calculateMerkleRoot(block.getTransactions());
+        if (!Arrays.equals(block.getBlockHeader().getMerkleRoot(), calculatedMerkleRoot)) {
+            log.error("默克尔根不匹配，存储的:{} 计算的:{}",
+                bytesToHex(block.getBlockHeader().getMerkleRoot()),
+                bytesToHex(calculatedMerkleRoot));
+            return false;
+        }
+
+        log.info("区块Hash验证通过");
+        return true;
+    }
+
+    /**
+     * 工作量证明验证
+     */
+    private boolean validateProofOfWork(Block block) {
+        BlockHeader header = block.getBlockHeader();
+
+        // 验证工作量证明
+        if (!header.verifyProofOfWork(false)) {
+            log.error("工作量证明验证失败");
+            return false;
+        }
+
+        // 验证时间戳合理性（不能太超前于当前时间）
+        long currentTime = System.currentTimeMillis() / 1000;
+        if (header.getTime() > currentTime + 7200) { // 允许2小时的未来时间
+            log.error("区块时间戳过于超前: {} vs 当前时间: {}", header.getTime(), currentTime);
+            return false;
+        }
+
+        // 验证时间戳不小于中位时间（如果前区块存在）
+        if (mainTipBlock != null && mainTipBlock.getMedianTime() > 0) {
+            if (header.getTime() < mainTipBlock.getMedianTime()) {
+                log.error("区块时间戳小于前区块的中位时间: {} < {}",
+                    header.getTime(), mainTipBlock.getMedianTime());
+                return false;
+            }
+        }
+
+        log.info("工作量证明验证通过");
+        return true;
+    }
+
+    /**
+     * 区块交易验证
+     */
+    private boolean validateBlockTransactions(Block block) {
+        List<Transaction> transactions = block.getTransactions();
+        long totalInputValue = 0;
+        long totalOutputValue = 0;
+        int coinbaseCount = 0;
+
+        // 用于检测交易重复
+        Set<String> txIdSet = new HashSet<>();
+
+        for (int i = 0; i < transactions.size(); i++) {
+            Transaction tx = transactions.get(i);
+
+            // 验证交易ID唯一性
+            String txIdHex = bytesToHex(tx.getTxId());
+            if (txIdSet.contains(txIdHex)) {
+                log.error("区块中存在重复的交易ID: {}", txIdHex);
+                return false;
+            }
+            txIdSet.add(txIdHex);
+
+            if (tx.isCoinbase()) {
+                coinbaseCount++;
+
+                // Coinbase 交易验证
+                // 1. 验证只有1个输入
+                if (tx.getInputs().size() != 1) {
+                    log.error("Coinbase交易必须有且仅有一个输入");
+                    return false;
+                }
+
+                // 2. 验证输入的txId为全0且index为0
+                TxInput coinbaseInput = tx.getInputs().getFirst();
+                if (!Arrays.equals(coinbaseInput.getTxId(), new byte[32]) || coinbaseInput.getIndex() != 0) {
+                    log.error("Coinbase交易的输入格式不正确");
+                    return false;
+                }
+
+                // 3. 验证Coinbase输出金额不超过上限（包含手续费）
+                long coinbaseReward = calculateCoinbaseReward(block.getHeight());
+                long maxReward = coinbaseReward;
+                // 计算交易手续费（需要在验证普通交易后）
+                // 这里先不验证金额，等所有交易验证完后再验证总奖励
+
+            } else {
+                // 普通交易验证
+
+                // 1. 为交易准备UTXO视图
+                Map<String, UTXO> utxoMap = getUTXOsByTx(tx);
+                tx.setUtxoMap(utxoMap);
+
+                // 2. 验证交易签名和逻辑
+                if (!tx.validate()) {
+                    log.error("区块中第{}笔交易验证失败", i);
+                    return false;
+                }
+
+                // 3. 检查是否有双花（交易输入是否已被本区块其他交易花费）
+                List<String> spendingKeys = tx.getSpendingUTXOKeyList();
+                if (spendingKeys != null) {
+                    for (String spendingKey : spendingKeys) {
+                        // 检查本区块前面的交易是否已经花费了这个UTXO
+                        for (int j = 0; j < i; j++) {
+                            Transaction prevTx = transactions.get(j);
+                            if (!prevTx.isCoinbase()) {
+                                List<String> prevSpendingKeys = prevTx.getSpendingUTXOKeyList();
+                                if (prevSpendingKeys != null && prevSpendingKeys.contains(spendingKey)) {
+                                    log.error("检测到双花：UTXO {} 被多个交易花费", spendingKey);
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 累加输入和输出金额
+                for (TxInput input : tx.getInputs()) {
+                    UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
+                    if (utxo != null) {
+                        totalInputValue += utxo.getValue();
+                    }
+                }
+
+                for (TxOutput output : tx.getOutputs()) {
+                    totalOutputValue += output.getValue();
+                }
+            }
+        }
+
+        // 验证Coinbase交易数量
+        if (coinbaseCount != 1) {
+            log.error("区块中必须有且仅有一笔Coinbase交易，实际数量: {}", coinbaseCount);
+            return false;
+        }
+
+        // 验证Coinbase奖励金额（输入总金额 + 挖矿奖励 <= 输出总金额）
+        Transaction coinbaseTx = transactions.getFirst();
+        long coinbaseOutputValue = coinbaseTx.getOutputs().stream()
+            .mapToLong(TxOutput::getValue)
+            .sum();
+
+        // Coinbase交易没有输入，所以手续费 = 所有非Coinbase交易的（输入 - 输出）
+        long totalFee = 0;
+        for (int i = 1; i < transactions.size(); i++) {
+            totalFee += transactions.get(i).getFee();
+        }
+
+        // 计算正确的Coinbase奖励
+        long coinbaseReward = calculateCoinbaseReward(block.getHeight());
+        long expectedCoinbaseOutput = coinbaseReward + totalFee;
+
+        if (coinbaseOutputValue > expectedCoinbaseOutput) {
+            log.error("Coinbase输出金额过大，允许:{}, 实际:{}",
+                expectedCoinbaseOutput, coinbaseOutputValue);
+            return false;
+        }
+
+        if (coinbaseOutputValue < expectedCoinbaseOutput) {
+            log.warn("Coinbase输出金额小于允许值，允许:{}, 实际:{} (矿工未完全收取手续费)",
+                expectedCoinbaseOutput, coinbaseOutputValue);
+        }
+
+        log.info("区块交易验证通过，总手续费: {}", totalFee);
+        return true;
+    }
+
+    /**
+     * 计算Coinbase奖励（区块奖励）
+     */
+    private long calculateCoinbaseReward(int blockHeight) {
+        // 初始奖励: 50 BTC = 50 * 100,000,000 satoshi
+        long initialReward = 50L * 100000000;
+        // 每减半周期的区块数
+        int halvingInterval = 210000;
+        // 计算已经发生的减半次数
+        int halvings = blockHeight / halvingInterval;
+        // 最大减半次数（防止整数溢出）
+        if (halvings > 63) {
+            return 0;
+        }
+        // 计算当前奖励
+        return initialReward >> halvings;
+    }
+
+    /**
+     * 处理区块链接关系（主链延续、孤块、分叉）
+     */
+    private boolean handleBlockConnection(Block block) {
+        byte[] previousHash = block.getBlockHeader().getPreviousHash();
+
+        // 检查是否为主链的延续
+        if (Arrays.equals(previousHash, mainTipBlock.getHash())) {
+            log.info("是主链的延续，高度:{} -> {}", mainTipBlock.getHeight(), block.getHeight());
+
+            // 将区块加入到主链
+            addBlockToChain(block, true);
             mainTipBlock = block;
 
             // 上链成功后，从交易池删除已确认的交易
             removeConfirmedTxsFromPool(block);
 
-        }else {
-            //非主链延续
-            byte[] previousHash = block.getBlockHeader().getPreviousHash();
-            byte[] bytes = dataBase.get(TBLOCK, previousHash);
-            if (bytes==null){
-                //孤块（Orphan Block）
+            // 尝试处理孤块
+            processOrphanBlocks();
 
-                //处理孤块
+            return true;
+        }
 
-            }else {
-                //分叉区块（Fork Block）
-                //分叉总工作量
-                Block previousBlock = Block.deserialize(bytes);
-                assert previousBlock != null;
-                long chainWork = previousBlock.getChainWork();
+        // 检查是否为孤块（父区块不存在）
+        byte[] parentBlockBytes = dataBase.get(TBLOCK, previousHash);
+        if (parentBlockBytes == null) {
+            log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
+                bytesToHex(previousHash));
+            addOrphanBlock(block);
+            return false;
+        }
 
+        // 获取父区块
+        Block parentBlock = Block.deserialize(parentBlockBytes);
+        assert parentBlock != null;
 
+        // 计算新区块的链工作量
+        long newBlockChainWork = parentBlock.getChainWork() + block.getBlockHeader().getWork().longValue();
+
+        // 计算当前主链的链工作量
+        long mainChainWork = mainTipBlock.getChainWork();
+
+        log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
+
+        // 比较工作量，决定是否进行重组
+        if (newBlockChainWork > mainChainWork) {
+            log.info("新链工作量更大，执行链重组");
+            return performChainReorg(block, parentBlock, newBlockChainWork);
+        } else {
+            log.info("新链工作量较小，暂时作为侧链区块");
+            // 将区块加入到侧链（不更新UTXO，但存储区块数据）
+            addBlockToChain(block, false);
+            return false;
+        }
+    }
+
+    /**
+     * 执行链重组（Reorganization）
+     */
+    private boolean performChainReorg(Block newBlock, Block forkPoint, long newChainWork) {
+        log.info("开始链重组，forkPoint高度:{}, hash:{}",
+            forkPoint.getHeight(), bytesToHex(forkPoint.getHash()));
+
+        try {
+            // 1. 找出需要回退的区块（从主链tip到forkPoint）
+            List<Block> blocksToRevert = new ArrayList<>();
+            Block current = mainTipBlock;
+            while (current != null && current.getHeight() > forkPoint.getHeight()) {
+                blocksToRevert.add(current);
+                byte[] parentHash = current.getBlockHeader().getPreviousHash();
+                byte[] parentBytes = dataBase.get(TBLOCK, parentHash);
+                if (parentBytes == null) {
+                    log.error("链重组失败：找不到父区块 {}", bytesToHex(parentHash));
+                    return false;
+                }
+                current = Block.deserialize(parentBytes);
+            }
+
+            if (current == null || !Arrays.equals(current.getHash(), forkPoint.getHash())) {
+                log.error("链重组失败：forkPoint不在主链上");
+                return false;
+            }
+
+            // 2. 回退区块（从新到旧）
+            for (int i = blocksToRevert.size() - 1; i >= 0; i--) {
+                Block blockToRevert = blocksToRevert.get(i);
+                revertBlock(blockToRevert);
+            }
+
+            // 3. 构建新链（从forkPoint到newBlock）
+            List<Block> newChainBlocks = new ArrayList<>();
+            current = newBlock;
+            while (current != null && current.getHeight() > forkPoint.getHeight()) {
+                newChainBlocks.add(current);
+                byte[] parentHash = current.getBlockHeader().getPreviousHash();
+                if (Arrays.equals(parentHash, forkPoint.getHash())) {
+                    break;
+                }
+                byte[] parentBytes = dataBase.get(TBLOCK, parentHash);
+                if (parentBytes == null) {
+                    log.error("链重组失败：新链找不到父区块");
+                    return false;
+                }
+                current = Block.deserialize(parentBytes);
+            }
+            Collections.reverse(newChainBlocks); // 从低到高排序
+
+            // 4. 将新区块链添加到主链
+            for (Block newChainBlock : newChainBlocks) {
+                addBlockToChain(newChainBlock, true);
+            }
+
+            // 5. 更新主链tip
+            mainTipBlock = newBlock;
+
+            log.info("链重组成功，回退了{}个区块，添加了{}个新区块",
+                blocksToRevert.size(), newChainBlocks.size());
+
+            // 6. 从交易池删除已确认的交易
+            removeConfirmedTxsFromPool(newBlock);
+
+            // 7. 尝试处理孤块
+            processOrphanBlocks();
+
+            return true;
+
+        } catch (Exception e) {
+            log.error("链重组失败", e);
+            // 尝试恢复（这里简化处理，实际需要更复杂的恢复逻辑）
+            return false;
+        }
+    }
+
+    /**
+     * 回退区块（从主链移除）
+     */
+    private void revertBlock(Block block) {
+        log.info("回退区块 高度:{} hash:{}", block.getHeight(), bytesToHex(block.getHash()));
+
+        List<RocksDb.DbOperation> operations = new ArrayList<>();
+
+        // 1. 恢复被花费的UTXO
+        List<UTXO> spentUTXOs = block.getSpentUTXOKeys();
+        for (UTXO spentUtxo : spentUTXOs) {
+            byte[] utxoBytes = dataBase.get(TUTXO, spentUtxo.getKey());
+            if (utxoBytes != null) {
+                // UTXO已经存在，说明被重新添加了，无需操作
+                continue;
+            }
+            // 从父区块或其他地方获取被花费的UTXO数据
+            // 这里需要从历史区块中查找，简化处理
+            // 实际应该从已花费UTXO的来源区块获取数据
+            byte[] parentHash = block.getBlockHeader().getPreviousHash();
+            byte[] sourceBlockBytes = dataBase.get(TBLOCK, parentHash);
+            if (sourceBlockBytes != null) {
+                // 这里简化处理，实际需要从交易历史重建UTXO
+                // 可以维护一个spentUtxo的备份表
+            }
+
+            // 暂时从备份恢复（需要在添加区块时备份）
+            operations.add(new RocksDb.DbOperation(
+                TableEnum.TUTXO,
+                spentUtxo.getKey(),
+                spentUtxo.serialize(),
+                RocksDb.DbOperation.OpType.INSERT
+            ));
+
+            // 恢复地址到UTXO的索引
+            operations.add(new RocksDb.DbOperation(
+                ADDR_TO_UTXO,
+                spentUtxo.getAddressKey(),
+                longToLittleEndian(spentUtxo.getValue()),
+                RocksDb.DbOperation.OpType.INSERT
+            ));
+        }
+
+        // 2. 删除本区块创建的UTXO
+        List<UTXO> newUTXOs = block.getUTXOs();
+        for (UTXO newUtxo : newUTXOs) {
+            operations.add(new RocksDb.DbOperation(
+                TableEnum.TUTXO,
+                newUtxo.getKey(),
+                null,
+                RocksDb.DbOperation.OpType.DELETE
+            ));
+
+            operations.add(new RocksDb.DbOperation(
+                ADDR_TO_UTXO,
+                newUtxo.getAddressKey(),
+                null,
+                RocksDb.DbOperation.OpType.DELETE
+            ));
+        }
+
+        // 3. 删除高度到Hash的映射
+        byte[] heightBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
+        operations.add(new RocksDb.DbOperation(
+            HEIGHT_TO_HASH,
+            heightBytes,
+            null,
+            RocksDb.DbOperation.OpType.DELETE
+        ));
+
+        // 4. 更新主链tip
+        byte[] newTipHeightBytes = ByteBuffer.allocate(4).putInt(block.getHeight() - 1).array();
+        byte[] newTipHashBytes = block.getBlockHeader().getPreviousHash();
+        operations.add(new RocksDb.DbOperation(
+            CHAIN,
+            MAIN_CHAIN_TIP_HEIGHT_KEY,
+            newTipHeightBytes,
+            RocksDb.DbOperation.OpType.INSERT
+        ));
+        operations.add(new RocksDb.DbOperation(
+            CHAIN,
+            MAIN_CHAIN_TIP_HASH_KEY,
+            newTipHashBytes,
+            RocksDb.DbOperation.OpType.INSERT
+        ));
+
+        // 执行事务
+        boolean success = dataBase.dataTransaction(operations);
+        if (success) {
+            log.info("区块回退成功");
+        } else {
+            log.error("区块回退失败");
+        }
+    }
+
+    private void addOrphanBlock(Block block) {
+        if (block == null || block.getBlockHeader() == null) {
+            log.error("添加孤块失败：区块或区块头为空");
+            return;
+        }
+
+        // 获取父区块Hash的十六进制字符串作为缓存key
+        String parentHashHex = bytesToHex(block.getBlockHeader().getPreviousHash());
+        if (parentHashHex.isEmpty()) {
+            log.error("添加孤块失败：父区块Hash为空");
+            return;
+        }
+
+        // 兼容低版本 Caffeine：手动实现 computeIfAbsent 逻辑（线程安全）
+        List<Block> orphanList = orphanBlocks.getIfPresent(parentHashHex);
+        if (orphanList == null) {
+            // 双重检查锁，确保原子性创建空列表
+            synchronized (orphanBlocks) {
+                orphanList = orphanBlocks.getIfPresent(parentHashHex);
+                if (orphanList == null) {
+                    orphanList = new ArrayList<>();
+                    orphanBlocks.put(parentHashHex, orphanList);
+                }
             }
         }
 
-
-        return true;
+        // 向列表中添加孤块（列表本身需保证线程安全，这里用同步块）
+        synchronized (orphanList) {
+            orphanList.add(block);
+        }
     }
+
+
+
+    /**
+     * 处理孤块（当有新区块加入主链后，检查是否有孤块可以被处理）
+     */
+    private void processOrphanBlocks() {
+        if (mainTipBlock == null) {
+            log.warn("处理孤块失败：主链最新区块为空");
+            return;
+        }
+
+        // 获取主链最新区块Hash的十六进制字符串（作为孤块的父区块key）
+        String tipHashHex = bytesToHex(mainTipBlock.getHash());
+        // 从缓存中获取该key对应的所有孤块
+        List<Block> orphansToProcess = orphanBlocks.getIfPresent(tipHashHex);
+
+        if (orphansToProcess == null || orphansToProcess.isEmpty()) {
+            log.debug("无待处理的孤块（父区块Hash: {}）", tipHashHex);
+            return;
+        }
+
+        log.info("找到{}个待处理的孤块（父区块已上链：{}）", orphansToProcess.size(), tipHashHex);
+
+        // 拷贝列表避免遍历中修改，同时加同步锁
+        List<Block> processList;
+        synchronized (orphansToProcess) {
+            processList = new ArrayList<>(orphansToProcess);
+            orphansToProcess.clear(); // 清空原列表，避免重复处理
+        }
+
+        // 遍历处理每个孤块
+        for (Block orphanBlock : processList) {
+            try {
+                log.info("开始处理孤块，高度: {}, Hash: {}",
+                        orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
+
+                // 验证孤块（验证通过则自动加入主链/侧链）
+                boolean verifyResult = verifyBlock(orphanBlock);
+                if (verifyResult) {
+                    log.info("孤块处理成功，高度: {}, Hash: {}",
+                            orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
+                } else {
+                    log.error("孤块处理失败，高度: {}, Hash: {}",
+                            orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
+                }
+            } catch (Exception e) {
+                log.error("处理孤块异常，Hash: {}", bytesToHex(orphanBlock.getHash()), e);
+            }
+        }
+
+        // 如果处理后列表为空，清理缓存key（减少冗余）
+        synchronized (orphansToProcess) {
+            if (orphansToProcess.isEmpty()) {
+                orphanBlocks.invalidate(tipHashHex);
+                log.debug("清理空的孤块缓存key: {}", tipHashHex);
+            }
+        }
+    }
+
 
     /**
      * 从交易池删除已上链的交易
