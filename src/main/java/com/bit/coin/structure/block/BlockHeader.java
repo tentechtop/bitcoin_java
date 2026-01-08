@@ -514,6 +514,7 @@ public class BlockHeader {
     }
 
 
-
-
+    public byte[] getHash() {
+        return calculateHash();
+    }
 }

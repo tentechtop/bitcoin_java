@@ -40,6 +40,9 @@ public interface TxPool {
     // 区块上链成功，从交易池删除已确认的交易
     void onBlockConfirmed(Transaction[] confirmedTxs,int height);
 
+    void onBlockConfirmed(Transaction confirmedTx,int height);
+
+
     // 区块上链失败，回退交易到交易池（将交易从打包状态释放回可用状态）
     void onBlockFailed(Transaction[] failedTxs);
 

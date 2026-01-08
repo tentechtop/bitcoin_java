@@ -622,6 +622,49 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
+    public void onBlockConfirmed(Transaction tx,int height) {
+        if (tx == null) {
+            return;
+        }
+        try {
+            if (tx.isCoinbase()) {
+              return;
+            }
+            String txIdStr = bytesToHex(tx.getTxId());
+
+            // 更新交易状态为CONFIRMED（已确认）
+            long status = tx.getStatus();
+            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
+            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.CONFIRMED_SAFE);
+            tx.setStatus(status);
+
+            // 从内存池删除
+            Transaction removed = mempool.remove(txIdStr);
+            if (removed != null) {
+                // 删除时间戳
+                txTimestamps.remove(txIdStr);
+                // 从打包状态删除
+                packingTxs.remove(txIdStr);
+                // 删除地址映射
+                removeAddressMapping(removed);
+                log.info("区块上链成功，从交易池删除交易：{}，状态={}",
+                        txIdStr, TransactionStatusResolver.toString(status));
+            }
+            utxoCache.addConfirmedTx(tx,height);
+
+            List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
+            //去除
+            spendingUTXOKeyList.forEach(spendingSet::remove);
+            List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
+            pendingConfirmationOfReceipt.forEach(processingSet::remove);
+            log.info("区块上链成功，共删除 1 笔交易");
+        } catch (Exception e) {
+            log.error("处理区块上链成功异常", e);
+        }
+    }
+
+
+    @Override
     public void onBlockFailed(Transaction[] failedTxs) {
         if (failedTxs == null || failedTxs.length == 0) {
             return;
