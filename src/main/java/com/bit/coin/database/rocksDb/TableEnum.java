@@ -126,6 +126,28 @@ public enum TableEnum {
             10, //内存缓存 MB
             60
     ),
+    HASH_TO_HEIGHT(
+            (short) 13,
+            "HASH_TO_HEIGHT",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(1024 * 1024)
+                            .setCacheIndexAndFilterBlocks(true)),
+            0, //内存缓存 MB
+            0
+    ),
+    //HASH到工作总量
+    HASH_TO_CHAIN_WORK(
+            (short) 14,
+            "HASH_TO_CHAIN_WORK",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setBlockCacheSize(1024 * 1024)
+                            .setCacheIndexAndFilterBlocks(true)),
+            0, //内存缓存 MB
+            0
+    ),
+
 
     
 

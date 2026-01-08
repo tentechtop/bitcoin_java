@@ -15,6 +15,7 @@ import tools.jackson.databind.annotation.JsonSerialize;
 
 
 import java.io.*;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,7 @@ public class Block {
     private int txCount;
 
     @JsonIgnore
-    private UInt256 chainWork;
+    private UInt256 chainWork = UInt256.fromLong(123L);
 
     private List<Transaction> transactions;
 
@@ -56,11 +57,11 @@ public class Block {
 
 
 
-    public String getChainWorkDecimal(){
+    public BigInteger getChainWorkDecimal(){
         if (chainWork==null){
             chainWork = UInt256.fromLong(0L);
         }
-        return chainWork.toDecimalString();
+        return chainWork.toBigInteger();
     }
 
 

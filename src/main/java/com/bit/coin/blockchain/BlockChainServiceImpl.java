@@ -397,56 +397,62 @@ public class BlockChainServiceImpl {
      * 处理区块链接关系（主链延续、孤块、分叉）
      */
     private boolean handleBlockConnection(Block block) {
-        byte[] previousHash = block.getBlockHeader().getPreviousHash();
-
-        // 检查是否为主链的延续
-        if (Arrays.equals(previousHash, mainTipBlock.getHash())) {
-            log.info("是主链的延续，高度:{} -> {}", mainTipBlock.getHeight(), block.getHeight());
-
+        if (block.getHeight()==0){
             // 将区块加入到主链
             addBlockToChain(block, true);
             mainTipBlock = block;
-
-            // 上链成功后，从交易池删除已确认的交易
-            removeConfirmedTxsFromPool(block);
-
-            // 尝试处理孤块
-            processOrphanBlocks();
-
             return true;
-        }
+        }else {
+            byte[] previousHash = block.getBlockHeader().getPreviousHash();
 
-        // 检查是否为孤块（父区块不存在）
-        byte[] parentBlockBytes = dataBase.get(TBLOCK_HEADER, previousHash);
-        if (parentBlockBytes == null) {
-            log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
-                bytesToHex(previousHash));
-            addOrphanBlock(block);
-            return false;
-        }
+            // 检查是否为孤块（父区块不存在）
+            byte[] parentBlockBytes = dataBase.get(TBLOCK_HEADER, previousHash);
+            if (parentBlockBytes == null) {
+                log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
+                        bytesToHex(previousHash));
+                addOrphanBlock(block);
+                return false;
+            }
 
-        // 获取父区块
-        Block parentBlock = Block.deserialize(parentBlockBytes);
-        assert parentBlock != null;
+            // 获取父区块工作总量
+            Block parentBlock = getBlockByHash(previousHash);
+            UInt256 previousChainWork = parentBlock.getChainWork();
+            UInt256 newBlockChainWork = previousChainWork.add(UInt256.fromBigInteger(block.getBlockHeader().getWork()));
+            block.setChainWork(newBlockChainWork);
 
-        // 计算新区块的链工作量
-        UInt256 newBlockChainWork = parentBlock.getChainWork().add(UInt256.fromBigInteger(block.getBlockHeader().getWork())) ;
+            // 检查是否为主链的延续
+            if (Arrays.equals(previousHash, mainTipBlock.getHash())) {
+                log.info("是主链的延续，高度:{} -> {}", mainTipBlock.getHeight(), block.getHeight());
 
-        // 计算当前主链的链工作量
-        UInt256 mainChainWork = mainTipBlock.getChainWork();
+                // 将区块加入到主链
+                addBlockToChain(block, true);
+                mainTipBlock = block;
 
-        log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
+                // 上链成功后，从交易池删除已确认的交易
+                removeConfirmedTxsFromPool(block);
 
-        // 比较工作量，决定是否进行重组
-        int i = newBlockChainWork.compareTo(mainChainWork);
-        if (i > 0) {
-            log.info("新链工作量更大，执行链重组");
-            return performChainReorg(block, parentBlock, newBlockChainWork);
-        } else {
-            log.info("新链工作量较小，暂时作为侧链区块");
-            // 将区块加入到侧链（不更新UTXO，但存储区块数据）
-            addBlockToChain(block, false);
-            return false;
+                // 尝试处理孤块
+                processOrphanBlocks();
+
+                return true;
+            }
+
+            // 计算当前主链的链工作量
+            UInt256 mainChainWork = mainTipBlock.getChainWork();
+
+            log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
+
+            // 比较工作量，决定是否进行重组
+            int i = newBlockChainWork.compareTo(mainChainWork);
+            if (i > 0) {
+                log.info("新链工作量更大，执行链重组");
+                return performChainReorg(block, parentBlock, newBlockChainWork);
+            } else {
+                log.info("新链工作量较小，暂时作为侧链区块");
+                // 将区块加入到侧链（不更新UTXO，但存储区块数据）
+                addBlockToChain(block, false);
+                return false;
+            }
         }
     }
 
@@ -738,13 +744,6 @@ public class BlockChainServiceImpl {
     }
 
 
-    //计算区块链工作总量
-    public byte[] calculateChainWork() {
-
-        return null;
-    }
-
-
 
     //将区块加入到主链
     public void addBlockToChain(Block block,boolean isMainChain) {
@@ -757,6 +756,8 @@ public class BlockChainServiceImpl {
         ));*/
         BlockHeader blockHeader = block.getBlockHeader();
         BlockBody blockBody = block.getBlockBody();
+        UInt256 chainWork = block.getChainWork();
+        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
         operations.add(new RocksDb.DbOperation(
                 TBLOCK_HEADER,
                 block.getHash(),
@@ -769,7 +770,18 @@ public class BlockChainServiceImpl {
                 blockBody.serialize(),
                 RocksDb.DbOperation.OpType.INSERT
         ));
-        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
+        operations.add(new RocksDb.DbOperation(
+                HASH_TO_CHAIN_WORK,
+                block.getHash(),
+                chainWork.toBytes(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        operations.add(new RocksDb.DbOperation(
+                HASH_TO_HEIGHT,
+                block.getHash(),
+                intHeightToBytes,
+                RocksDb.DbOperation.OpType.INSERT
+        ));
         if (isMainChain){
             operations.add(new RocksDb.DbOperation(
                     TableEnum.HEIGHT_TO_HASH,
@@ -883,6 +895,7 @@ public class BlockChainServiceImpl {
         genesisBlock.setTxCount(1);
         genesisBlock.setTransactions(transactions);
         genesisBlock.setHash(blockHeader.calculateHash());
+        genesisBlock.setChainWork(UInt256.fromBigInteger(blockHeader.getWork()));
         return genesisBlock;
     }
 
@@ -1031,10 +1044,15 @@ public class BlockChainServiceImpl {
         //获取区块头 区块体
         byte[] header_bytes = dataBase.get(TBLOCK_HEADER,hash);
         byte[] body_bytes = dataBase.get(TBLOCK_BODY,hash);
+        byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
+        UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
+
         if (header_bytes!=null && body_bytes!=null){
             BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
             BlockBody blockBody = BlockBody.deserialize(body_bytes);
-            return Block.buildBlock(blockHeader,blockBody);
+            Block block = Block.buildBlock(blockHeader, blockBody);
+            block.setChainWork(uInt256);
+            return block;
         }else {
             return null;
         }
