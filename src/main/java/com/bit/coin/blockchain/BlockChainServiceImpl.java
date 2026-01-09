@@ -1679,4 +1679,99 @@ public class BlockChainServiceImpl {
         byte[] bytes = dataBase.get(TUTXO, hexToBytes(key));
         return UTXO.deserialize(bytes);
     }
+
+    /**
+     * 分页查询区块
+     * 查询指定高度范围内的区块（从较高高度到较低高度）
+     * 每次最多返回100个区块
+     *
+     * @param startHeight 起始高度（较高高度）
+     * @param endHeight 结束高度（较低高度）
+     * @return 区块列表
+     */
+    public List<Block> getBlocksByRange(int startHeight, int endHeight) {
+        if (startHeight < 0) {
+            startHeight = 0;
+        }
+
+        if (endHeight < 0) {
+            endHeight = 0;
+        }
+
+        // 确保 startHeight >= endHeight
+        if (startHeight < endHeight) {
+            int temp = startHeight;
+            startHeight = endHeight;
+            endHeight = temp;
+        }
+
+        // 计算要查询的区块数量
+        int count = startHeight - endHeight + 1;
+
+        // 限制最多100个
+        if (count > 100) {
+            endHeight = startHeight - 99;  // 调整结束高度
+            count = 100;
+        }
+
+        List<Block> blocks = new ArrayList<>(count);
+
+        for (int height = startHeight; height >= endHeight; height--) {
+            Block block = getBlockByHeight(height);
+            if (block != null) {
+                blocks.add(block);
+            }
+        }
+
+        return blocks;
+    }
+
+
+    /**
+     * 分页查询交易
+     * @param pageNum 页码（从1开始）
+     * @param pageSize 每页大小
+     * @return 分页结果
+     */
+    public List<Transaction> getTransactionsByPage(int pageNum, int pageSize) {
+        if (pageNum < 1) {
+            pageNum = 1;
+        }
+        if (pageSize < 1 || pageSize > 100) {
+            pageSize = 10;
+        }
+
+        int currentHeight = getCurrentChainHeight();
+        List<Transaction> allTransactions = new ArrayList<>();
+
+
+        int blocksNeeded = pageNum * pageSize;
+        int blocksChecked = 0;
+        int totalTransactions = 0;
+
+        for (int height = currentHeight; height >= 0 && blocksChecked < blocksNeeded; height--) {
+            Block block = getBlockByHeight(height);
+            if (block != null) {
+                List<Transaction> blockTxs = block.getTransactions();
+                //将交易状态都设置为已经确认
+                for (Transaction tx : blockTxs) {
+                    tx.setStatus(TransactionStatusResolver.CONFIRMED);
+                }
+
+                totalTransactions += blockTxs.size();
+                allTransactions.addAll(blockTxs);
+                blocksChecked++;
+            }
+        }
+        int total = totalTransactions;
+        int totalPages = (total + pageSize - 1) / pageSize;
+        // 分页提取交易
+        int startIndex = (pageNum - 1) * pageSize;
+        int endIndex = Math.min(startIndex + pageSize, allTransactions.size());
+        List<Transaction> pageTransactions = new ArrayList<>();
+        if (startIndex < allTransactions.size()) {
+            pageTransactions = allTransactions.subList(startIndex, endIndex);
+        }
+        return pageTransactions;
+    }
 }

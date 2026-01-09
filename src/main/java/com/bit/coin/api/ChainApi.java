@@ -38,15 +38,28 @@ public class ChainApi {
 
 
     /**
-     * 分页查询区块
+     * 最新顶端区块
      */
+    @GetMapping("/getMainLatestBlock")
+    public Block getMainLatestBlock() {
+        return blockChainService.getMainLatestBlock();
+    }
+
+    /**
+     * 分页查询区块 开始高度 结束高度 每次不超过100个
+     */
+    @GetMapping("/getBlocksByPage")
+    public List<Block> getBlocksByPage(int start, int end) {
+        return blockChainService.getBlocksByRange(start, end);
+    }
 
     /**
      * 分页查询交易
      */
-
-
-
+    @GetMapping("/getTransactionsByPage")
+    public List<Transaction> getTransactionsByPage(int pageNum, int pageSize) {
+        return blockChainService.getTransactionsByPage(pageNum, pageSize);
+    }
 
     /**
      * 根据Hash查询区块

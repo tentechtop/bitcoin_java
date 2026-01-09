@@ -514,6 +514,7 @@ public class BlockHeader {
     }
 
 
+    @JsonIgnore
     public byte[] getHash() {
         return calculateHash();
     }
