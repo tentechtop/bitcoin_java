@@ -242,6 +242,9 @@ public class SerializeUtils {
      * 十六进制字符串转字节数组
      */
     public static byte[] hexToBytes(String hex) {
+        if (hex.isEmpty()){
+            return null;
+        }
         int len = hex.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {

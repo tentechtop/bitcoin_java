@@ -442,6 +442,236 @@ public class RocksDb implements DataBase {
         }
     }
 
+    @Override
+    public <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey) {
+        // 校验参数
+        if (pageSize <= 0 || pageSize > 1000) {
+            throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
+        }
+        if (table == null) {
+            throw new IllegalArgumentException("表名不能为空");
+        }
+
+        rwLock.readLock().lock();
+        RocksIterator iterator = null;
+        try {
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                // 返回空结果（泛型为 T，这里用 Collections.emptyList() 兼容）
+                return new PageResult<>(Collections.emptyList(), null, true);
+            }
+
+            iterator = db.newIterator(cfHandle);
+            List<T> dataList = new ArrayList<>(pageSize);
+            byte[] currentLastKey = null;
+
+            // 定位迭代器起始位置
+            if (lastKey != null && lastKey.length > 0) {
+                iterator.seek(lastKey);
+                if (iterator.isValid() && Arrays.equals(iterator.key(), lastKey)) {
+                    iterator.next(); // 跳过上一页最后一个键
+                }
+            } else {
+                iterator.seekToFirst(); // 第一页从开头开始
+            }
+
+            // 读取 pageSize 条数据
+            int count = 0;
+            while (iterator.isValid() && count < pageSize) {
+                byte[] key = iterator.key();
+                dataList.add((T) key);
+                currentLastKey = key.clone(); // 保存当前页最后一个键
+                iterator.next();
+                count++;
+            }
+
+            // 判断是否为最后一页
+            boolean isLastPage = !iterator.isValid();
+            return new PageResult<>(dataList, currentLastKey, isLastPage);
+        } finally {
+            if (iterator != null) {
+                iterator.close();
+            }
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * 按前缀分页查询（返回包含值的键值对）
+     * @param table 表枚举
+     * @param prefix 键的前缀（byte[] 格式）
+     * @param pageSize 每页条数（1-1000）
+     * @param lastKey 上一页最后一个键（用于分页续查，第一页传null）
+     * @return 分页结果（包含数据列表、当前页最后一个键、是否最后一页）
+     */
+    @Override
+    public <T> PageResult<T> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+        // 1. 参数校验
+        if (pageSize <= 0 || pageSize > 1000) {
+            throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
+        }
+        if (table == null || prefix == null || prefix.length == 0) {
+            throw new IllegalArgumentException("表名和前缀不能为空");
+        }
+
+        rwLock.readLock().lock();
+        RocksIterator iterator = null;
+        ReadOptions readOptions = null;
+        try {
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                return new PageResult<>(Collections.emptyList(), null, true);
+            }
+
+            // 2. 配置前缀扫描选项，提升查询效率
+            readOptions = new ReadOptions().setPrefixSameAsStart(true);
+            iterator = db.newIterator(cfHandle, readOptions);
+
+            List<T> dataList = new ArrayList<>(pageSize);
+            byte[] currentLastKey = null;
+
+            // 3. 定位迭代器起始位置
+            if (lastKey != null && lastKey.length > 0) {
+                // 从上一页最后一个键的下一个位置开始
+                iterator.seek(lastKey);
+                if (iterator.isValid() && Arrays.equals(iterator.key(), lastKey)) {
+                    iterator.next(); // 跳过上一页最后一个键
+                }
+            } else {
+                // 第一页从前缀起始位置开始
+                iterator.seek(prefix);
+            }
+
+            // 4. 读取分页数据
+            int count = 0;
+            while (iterator.isValid() && count < pageSize) {
+                byte[] currentKey = iterator.key();
+
+                // 校验当前键是否匹配前缀，不匹配则终止遍历
+                if (!startsWith(currentKey, prefix)) {
+                    break;
+                }
+
+                // 封装数据（value需根据泛型T反序列化，这里保持与原有page方法一致的强转逻辑）
+                T data = (T) iterator.value();
+                dataList.add(data);
+
+                // 记录当前页最后一个键
+                currentLastKey = currentKey.clone();
+
+                iterator.next();
+                count++;
+            }
+
+            // 5. 判断是否为最后一页（检查下一个键是否还匹配前缀）
+            boolean isLastPage = true;
+            if (iterator.isValid()) {
+                byte[] nextKey = iterator.key();
+                if (startsWith(nextKey, prefix)) {
+                    isLastPage = false;
+                }
+            }
+
+            return new PageResult<>(dataList, currentLastKey, isLastPage);
+        } finally {
+            // 6. 释放资源
+            if (iterator != null) {
+                iterator.close();
+            }
+            if (readOptions != null) {
+                readOptions.close();
+            }
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * 按前缀分页查询（仅返回键）
+     * @param table 表枚举
+     * @param prefix 键的前缀（byte[] 格式）
+     * @param pageSize 每页条数（1-1000）
+     * @param lastKey 上一页最后一个键（用于分页续查，第一页传null）
+     * @return 分页结果（包含键列表、当前页最后一个键、是否最后一页）
+     */
+    @Override
+    public <T> PageResult<T> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+        // 1. 参数校验
+        if (pageSize <= 0 || pageSize > 1000) {
+            throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
+        }
+        if (table == null || prefix == null || prefix.length == 0) {
+            throw new IllegalArgumentException("表名和前缀不能为空");
+        }
+
+        rwLock.readLock().lock();
+        RocksIterator iterator = null;
+        ReadOptions readOptions = null;
+        try {
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                return new PageResult<>(Collections.emptyList(), null, true);
+            }
+
+            // 2. 配置前缀扫描选项
+            readOptions = new ReadOptions().setPrefixSameAsStart(true);
+            iterator = db.newIterator(cfHandle, readOptions);
+
+            List<T> keyList = new ArrayList<>(pageSize);
+            byte[] currentLastKey = null;
+
+            // 3. 定位迭代器起始位置
+            if (lastKey != null && lastKey.length > 0) {
+                iterator.seek(lastKey);
+                if (iterator.isValid() && Arrays.equals(iterator.key(), lastKey)) {
+                    iterator.next(); // 跳过上一页最后一个键
+                }
+            } else {
+                iterator.seek(prefix);
+            }
+
+            // 4. 读取分页键数据
+            int count = 0;
+            while (iterator.isValid() && count < pageSize) {
+                byte[] currentKey = iterator.key();
+
+                // 校验前缀匹配
+                if (!startsWith(currentKey, prefix)) {
+                    break;
+                }
+
+                // 仅添加键数据
+                keyList.add((T) currentKey.clone());
+
+                // 记录当前页最后一个键
+                currentLastKey = currentKey.clone();
+
+                iterator.next();
+                count++;
+            }
+
+            // 5. 判断是否为最后一页
+            boolean isLastPage = true;
+            if (iterator.isValid()) {
+                byte[] nextKey = iterator.key();
+                if (startsWith(nextKey, prefix)) {
+                    isLastPage = false;
+                }
+            }
+
+            return new PageResult<>(keyList, currentLastKey, isLastPage);
+        } finally {
+            // 6. 释放资源
+            if (iterator != null) {
+                iterator.close();
+            }
+            if (readOptions != null) {
+                readOptions.close();
+            }
+            rwLock.readLock().unlock();
+        }
+    }
+
+
 
     /**
      * 执行跨列族事务（原子操作）

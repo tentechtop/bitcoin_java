@@ -40,7 +40,7 @@ public class MiningServiceImpl {
     private TxPool txPool;
 
     //矿工地址
-    private static final String MINER_ADDRESS = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
+    private static final String MINER_ADDRESS = "4Fu7xjEeBsFMyv19AxinTaBBBiUZzSev7UQeGQgPAxfU";
 
 
     volatile public static boolean isMining = false;

@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 /**
@@ -646,5 +647,18 @@ public class Ed25519Signer {
         System.out.println("基准路径重复生成一致性: " + baseKey.getAddress().equals(baseKey2.getAddress()) + "（应为true）");
         System.out.println("账户1重复生成一致性: " + account1Key.getAddress().equals(account1Key2.getAddress()) + "（应为true）");
         System.out.println("地址1重复生成一致性: " + address1Key.getAddress().equals(address1Key2.getAddress()) + "（应为true）");
+
+
+        PublicKey publicKey1 = Ed25519Signer.recoverPublicKeyFromCore(hexToBytes("97bb7e761b177c449a54278d3ed439462ae4e1935bc3895ea3b1a431bdccc8fc"));
+        PrivateKey privateKey1 = Ed25519Signer.recoverPrivateKeyFromCore(hexToBytes("bd652eaf5c0395fbf29cb59d44490bcb3bc12368ea55ddf8506cebad025c4997"));
+
+        byte[] signature1 = Ed25519Signer.applySignature(privateKey1, testData);
+        boolean verifyResult1 = Ed25519Signer.verifySignature(publicKey1, testData, signature1);
+        System.out.println("===== 签名验证 =====");
+        System.out.println("签名长度: " + signature1.length + "字节（应为64）");
+        System.out.println("验签结果: " + verifyResult1 + "（应为true）");
+        byte[] bytes = hexToBytes("97bb7e761b177c449a54278d3ed439462ae4e1935bc3895ea3b1a431bdccc8fc");
+        String encode = Base58.encode(bytes);
+        System.out.println("Base58{}"+encode);
     }
 }

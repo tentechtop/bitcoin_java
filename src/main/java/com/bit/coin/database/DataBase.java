@@ -109,6 +109,10 @@ public interface DataBase {
      * @return 分页结果（包含当前页数据、最后一个键、是否为最后一页）
      */
     <T> PageResult<T> page(TableEnum table, int pageSize, byte[] lastKey);
+    <T> PageResult<T> pageByPrefix(TableEnum table,byte[] prefix, int pageSize, byte[] lastKey);
+
+    <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey);
+    <T> PageResult<T> pageKeyByPrefix(TableEnum table,byte[] prefix, int pageSize, byte[] lastKey);
 
 
     /**

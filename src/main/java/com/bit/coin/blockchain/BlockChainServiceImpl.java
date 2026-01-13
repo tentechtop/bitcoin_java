@@ -3,6 +3,7 @@ package com.bit.coin.blockchain;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
+import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
 
@@ -16,6 +17,7 @@ import com.bit.coin.utils.TimeGenerator;
 import com.bit.coin.utils.UInt256;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.google.common.primitives.Bytes;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
@@ -42,7 +44,7 @@ import static com.bit.coin.utils.SerializeUtils.*;
 
 @Slf4j
 @Service
-public class BlockChainServiceImpl {
+public class BlockChainServiceImpl implements BlockChainService{
 
     @Autowired
     private SystemConfig config;
@@ -821,6 +823,8 @@ public class BlockChainServiceImpl {
         }
     }
 
+
+
     // 辅助类：用于返回多值（可替换为Apache Commons Pair或自定义类）
     private static class Pair<F, S> {
         private final F first;
@@ -1169,13 +1173,17 @@ public class BlockChainServiceImpl {
             // 使用LinkedHashSet进行去重，并保留顺序
             Set<byte[]> seenScripts = new LinkedHashSet<>();
             for (TxOutput output : outputs) {
-                byte[] scriptPubKey = output.getScriptPubKey();
+                byte[] scriptPubKey = output.getScriptPubKey();//[20字节][32字节]
+                //地址到交易的key 将scriptPubKey 和 txId 拼接为 52字节key
+                byte[] scriptPubKeyWithTxId = new byte[scriptPubKey.length + txId.length];
+                System.arraycopy(scriptPubKey, 0, scriptPubKeyWithTxId, 0, scriptPubKey.length);
+                System.arraycopy(txId, 0, scriptPubKeyWithTxId, scriptPubKey.length, txId.length);
                 // 如果add方法返回true，说明是首次添加，不是重复项
                 if (seenScripts.add(scriptPubKey)) {
                     operations.add(new RocksDb.DbOperation(
                             TableEnum.ADDR_TO_TX,
-                            scriptPubKey,
-                            txId,
+                            scriptPubKeyWithTxId,
+                            new byte[]{},
                             RocksDb.DbOperation.OpType.INSERT
                     ));
                 }
@@ -1774,4 +1782,151 @@ public class BlockChainServiceImpl {
         }
         return pageTransactions;
     }
+
+
+    @Override
+    public List<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey) {
+        // 限制pageSize最大值为20，最小值保底为1避免无效值
+        pageSize = Math.max(1, Math.min(pageSize, 20));
+
+        // 先获取内存池中的未确认交易（保留原有逻辑）
+        Transaction[] txsByAddress = txPool.getTxsByAddress(address);
+
+        try {
+            // 地址转换：Base58解码 -> 双重哈希得到前缀
+            byte[] pubkey = Base58.decode(address);
+            byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
+
+            // 处理lastKey：空值转为null，非空则十六进制转字节数组
+            byte[] lastKeyBytes = (lastKey == null || lastKey.isEmpty()) ? null : hexToBytes(lastKey);
+            //lastKeyBytes在前面拼接20字节的addr 重点
+            lastKeyBytes = (lastKeyBytes == null) ? null : Bytes.concat(addr, lastKeyBytes);
+
+            // 按前缀分页查询交易ID的复合键
+            PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, addr, pageSize, lastKeyBytes);
+            log.info("按地址[{}]分页查询到{}条交易ID键", address, page.getData().size());
+            byte[] lastKey1 = page.getLastKey();
+            log.info("最后一个键{}",bytesToHex(lastKey1));
+
+
+            List<Object> data = page.getData();
+            if (data.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            // 解析复合键，提取交易ID，并缓存「区块Hash-交易索引-交易ID」映射
+            ArrayList<byte[]> txIdList = new ArrayList<>();
+            // 核心优化：存储「区块HashHex -> 交易索引 -> 交易IDHex」的映射，避免遍历
+            Map<String, Map<Integer, String>> blockTxIndexMap = new HashMap<>();
+
+            for (Object o : data) {
+                if (!(o instanceof byte[])) {
+                    log.warn("无效的交易ID键类型：{}", o.getClass().getName());
+                    continue;
+                }
+                byte[] key = (byte[]) o;
+                // 校验复合键长度，避免数组越界
+                if (key.length <= addr.length) {
+                    log.warn("复合键长度异常，前缀长度[{}]，键长度[{}]", addr.length, key.length);
+                    continue;
+                }
+                // 提取纯交易ID（去掉地址前缀）
+                byte[] txId = Arrays.copyOfRange(key, addr.length, key.length);
+                String txIdHex = bytesToHex(txId);
+                log.info("交易ID是{}", txIdHex);
+                txIdList.add(txId);
+
+                // 查询交易对应的区块Hash和在区块中的索引
+                byte[] blockTxIndex = dataBase.get(TX_TO_BLOCK, txId);
+                if (blockTxIndex == null) {
+                    log.warn("交易ID[{}]未找到对应的区块索引信息", txIdHex);
+                    continue;
+                }
+
+                // 解析区块索引信息
+                Map<String, Object> blockIndexMap = Transaction.parseBlockIndex(blockTxIndex);
+                byte[] blockHash = (byte[]) blockIndexMap.get("hash");
+                int txIndexInBlock = (int) blockIndexMap.get("index");
+                String blockHashHex = bytesToHex(blockHash);
+
+                // 缓存：区块Hash -> 交易索引 -> 交易ID
+                blockTxIndexMap.computeIfAbsent(blockHashHex, k -> new HashMap<>())
+                        .put(txIndexInBlock, txIdHex);
+            }
+
+            if (blockTxIndexMap.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            // 遍历区块，通过索引直接获取交易（核心优化点）
+            ArrayList<Transaction> transactionList = new ArrayList<>();
+            for (Map.Entry<String, Map<Integer, String>> entry : blockTxIndexMap.entrySet()) {
+                String blockHashHex = entry.getKey();
+                Map<Integer, String> txIndexToIdMap = entry.getValue();
+
+                // 查询区块体数据
+                byte[] blockHashBytes = hexToBytes(blockHashHex);
+                byte[] blockBody = dataBase.get(TBLOCK_BODY, blockHashBytes);
+                if (blockBody == null) {
+                    log.warn("区块Hash[{}]未找到对应的区块数据", blockHashHex);
+                    continue;
+                }
+
+                // 反序列化区块体
+                BlockBody deserialize = BlockBody.deserialize(blockBody);
+                if (deserialize == null || deserialize.getTransactions() == null) {
+                    log.warn("区块[{}]反序列化失败或无交易数据", blockHashHex);
+                    continue;
+                }
+                List<Transaction> blockTxs = deserialize.getTransactions();
+
+                // 关键优化：通过索引直接获取交易，无需遍历所有交易
+                for (Map.Entry<Integer, String> txIndexEntry : txIndexToIdMap.entrySet()) {
+                    int txIndex = txIndexEntry.getKey();
+                    String txIdHex = txIndexEntry.getValue();
+
+                    // 校验索引合法性，避免数组越界
+                    if (txIndex < 0 || txIndex >= blockTxs.size()) {
+                        log.warn("区块[{}]中交易索引[{}]越界，区块交易总数[{}]",
+                                blockHashHex, txIndex, blockTxs.size());
+                        continue;
+                    }
+
+                    // 直接通过索引获取交易
+                    Transaction targetTx = blockTxs.get(txIndex);
+                    // 二次校验交易ID（防止索引对应关系错误）
+                    if (txIdHex.equals(bytesToHex(targetTx.getTxId()))) {
+                        transactionList.add(targetTx);
+                    } else {
+                        log.warn("区块[{}]索引[{}]的交易ID不匹配，预期[{}]，实际[{}]",
+                                blockHashHex, txIndex, txIdHex, bytesToHex(targetTx.getTxId()));
+                    }
+                }
+            }
+
+            return transactionList;
+        } catch (Exception e) {
+            log.error("分页查询地址[{}]的交易失败", address, e);
+            return Collections.emptyList();
+        }
+    }
+
+
+    //区块是否主链
+    @Override
+    public boolean isMainBlock(String blockHexHash) {
+        byte[] blockHash = hexToBytes(blockHexHash);
+        //是否32字节
+        assert blockHash != null;
+        if (blockHash.length != 32) {
+            return false;
+        }
+        //hash到高度的映射得到高度 再从高度到hash 检查是否一致即可 只有主链区块才有高度到hash
+        byte[] height = dataBase.get(HASH_TO_HEIGHT, blockHash);
+        byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
+        return Arrays.equals(blockHash, hash);
+    }
+
+
+
 }

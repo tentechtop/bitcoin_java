@@ -56,7 +56,6 @@ public class UTXO {
     /**
      * UTXO状态
      */
-    @JsonIgnore
     private long status;
 
     private String statusStr;
