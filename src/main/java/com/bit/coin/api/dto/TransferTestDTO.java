@@ -1,9 +1,9 @@
-package com.bit.coin.api;
+package com.bit.coin.api.dto;
 
 import lombok.Data;
 
 @Data
-public class TransferDTO {
+public class TransferTestDTO {
 
     private String privateKeyHex;
 

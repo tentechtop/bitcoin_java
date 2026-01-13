@@ -1785,7 +1785,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
     @Override
-    public List<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey) {
+    public PageResult<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey) {
         // 限制pageSize最大值为20，最小值保底为1避免无效值
         pageSize = Math.max(1, Math.min(pageSize, 20));
 
@@ -1799,9 +1799,9 @@ public class BlockChainServiceImpl implements BlockChainService{
 
             // 处理lastKey：空值转为null，非空则十六进制转字节数组
             byte[] lastKeyBytes = (lastKey == null || lastKey.isEmpty()) ? null : hexToBytes(lastKey);
-            //lastKeyBytes在前面拼接20字节的addr 重点
+     /*       //lastKeyBytes在前面拼接20字节的addr 重点
             lastKeyBytes = (lastKeyBytes == null) ? null : Bytes.concat(addr, lastKeyBytes);
-
+*/
             // 按前缀分页查询交易ID的复合键
             PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, addr, pageSize, lastKeyBytes);
             log.info("按地址[{}]分页查询到{}条交易ID键", address, page.getData().size());
@@ -1811,7 +1811,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
             List<Object> data = page.getData();
             if (data.isEmpty()) {
-                return Collections.emptyList();
+                return null;
             }
 
             // 解析复合键，提取交易ID，并缓存「区块Hash-交易索引-交易ID」映射
@@ -1855,7 +1855,7 @@ public class BlockChainServiceImpl implements BlockChainService{
             }
 
             if (blockTxIndexMap.isEmpty()) {
-                return Collections.emptyList();
+                return null;
             }
 
             // 遍历区块，通过索引直接获取交易（核心优化点）
@@ -1903,11 +1903,10 @@ public class BlockChainServiceImpl implements BlockChainService{
                     }
                 }
             }
-
-            return transactionList;
+            return new PageResult<>(transactionList, page.getLastKey(), page.isLastPage());
         } catch (Exception e) {
             log.error("分页查询地址[{}]的交易失败", address, e);
-            return Collections.emptyList();
+            return null;
         }
     }
 

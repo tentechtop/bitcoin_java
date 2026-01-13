@@ -1,9 +1,9 @@
 package com.bit.coin.api;
 
+import com.bit.coin.api.dto.TransferTestDTO;
 import com.bit.coin.blockchain.BlockChainServiceImpl;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
-import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
@@ -66,7 +66,7 @@ public class TxApi {
 
 
     @RequestMapping("/transfer")
-    public Transaction transfer(@RequestBody TransferDTO transferDTO) throws Exception {
+    public Transaction transfer(@RequestBody TransferTestDTO transferDTO) throws Exception {
 
         // 1. 解析私钥
         byte[] privateKey = SerializeUtils.hexToBytes(transferDTO.getPrivateKeyHex());

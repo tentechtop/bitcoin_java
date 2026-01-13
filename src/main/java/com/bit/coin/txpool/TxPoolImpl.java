@@ -2,9 +2,9 @@ package com.bit.coin.txpool;
 
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
-import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
-import com.bit.coin.utils.SerializeUtils;
+import com.bit.coin.structure.tx.transfer.TransferDTO;
 import com.bit.coin.utils.Sha;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
@@ -238,6 +238,21 @@ public class TxPoolImpl implements TxPool{
             return false;
         }
     }
+
+
+    @Override
+    public Result<String> addTx(TransferDTO tx) {
+        Transaction transaction = tx.toTransaction();
+        byte[] txId = transaction.calculateTxId();
+        transaction.setTxId(txId);
+        if (addTx(transaction)){
+            return Result.OK("交易已经提交到交易池");
+        }else {
+            return Result.error("交易添加失败");
+        }
+    }
+
+
 
     @Override
     public long estimateTxFee(Transaction tx) {

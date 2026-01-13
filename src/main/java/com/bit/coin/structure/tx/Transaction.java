@@ -132,7 +132,10 @@ public class Transaction {
                 // 重新准备用于签名的数据
                 // 注意：这里的 sighashType 是从签名脚本中解析出来的。
                 // 为了简化，我们假设使用 SIGHASH_ALL。在实际实现中，你需要从解锁脚本中读取它。
+                log.info("签名类型{}",signatureType);
                 byte[] dataToVerify = prepareDataForSigning(i, scriptPubKey, signatureType);
+
+                log.info("签名数据{}",bytesToHex(Sha.applySHA256(dataToVerify)));
 
                 // 使用公钥和数据验证签名
                 if (!Ed25519Signer.fastVerify(publicKey, Sha.applySHA256(dataToVerify), signature)) {
@@ -201,7 +204,7 @@ public class Transaction {
 
 
     public byte[] getTxId(){
-        if (txId!=null){
+        if (txId==null){
             txId=calculateTxId();
         }
         return txId;
@@ -811,6 +814,8 @@ public class Transaction {
             return 0;
         }
     }
+
+
 
 
 }

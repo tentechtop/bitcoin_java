@@ -1,11 +1,13 @@
 package com.bit.coin.txpool;
 
+import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.Transaction;
-import com.bit.coin.structure.tx.UTXO;
-
-import java.util.List;
+import com.bit.coin.structure.tx.transfer.TransferDTO;
 
 public interface TxPool {
+
+    //提交一笔交易
+
 
 
 
@@ -16,6 +18,8 @@ public interface TxPool {
 
     //验证并加入到内存池
     boolean addTx(Transaction tx);
+
+    Result<String> addTx(TransferDTO tx);
 
     //估算交易手续费
     long estimateTxFee(Transaction tx);
