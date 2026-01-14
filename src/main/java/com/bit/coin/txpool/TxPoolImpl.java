@@ -246,7 +246,7 @@ public class TxPoolImpl implements TxPool{
         byte[] txId = transaction.calculateTxId();
         transaction.setTxId(txId);
         if (addTx(transaction)){
-            return Result.OK("交易已经提交到交易池");
+            return Result.OK("交易已经提交到交易池",bytesToHex(txId));
         }else {
             return Result.error("交易添加失败");
         }

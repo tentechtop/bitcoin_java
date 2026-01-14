@@ -16,16 +16,16 @@ public enum TableEnum {
             (short) 1,
             "account",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            10,  //MB
-            60
+            0,  //MB
+            0
     ),
     // 链信息表：定义表标识、列族名称、列族配置
     CHAIN(
             (short) 2,
             "chain",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            10,  //MB
-            60
+            0,  //MB
+            0
     ),
     // 区块信息表：定义表标识、列族名称、列族配置 Hash->区块
     TBLOCK(
@@ -35,15 +35,15 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            10, //内存缓存 MB
-            60
+            0, //内存缓存 MB
+            0
     ),
     PEER(
             (short) 4,
             "peer",  // 列族实际存储名称
             new ColumnFamilyOptions(),  // 列族配置
-            10,  //MB
-            60 
+            0,  //MB
+            0
     ),
     //主链高度到哈希的映射
     HEIGHT_TO_HASH(
@@ -54,7 +54,7 @@ public enum TableEnum {
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
             0, //内存缓存 MB
-            60 
+            0
     ),
     TUTXO(
             (short) 6,
@@ -63,8 +63,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            1, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
     TX_TO_BLOCK(
             (short) 7,
@@ -73,8 +73,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            1, //内存缓存 MB
-            60
+            0, //内存缓存 MB
+            0
     ),
     ADDR_TO_UTXO(
             (short) 8,
@@ -83,8 +83,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            1, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
     ADDR_TO_TX(
             (short) 9,
@@ -93,8 +93,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            1, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
     ORPHAN(
             (short) 10,
@@ -103,8 +103,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(512 * 1024)  
                             .setCacheIndexAndFilterBlocks(true)),
-            5, //内存缓存 MB
-            60 
+            0, //内存缓存 MB
+            0
     ),
     TBLOCK_HEADER(
             (short) 11,
@@ -113,8 +113,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)
                             .setCacheIndexAndFilterBlocks(true)),
-            10, //内存缓存 MB
-            60
+            0, //内存缓存 MB
+            0
     ),
     TBLOCK_BODY(
             (short) 12,
@@ -123,8 +123,8 @@ public enum TableEnum {
                     .setTableFormatConfig(new BlockBasedTableConfig()
                             .setBlockCacheSize(1024 * 1024)
                             .setCacheIndexAndFilterBlocks(true)),
-            10, //内存缓存 MB
-            60
+            0, //内存缓存 MB
+            0
     ),
     HASH_TO_HEIGHT(
             (short) 13,

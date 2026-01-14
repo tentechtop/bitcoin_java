@@ -283,6 +283,8 @@ public class TransactionStatusResolver {
         if (hasLifecycle(statusMask, REJECTED)) parts.add("已拒绝");
         if (hasLifecycle(statusMask, REPLACED)) parts.add("已替换");
         if (hasLifecycle(statusMask, EXPIRED)) parts.add("已过期");
+        if (hasLifecycle(statusMask, FORK)) parts.add("非主链交易");
+
 
         // 交易属性
         if (hasFlag(statusMask, COINBASE)) parts.add("Coinbase");

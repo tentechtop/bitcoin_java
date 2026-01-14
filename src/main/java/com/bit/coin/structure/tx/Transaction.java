@@ -68,13 +68,13 @@ public class Transaction {
     @JsonIgnore
     private long fee;
 
+    @JsonIgnore
     private long size;
 
 
     /**
      * 状态
      */
-    @JsonIgnore
     private long status;
 
     private String statusStr;

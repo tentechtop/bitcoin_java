@@ -671,7 +671,123 @@ public class RocksDb implements DataBase {
         }
     }
 
+    //NewIterator 创建一个迭代器，需要传入读配置项
+    //Seek 查找一个key
+    //SeekToFirst 迭代器移动到db的第一个key位置，一般用于顺序遍历整个db的所有key
+    //SeekToLast 迭代器移动到db的最后一个key位置， 一般用于反向遍历整个db的所有key
+    //SeekForPrev移动到当前key的上一个位置，一般用于遍历(limit, start]之间的key
+    //Next 迭代器移动到下一个key
+    //Prev迭代器移动到上一个key
+    @Override
+    public <T> PageResult<T> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+        // 1. 参数校验（和原逻辑一致）
+        if (pageSize <= 0 || pageSize > 1000) {
+            throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
+        }
+        if (table == null || prefix == null || prefix.length == 0) {
+            throw new IllegalArgumentException("表名和前缀不能为空");
+        }
 
+        rwLock.readLock().lock();
+        RocksIterator iterator = null;
+        ReadOptions readOptions = null;
+        try {
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                return new PageResult<>(Collections.emptyList(), null, true);
+            }
+
+            // 2. 配置扫描选项（仅保留prefix配置，无setReverse）
+            readOptions = new ReadOptions().setPrefixSameAsStart(true);
+            iterator = db.newIterator(cfHandle, readOptions);
+
+            List<T> keyList = new ArrayList<>(pageSize);
+            byte[] currentLastKey = null;
+
+            // 3. 定位迭代器起始位置（修正seekForPrev参数）
+            if (lastKey != null && lastKey.length > 0) {
+                // 有上一页的lastKey：定位到该key → prev()跳过（反向遍历）
+                iterator.seek(lastKey);
+                if (iterator.isValid() && Arrays.equals(iterator.key(), lastKey)) {
+                    iterator.prev(); // 跳过上一页最后一个key，准备读取下一批
+                }
+            } else {
+                // 无lastKey（第一页）：定位到前缀的最后一个key
+                byte[] prefixUpper = getPrefixUpperBound(prefix);
+                // 关键修正：seekForPrev必须传入参数（前缀上限key）
+                iterator.seekForPrev(prefixUpper);
+
+                // 边界校验：如果定位后的key不匹配前缀，说明前缀下无数据
+                if (iterator.isValid() && !startsWith(iterator.key(), prefix)) {
+                    iterator = null; // 置空，后续遍历直接终止
+                }
+            }
+
+            // 4. 反向读取分页键数据（核心：用prev()替代next()）
+            int count = 0;
+            // 增加iterator非空校验（避免前缀无数据时的空指针）
+            while (iterator != null && iterator.isValid() && count < pageSize) {
+                byte[] currentKey = iterator.key();
+
+                // 校验前缀匹配：反向遍历超出前缀范围则终止
+                if (!startsWith(currentKey, prefix)) {
+                    break;
+                }
+
+                // 添加当前key（克隆避免引用泄露）
+                keyList.add((T) currentKey.clone());
+
+                // 记录当前页最后一个key（供下一页查询使用）
+                currentLastKey = currentKey.clone();
+
+                iterator.prev(); // 反向遍历：移动到上一个key（替代原next()）
+                count++;
+            }
+
+            // 5. 判断是否为最后一页（反向遍历的最后一页=没有更多更小的key）
+            boolean isLastPage = true;
+            // 检查是否还有更多符合前缀的key
+            if (iterator != null && iterator.isValid()) {
+                byte[] prevKey = iterator.key();
+                if (startsWith(prevKey, prefix)) {
+                    isLastPage = false;
+                }
+            }
+
+            return new PageResult<>(keyList, currentLastKey, isLastPage);
+        } finally {
+            // 6. 释放资源（和原逻辑一致）
+            if (iterator != null) {
+                iterator.close();
+            }
+            if (readOptions != null) {
+                readOptions.close();
+            }
+            rwLock.readLock().unlock();
+        }
+    }
+
+
+
+    /**
+     * 计算前缀的上限（用于反向迭代时定位最大的匹配key）
+     * 前缀的范围是 [prefix, prefixUpperBound)，例如前缀是 [0x01,0x02]，上限是 [0x01,0x03]
+     * @param prefix 原前缀
+     * @return 前缀的上限字节数组
+     */
+    private byte[] getPrefixUpperBound(byte[] prefix) {
+        byte[] upperBound = Arrays.copyOf(prefix, prefix.length);
+        // 从最后一个字节开始加1，处理进位（类似数字加1）
+        for (int i = upperBound.length - 1; i >= 0; i--) {
+            if (upperBound[i] == (byte) 0xFF) {
+                upperBound[i] = 0x00;
+            } else {
+                upperBound[i] += 1;
+                break;
+            }
+        }
+        return upperBound;
+    }
 
     /**
      * 执行跨列族事务（原子操作）

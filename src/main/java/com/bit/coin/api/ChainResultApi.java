@@ -15,8 +15,10 @@ import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.UNCONFIRMED_OUTPUT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
@@ -42,8 +44,12 @@ public class ChainResultApi {
      */
     @GetMapping("/getAddressAllUTXO")
     public Result<List<UTXO>>  getAddressAllUTXOByStatus(String address, long status) {
+        ArrayList<UTXO> utxos = new ArrayList<>();
         List<UTXO> addressAllUTXOByStatus = utxoCache.getAddressAllUTXOByStatus(address, status);
-        return Result.OK(addressAllUTXOByStatus);
+        List<UTXO> addressAllUTXOByStatus1 = utxoCache.getAddressAllUTXOByStatus(address, UNCONFIRMED_OUTPUT);
+        utxos.addAll(addressAllUTXOByStatus);
+        utxos.addAll(addressAllUTXOByStatus1);
+        return Result.OK(utxos);
     }
 
     //分页查询用户的交易
@@ -52,6 +58,35 @@ public class ChainResultApi {
         PageResult<Transaction> transactionsByPage = blockChainService.getTransactionsByPage(address, pageSize, lastKey);
         return Result.OK(transactionsByPage);
     }
+
+
+    //进行中
+    //查询用户交易池中的交易
+    @GetMapping("/getTxListByAddresInTxPool")
+    public Result<Transaction[]> getTxListByAddresInTxPool(String address) {
+        Transaction[] txsByAddress = txPool.getTxsByAddress(address);
+        return Result.OK(txsByAddress);
+    }
+
+    //查询地址最近的交易
+    @GetMapping("/getRecentTx")
+    public Result<Transaction[]> getRecentTx(String address) {
+        Transaction[] txByAddress = blockChainService.getRecentTxByAddress(address);
+        return Result.OK(txByAddress);
+    }
+
+
+    //查询已经确认的交易带出输入引用
+
+
+
+    //查询交易池中的交易带出输入引用
+
+
+
+
+
+
 
     //区块是否主链区块
     @GetMapping("/isMainChain")

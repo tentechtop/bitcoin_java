@@ -3,6 +3,7 @@ package com.bit.coin.structure.tx;
 import com.bit.coin.structure.block.HexByteArraySerializer;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +21,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "index", "scriptSig"})  // 按指定顺序输出
+@JsonPropertyOrder({"txId", "index", "scriptSig","output"})  // 按指定顺序输出
 public class TxInput {
 
     /**
@@ -41,6 +42,13 @@ public class TxInput {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptSig;
+
+
+
+    //扩展非核心字段 在查询交易时带出引用的输出 coinbase交易为空
+    @JsonInclude(JsonInclude.Include.NON_NULL) // 核心修改：添加该注解
+    private TxOutput output;
+
 
 
     // 常量定义
