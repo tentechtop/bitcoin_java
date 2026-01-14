@@ -766,7 +766,72 @@ public class RocksDb implements DataBase {
             rwLock.readLock().unlock();
         }
     }
+    @Override
+    public boolean existsByPrefix(TableEnum table, byte[] prefix) {
+        // 1. 参数校验：表名/前缀为空直接返回false
+        if (table == null || prefix == null || prefix.length == 0) {
+            log.warn("existsByPrefix参数非法：表名[{}] 前缀长度[{}]", table, prefix == null ? 0 : prefix.length);
+            return false;
+        }
 
+        rwLock.readLock().lock(); // 复用读写锁，保证线程安全
+        RocksIterator iterator = null;
+        ReadOptions readOptions = null;
+        try {
+            // 2. 获取列族句柄（和pageKeyByPrefixReverse逻辑一致）
+            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
+            if (cfHandle == null) {
+                log.warn("existsByPrefix获取列族句柄失败：表名[{}]", table);
+                return false;
+            }
+
+            // 3. 配置读选项：开启前缀优化，提升查询效率
+            readOptions = new ReadOptions()
+                    .setPrefixSameAsStart(true) // 前缀查询优化
+                    .setTotalOrderSeek(false); // 关闭全序扫描，加速前缀查询
+
+            // 4. 创建迭代器并定位到前缀起始位置
+            iterator = db.newIterator(cfHandle, readOptions);
+            iterator.seek(prefix); // 定位到第一个>=前缀的key
+
+            // 5. 核心判断：迭代器有效 + 当前key以指定前缀开头
+            if (iterator.isValid()) {
+                byte[] currentKey = iterator.key();
+                boolean match = startsWith(currentKey, prefix); // 复用你已有的前缀匹配方法
+                if (match) {
+                    log.debug("existsByPrefix命中：表[{}] 前缀[{}] 匹配key[{}]",
+                            table, bytesToHex(prefix), bytesToHex(currentKey));
+                    return true;
+                }
+            }
+
+            // 6. 无匹配记录
+            log.debug("existsByPrefix未命中：表[{}] 前缀[{}]", table, bytesToHex(prefix));
+            return false;
+
+        } catch (Exception e) {
+            // 7. 异常兜底：捕获所有异常，避免程序崩溃
+            log.error("existsByPrefix执行异常：表[{}] 前缀[{}]", table, bytesToHex(prefix), e);
+            return false;
+        } finally {
+            // 8. 强制释放资源（避免内存泄漏）
+            if (iterator != null) {
+                try {
+                    iterator.close();
+                } catch (Exception e) {
+                    log.warn("关闭RocksIterator失败", e);
+                }
+            }
+            if (readOptions != null) {
+                try {
+                    readOptions.close();
+                } catch (Exception e) {
+                    log.warn("关闭ReadOptions失败", e);
+                }
+            }
+            rwLock.readLock().unlock(); // 必须释放读锁
+        }
+    }
 
 
     /**

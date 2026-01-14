@@ -76,13 +76,13 @@ public class Transaction {
      * 区块时间
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    private long time;
+    private Long time;
 
     /**
      * 区块高度
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    private int height;
+    private Integer height;
 
     /**
      * 区块Hash

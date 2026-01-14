@@ -76,11 +76,32 @@ public class ChainResultApi {
     }
 
 
+    //判断地址是否有交易
+    @GetMapping("/hasTx")
+    public boolean hasTx(String address) {
+       return blockChainService.hasTx(address);
+    }
+
+    @PostMapping("/hasTx")
+    public byte[] hasTx(@RequestBody List<String> addressList) {
+        //地址到交易的索引
+        return blockChainService.hasTx(addressList);
+    }
+
+    //点击进入钱包设置 实现地址间隙恢复 间隙限制”（gap limit） 默认为20 但可以设置
+    //钱包从网络中扫描自己使用过的地址
+    //0账户0地址是默认地址 创建钱包默认使用的就是这个 扫描资产也是必扫
+    //先扫描0账户的1地址 如果有资产就保存并继续扫描知道连续20个地址都无资产就停止扫描
+    //再扫描1账户的0地址 如果有资产就保存并继续扫描知道连续20个地址都无资产就停止扫描
+    //再扫描2账户的0地址 如果0地址没有资产就停止扫描 并认为扫描完成了  空账户
+    //
+    //在创建钱包后 后台启动从网络中恢复钱包过去可能使用的地址
+    //可以一次扫描1024个地址 节点返回128字节 1024位的数据 0表示无交易 1表示有交易
+
+
     //钱包能根据交易判断这笔交易对该钱包来说是支出还是收入
 
     //查询已经确认的交易带出输入引用
-
-
 
     //查询交易池中的交易带出输入引用
 

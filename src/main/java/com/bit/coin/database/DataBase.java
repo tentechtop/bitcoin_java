@@ -114,7 +114,7 @@ public interface DataBase {
     <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey);
     <T> PageResult<T> pageKeyByPrefix(TableEnum table,byte[] prefix, int pageSize, byte[] lastKey);
     <T> PageResult<T> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
-
+    boolean existsByPrefix(TableEnum table, byte[] prefix);
     /**
      * 事务完成
      */

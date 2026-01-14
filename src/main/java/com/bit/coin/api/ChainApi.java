@@ -88,7 +88,7 @@ public class ChainApi {
      */
     @GetMapping("/getTxByHash")
     public Transaction getTxByHash(String hash) {
-        Transaction tx = blockChainService.getTxByHash(hexToBytes(hash));
+        Transaction tx = blockChainService.getTxAndQueryInputByHash(hexToBytes(hash));
         return tx;
     }
 

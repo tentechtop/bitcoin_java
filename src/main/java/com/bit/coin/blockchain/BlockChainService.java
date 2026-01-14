@@ -13,4 +13,7 @@ public interface BlockChainService {
     //区块是否主链
      boolean isMainBlock(String hash);
 
+    boolean hasTx(String address);
+
+    byte[] hasTx(List<String> addressList);
 }

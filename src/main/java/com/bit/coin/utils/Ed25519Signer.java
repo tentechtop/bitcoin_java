@@ -649,15 +649,15 @@ public class Ed25519Signer {
         System.out.println("地址1重复生成一致性: " + address1Key.getAddress().equals(address1Key2.getAddress()) + "（应为true）");
 
 
-        PublicKey publicKey1 = Ed25519Signer.recoverPublicKeyFromCore(hexToBytes("30641fd84c1e33c880dd96abfb3b83b93b8385d55a1d1636e2cca13c5561c5db"));
-        PrivateKey privateKey1 = Ed25519Signer.recoverPrivateKeyFromCore(hexToBytes("b53335cc41c950b84e99a016dfaf0dc2893fca3e583ae8c791887aa461c8f5d8"));
+        PublicKey publicKey1 = Ed25519Signer.recoverPublicKeyFromCore(hexToBytes("291b960b5ca8591653bea10d11afd883b240616a02ba49acc82be4fcd3aa5dc3"));
+        PrivateKey privateKey1 = Ed25519Signer.recoverPrivateKeyFromCore(hexToBytes("46405ee67af3e85c64ff84c6a6df9a3ac4739e71a2147cb02f4e36b70127487d"));
 
         byte[] signature1 = Ed25519Signer.applySignature(privateKey1, testData);
         boolean verifyResult1 = Ed25519Signer.verifySignature(publicKey1, testData, signature1);
         System.out.println("===== 签名验证 =====");
         System.out.println("签名长度: " + signature1.length + "字节（应为64）");
         System.out.println("验签结果: " + verifyResult1 + "（应为true）");
-        byte[] bytes = hexToBytes("30641fd84c1e33c880dd96abfb3b83b93b8385d55a1d1636e2cca13c5561c5db");
+        byte[] bytes = hexToBytes("291b960b5ca8591653bea10d11afd883b240616a02ba49acc82be4fcd3aa5dc3");
         String encode = Base58.encode(bytes);
         System.out.println("Base58{}"+encode);
     }

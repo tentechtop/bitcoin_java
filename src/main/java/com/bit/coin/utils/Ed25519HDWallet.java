@@ -22,7 +22,7 @@ import java.util.List;
 public class Ed25519HDWallet {
     // Solana 的 BIP-44 路径参数
     private static final int BIP44_PURPOSE = 44;
-    private static final int SOLANA_COIN_TYPE = 501;
+    private static final int SOLANA_COIN_TYPE = 0;
     // Ed25519 密钥长度（私钥/公钥均为 32 字节）
     private static final int KEY_LENGTH = 32;
     // 助记词熵长度（12 个单词对应 128 位熵）
@@ -121,10 +121,10 @@ public class Ed25519HDWallet {
      */
     public static KeyInfo getSolanaKeyPair(List<String> mnemonic, int accountIndex, int addressIndex) {
         byte[] seed = generateSeed(mnemonic, "");
-        log.debug("种子(hex): {}", Hex.toHexString(seed));
+        log.info("种子(hex): {}", Hex.toHexString(seed));
 
         byte[] rootPrivateKey = generateRootPrivateKey(seed);
-        log.debug("根私钥(hex): {}", Hex.toHexString(rootPrivateKey));
+        log.info("根私钥(hex): {}", Hex.toHexString(rootPrivateKey));
 
         // 派生路径：m/44'/501'/account'/0/addressIndex
         byte[] childKey = rootPrivateKey;
