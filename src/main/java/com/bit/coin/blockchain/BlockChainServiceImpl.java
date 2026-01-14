@@ -1436,7 +1436,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         BlockBody deserialize = BlockBody.deserialize(blockBodyData);
         assert deserialize != null;
         Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
-
         long status = 0;
         //交易所在的区块是否主连区块
         boolean isMainBlock = isMainBlock(blockHash);
@@ -1446,11 +1445,68 @@ public class BlockChainServiceImpl implements BlockChainService{
         }else {
             status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
         }
-
-
         transaction.setStatus(status);
         return transaction;
     }
+
+
+    public Transaction getTxAndQueryInputByHash(byte[] txId) {
+        //先查询是否在交易池中
+        Transaction tx = txPool.getTx(txId);
+        if (tx!=null){
+            return tx;
+        }
+        // 1. 从 "tx_to_block" 表中获取区块索引信息
+        byte[] blockIndexBytes = dataBase.get(TableEnum.TX_TO_BLOCK, txId);
+        if (blockIndexBytes == null) {
+            return null; // 未找到该交易的记录
+        }
+
+        // 2. 解析区块哈希和交易在区块内的索引
+        Map<String, Object> blockIndexMap = Transaction.parseBlockIndex(blockIndexBytes);
+        byte[] blockHash = (byte[]) blockIndexMap.get("hash");
+        int txIndexInBlock = (int) blockIndexMap.get("index");
+
+        byte[] blockHeaderData = dataBase.get(TBLOCK_HEADER, blockHash);
+        if (blockHeaderData == null) {
+            return null; // 区块数据不存在
+        }
+        BlockHeader blockHeader = BlockHeader.deserialize(blockHeaderData);
+
+        // 3. 从 "block" 表中获取完整的区块数据
+        byte[] blockBodyData = dataBase.get(TBLOCK_BODY, blockHash);
+        if (blockBodyData == null) {
+            return null; // 区块数据不存在
+        }
+        BlockBody deserialize = BlockBody.deserialize(blockBodyData);
+        assert deserialize != null;
+        Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
+        //带出输入对应的输出
+        List<TxInput> inputs = transaction.getInputs();
+        for (TxInput txInput:inputs){
+            if (!txInput.isCoinbase() && deserialize.getHeight()!=0){
+                Transaction txByHash = getTxByHash(txInput.getTxId());
+                TxOutput txOutput = txByHash.getOutputs().get(txInput.getIndex());
+                txInput.setOutput(txOutput);
+            }
+        }
+        transaction.setInputs(inputs);
+        long status = 0;
+        //交易所在的区块是否主连区块
+        boolean isMainBlock = isMainBlock(blockHash);
+        log.info("当前交易是否主链交易{}",isMainBlock);
+        if (isMainBlock){
+            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
+        }else {
+            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
+        }
+        transaction.setStatus(status);
+        transaction.setTime(blockHeader.getTime());
+        transaction.setHeight(deserialize.getHeight());
+        transaction.setHash(blockHeader.calculateHash());
+        return transaction;
+    }
+
 
 
     //获取一笔交易所有参与交易待花费的UTXO

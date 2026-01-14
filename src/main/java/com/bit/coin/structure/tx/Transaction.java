@@ -5,6 +5,7 @@ import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +71,25 @@ public class Transaction {
 
     @JsonIgnore
     private long size;
+
+    /**
+     * 区块时间
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private long time;
+
+    /**
+     * 区块高度
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private int height;
+
+    /**
+     * 区块Hash
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonSerialize(using = HexByteArraySerializer.class)
+    private byte[] hash;
 
 
     /**
