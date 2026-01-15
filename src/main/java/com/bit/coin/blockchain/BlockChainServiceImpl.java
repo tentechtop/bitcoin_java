@@ -805,6 +805,8 @@ public class BlockChainServiceImpl implements BlockChainService{
      * 区块交易验证
      */
     private boolean validateBlockTransactions(Block block) {
+        ParamsConfig.Params params = config.getParams();
+        int coinbaseMaturity = params.getCoinbaseMaturity();
         List<Transaction> transactions = block.getTransactions();
         long totalInputValue = 0;
         long totalOutputValue = 0;
@@ -882,6 +884,22 @@ public class BlockChainServiceImpl implements BlockChainService{
                 for (TxInput input : tx.getInputs()) {
                     UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
                     if (utxo != null) {
+                        //utxo是否成熟
+                        if (utxo.isCoinbase()){
+
+                            int height = utxo.getHeight();
+                            int mainHeight = mainTipBlock.getHeight();
+                            // 计算确认数：当前主链高度 - UTXO所在区块高度 + 1
+                            int confirmations = mainHeight - height + 1;
+                            // 判断是否成熟：确认数必须大于Coinbase成熟度
+                            boolean isMature = confirmations > coinbaseMaturity;
+                            if (!isMature){
+                                //使用了未成熟的UTXO
+                                log.info("使用了未成熟的UTXO");
+                                return false;
+                            }
+                        }
+
                         totalInputValue += utxo.getValue();
                     }else {
                         //输入引用的输出不存在
