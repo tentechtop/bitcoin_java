@@ -75,6 +75,29 @@
             <version>2.15.2</version> <!-- 建议使用较新的稳定版本 -->
         </dependency>
 
+        <!-- 替换为：只引入需要的模块 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+
+
         <!-- Protocol Buffers 核心依赖 -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
@@ -88,6 +111,12 @@
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java-util</artifactId>
             <version>4.31.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.uuid</groupId>
+            <artifactId>java-uuid-generator</artifactId>
+            <version>5.1.0</version>
         </dependency>
     </dependencies>
 

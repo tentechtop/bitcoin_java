@@ -58,7 +58,6 @@ public class BlockChainServiceImpl implements BlockChainService{
     private TxPool txPool;
 
 
-
     public static volatile Block mainTipBlock = null;
 
     //主链顶端高度 key
