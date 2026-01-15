@@ -47,6 +47,9 @@ public class UTXOStatusResolver {
     public static final long TIME_LOCKED          = 1L << (FLAG_OFFSET + 12); // 时间锁定
     public static final long MULTISIG_OUTPUT      = 1L << (FLAG_OFFSET + 13); // 多重签名输出
     public static final long CONTRACT_BOUND       = 1L << (FLAG_OFFSET + 14); // 合约绑定输出
+    public static final long COINBASE_MATURED    = 1L << (FLAG_OFFSET + 15); // 已经成熟
+
+
 
     // 常用组合
     public static final long ACTIVE_UNSPENT =
@@ -207,6 +210,7 @@ public class UTXOStatusResolver {
         if (hasFlag(statusMask, CONFIRMED_WEAK)) parts.add("弱确认");
         if (hasFlag(statusMask, CONFIRMED_SAFE)) parts.add("安全确认");
         if (hasFlag(statusMask, COINBASE_MATURING)) parts.add("成熟中");
+        if (hasFlag(statusMask, COINBASE_MATURED)) parts.add("已经成熟");
         if (hasFlag(statusMask, TIME_LOCKED)) parts.add("时间锁定");
         if (hasFlag(statusMask, MULTISIG_OUTPUT)) parts.add("多重签名");
         if (hasFlag(statusMask, CONTRACT_BOUND)) parts.add("合约绑定");

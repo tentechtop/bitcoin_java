@@ -2,6 +2,8 @@ package com.bit.coin.config;
 
 import java.math.BigInteger;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 import static ch.qos.logback.core.encoder.ByteArrayUtil.hexStringToByteArray;
 
@@ -10,6 +12,10 @@ import static ch.qos.logback.core.encoder.ByteArrayUtil.hexStringToByteArray;
  * 为不同的比特币网络提供精简的配置参数。
  */
 public final class ParamsConfig {
+
+    // 网络参数映射
+
+
 
     /**
      * Params 类定义了比特币网络的核心参数。
@@ -25,11 +31,8 @@ public final class ParamsConfig {
         private final BigInteger powLimit;
         private final long powLimitBits;
         private final boolean powNoRetargeting;
-        private final int bip34Height;
-        private final int bip65Height;
-        private final int bip66Height;
 
-        // 奖励和成熟度
+
         private final int coinbaseMaturity;
         private final int subsidyReductionInterval;
 
@@ -42,8 +45,8 @@ public final class ParamsConfig {
 
         // 构造函数
         public Params(String name, int net, String defaultPort,
-                      byte[] genesisHash, BigInteger powLimit, long powLimitBits, boolean powNoRetargeting,
-                      int bip34Height, int bip65Height, int bip66Height,
+                      byte[] genesisHash, BigInteger powLimit,
+                      long powLimitBits, boolean powNoRetargeting,
                       int coinbaseMaturity, int subsidyReductionInterval,
                       Duration targetTimespan, Duration targetTimePerBlock, int retargetAdjustmentFactor,
                       boolean reduceMinDifficulty, Duration minDiffReductionTime) {
@@ -54,9 +57,9 @@ public final class ParamsConfig {
             this.powLimit = powLimit;
             this.powLimitBits = powLimitBits;
             this.powNoRetargeting = powNoRetargeting;
-            this.bip34Height = bip34Height;
-            this.bip65Height = bip65Height;
-            this.bip66Height = bip66Height;
+
+
+
             this.coinbaseMaturity = coinbaseMaturity;
             this.subsidyReductionInterval = subsidyReductionInterval;
             this.targetTimespan = targetTimespan;
@@ -74,9 +77,8 @@ public final class ParamsConfig {
         public BigInteger getPowLimit() { return powLimit; }
         public long getPowLimitBits() { return powLimitBits; }
         public boolean isPowNoRetargeting() { return powNoRetargeting; }
-        public int getBip34Height() { return bip34Height; }
-        public int getBip65Height() { return bip65Height; }
-        public int getBip66Height() { return bip66Height; }
+
+
         public int getCoinbaseMaturity() { return coinbaseMaturity; }
         public int getSubsidyReductionInterval() { return subsidyReductionInterval; }
         public Duration getTargetTimespan() { return targetTimespan; }
@@ -97,13 +99,10 @@ public final class ParamsConfig {
                 "mainnet",
                 0xD9B4BEF9,
                 "8333",
-                hexStringToByteArray("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-                BigInteger.ONE.shiftLeft(224).subtract(BigInteger.ONE), // 工作量证明难度上限
+                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
+                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE), // 工作量证明难度上限
                 0x1d00ffffL, // 难度上限的紧凑格式
                 false, // 是否禁用难度调整
-                227931, // BIP34 激活高度
-                388381, // BIP65 激活高度
-                363725, // BIP66 激活高度
                 100, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
@@ -118,13 +117,10 @@ public final class ParamsConfig {
                 "testnet3",
                 0x0709110B,
                 "18333",
-                hexStringToByteArray("000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"),
-                BigInteger.ONE.shiftLeft(224).subtract(BigInteger.ONE),
+                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
+                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
                 0x1d00ffffL,
                 false,
-                21111, // BIP34 激活高度
-                581885, // BIP65 激活高度
-                330776, // BIP66 激活高度
                 100, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
@@ -139,13 +135,10 @@ public final class ParamsConfig {
                 "regtest",
                 0xDAB5BFFA,
                 "18444",
-                hexStringToByteArray("06226e46111a0b59caaf126043eb5bbf28c34f3a5e332a1fc7b2b73cf188910f"),
-                BigInteger.ONE.shiftLeft(255).subtract(BigInteger.ONE),
+                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
+                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
                 0x207fffffL,
                 true, // 是否禁用难度调整
-                100000000, // BIP34 激活高度 (实际上未激活)
-                1351, // BIP65 激活高度
-                1251, // BIP66 激活高度
                 100, // Coinbase 交易成熟度
                 150, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
@@ -155,4 +148,8 @@ public final class ParamsConfig {
                 Duration.ofMinutes(20) // 降低最小难度的时间间隔
         );
     }
+
+
+
+
 }

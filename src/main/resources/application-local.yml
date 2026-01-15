@@ -3,6 +3,10 @@ server:
   port: 18335
 
 system:
+  mining:
+    #挖矿奖励接收地址
+    miner-address: Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz
+  net-params: 'MainNetParams'
   #数据存储路径 按照网络前缀分类
   path: "/bitcoin/localdb"
   #数据库缓存大小 单位MB 基于LRU策略实现的一级缓存

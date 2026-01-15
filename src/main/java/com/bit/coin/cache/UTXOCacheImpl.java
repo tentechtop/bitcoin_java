@@ -1,5 +1,7 @@
 package com.bit.coin.cache;
 
+import com.bit.coin.config.ParamsConfig;
+import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.DataBase.KeyValue;
 import com.bit.coin.database.KeyValueHandler;
@@ -23,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.database.rocksDb.TableEnum.ADDR_TO_UTXO;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.*;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -41,6 +44,9 @@ public class UTXOCacheImpl implements UTXOCache {
 
     @Autowired
     private DataBase dataBase;
+
+    @Autowired
+    private SystemConfig config;
 
     /**
      * UTXO 缓存常量配置
@@ -323,6 +329,8 @@ public class UTXOCacheImpl implements UTXOCache {
 
     @Override
     public List<UTXO> getAddressAllUTXO(String address) {
+        ParamsConfig.Params params = config.getParams();
+
         // 1. 获取地址对应的UTXO键列表和缓存中的UTXO键集合
         List<String> utxoKeyListByAddr = getUTXOKeyListByAddr(address);
         byte[] decode = Base58.decode(address);
@@ -369,6 +377,21 @@ public class UTXOCacheImpl implements UTXOCache {
                         UTXO utxo = UTXO.deserialize(data);
                         long status = 0L;
                         status = setLifecycleStatus(status, CONFIRMED_UNSPENT);
+                        //是否成熟 coinBase 100
+                        int coinbaseMaturity = params.getCoinbaseMaturity();
+                        if (utxo.isCoinbase()){
+                            int height = utxo.getHeight();
+                            int mainHeight = mainTipBlock.getHeight();
+                            // 计算确认数：当前主链高度 - UTXO所在区块高度 + 1
+                            int confirmations = mainHeight - height + 1;
+                            // 判断是否成熟：确认数必须大于Coinbase成熟度
+                            boolean isMature = confirmations > coinbaseMaturity;
+                            if (isMature){
+                                status = setLifecycleStatus(status, COINBASE_MATURED);
+                            }else {
+                                status = setLifecycleStatus(status, COINBASE_MATURING);
+                            }
+                        }
                         utxo.setStatus(status);
 
                         // 添加到缓存和结果集

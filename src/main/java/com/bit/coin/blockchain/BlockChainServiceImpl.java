@@ -1,6 +1,7 @@
 package com.bit.coin.blockchain;
 
 import com.bit.coin.cache.UTXOCache;
+import com.bit.coin.config.ParamsConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.PageResult;
@@ -35,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+
 import static com.bit.coin.database.rocksDb.RocksDb.bytesToInt;
 import static com.bit.coin.database.rocksDb.TableEnum.*;
 import static com.bit.coin.structure.block.BlockHeader.convertTargetToBits;
@@ -57,7 +59,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
 
-    private static volatile Block mainTipBlock = null;
+    public static volatile Block mainTipBlock = null;
 
     //主链顶端高度 key
     public static final byte[] MAIN_CHAIN_TIP_HEIGHT_KEY = "MAIN_CHAIN_TIP_HEIGHT_KEY".getBytes(StandardCharsets.UTF_8);
@@ -71,8 +73,6 @@ public class BlockChainServiceImpl implements BlockChainService{
             .maximumSize(20000)
             .recordStats()
             .build();
-
-
 
 
 
@@ -883,6 +883,10 @@ public class BlockChainServiceImpl implements BlockChainService{
                     UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
                     if (utxo != null) {
                         totalInputValue += utxo.getValue();
+                    }else {
+                        //输入引用的输出不存在
+                        log.info("输入引用的输出不存在");
+                        return false;
                     }
                 }
 
@@ -936,7 +940,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         // 初始奖励: 50 BTC = 50 * 100,000,000 satoshi
         long initialReward = 50L * 100000000;
         // 每减半周期的区块数
-        int halvingInterval = 210000;
+        int halvingInterval = config.getParams().getSubsidyReductionInterval();
         // 计算已经发生的减半次数
         int halvings = blockHeight / halvingInterval;
         // 最大减半次数（防止整数溢出）

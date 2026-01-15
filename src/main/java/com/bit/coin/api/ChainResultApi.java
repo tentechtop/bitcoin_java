@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.UNCONFIRMED_OUTPUT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
@@ -45,7 +46,7 @@ public class ChainResultApi {
     @GetMapping("/getAddressAllUTXO")
     public Result<List<UTXO>>  getAddressAllUTXOByStatus(String address, long status) {
         ArrayList<UTXO> utxos = new ArrayList<>();
-        List<UTXO> addressAllUTXOByStatus = utxoCache.getAddressAllUTXOByStatus(address, status);
+        List<UTXO> addressAllUTXOByStatus = utxoCache.getAddressAllUTXOByStatus(address, CONFIRMED_UNSPENT);
         List<UTXO> addressAllUTXOByStatus1 = utxoCache.getAddressAllUTXOByStatus(address, UNCONFIRMED_OUTPUT);
         utxos.addAll(addressAllUTXOByStatus);
         utxos.addAll(addressAllUTXOByStatus1);

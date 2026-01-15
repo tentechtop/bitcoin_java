@@ -40,7 +40,7 @@ public class MiningServiceImpl {
     private TxPool txPool;
 
     //矿工地址
-    private static final String MINER_ADDRESS = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
+    private static volatile String MINER_ADDRESS = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
 
 
     volatile public static boolean isMining = false;
@@ -55,6 +55,8 @@ public class MiningServiceImpl {
     // CPU挖矿性能控制（0-100，默认85%）
     private volatile int miningPerformance = 15;
 
+
+    //设置挖矿奖励接收地址
 
 
     /**
