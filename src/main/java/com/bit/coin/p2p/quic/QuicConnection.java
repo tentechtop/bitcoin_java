@@ -3,6 +3,7 @@ package com.bit.coin.p2p.quic;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.quic.control.FlowController;
 
+import com.bit.coin.utils.ECCWithAESGCM;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.socket.DatagramPacket;
@@ -20,6 +21,7 @@ import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.p2p.quic.SendQuicData.buildFromFullData;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 
 @Slf4j
@@ -389,6 +391,11 @@ public class QuicConnection {
                     log.info("[连接响应发送成功] 节点ID:{}", conId);
                     //将该节点上线
                     addPeerConnect(peerId,conId);
+                    //通知业务层有节点上线了 现在需要完成业务握手
+                    //节点ID
+
+
+
                 }
             });
         }catch (Exception e){
