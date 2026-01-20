@@ -43,7 +43,7 @@ public class TxInput {
 
 
     /**
-     * 解锁脚本
+     * 解锁脚本 脚本类型
      * 包含签名和公钥 [固定64字节签名][1字节签名类型][32公钥]
      */
     @JsonSerialize(using = HexByteArraySerializer.class)

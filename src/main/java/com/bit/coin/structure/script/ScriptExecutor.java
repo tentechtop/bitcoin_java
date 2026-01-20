@@ -290,6 +290,7 @@ public class ScriptExecutor {
                 return executeCheckLockTimeVerify(tx, inputIndex);
             case Script.OP_CHECKSEQUENCEVERIFY:
                 return executeCheckSequenceVerify(tx, inputIndex);
+
             case Script.OP_NOP:
                 // 无操作
                 break;

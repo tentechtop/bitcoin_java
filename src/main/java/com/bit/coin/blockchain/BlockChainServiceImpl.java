@@ -1400,7 +1400,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         TxInput input = new TxInput();
         input.setTxId(new byte[32]); // 全零交易ID
         input.setIndex(0); // 特殊值表示CoinBase交易
-        input.setSequence(0xFFFFFFFFL);
         byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);//69字节
         input.setScriptSig(bytes);
         List<TxInput> inputs = new ArrayList<>();
@@ -1980,6 +1979,8 @@ public class BlockChainServiceImpl implements BlockChainService{
             ArrayList<byte[]> txIdList = new ArrayList<>();
             // 核心优化：存储「区块HashHex -> 交易索引 -> 交易IDHex」的映射，避免遍历
             Map<String, Map<Integer, String>> blockTxIndexMap = new HashMap<>();
+            //区块HashHex - > 是否主链
+            Map<String, Boolean> blockIsMainMap = new HashMap<>();
 
             for (Object o : data) {
                 if (!(o instanceof byte[])) {
@@ -2020,11 +2021,15 @@ public class BlockChainServiceImpl implements BlockChainService{
                 return null;
             }
 
+
+
             // 遍历区块，通过索引直接获取交易（核心优化点）
             ArrayList<Transaction> transactionList = new ArrayList<>();
             for (Map.Entry<String, Map<Integer, String>> entry : blockTxIndexMap.entrySet()) {
                 String blockHashHex = entry.getKey();
                 Map<Integer, String> txIndexToIdMap = entry.getValue();
+
+                boolean isMainBlock = isMainBlock(blockHashHex);
 
                 // 查询区块体数据
                 byte[] blockHashBytes = hexToBytes(blockHashHex);
@@ -2067,6 +2072,14 @@ public class BlockChainServiceImpl implements BlockChainService{
                             }
                         }
                         targetTx.setInputs(inputs);
+                        //设置目标交易的状态
+                        long status = 0;
+                        if (isMainBlock){
+                            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
+                        }else {
+                            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
+                        }
+                        targetTx.setStatus(status);
                         transactionList.add(targetTx);
                     } else {
                         log.warn("区块[{}]索引[{}]的交易ID不匹配，预期[{}]，实际[{}]",
