@@ -27,6 +27,12 @@ public class SerializeUtils {
         dos.writeLong(Long.reverseBytes(value));
     }
 
+    public static long readLittleEndianLong(DataInputStream dis) throws IOException {
+        byte[] bytes = new byte[8];
+        dis.readFully(bytes);
+        return littleEndianToLong(bytes);
+    }
+
     /**
      * 将一个整数作为可变长度整数 (VarInt) 写入流中。
      *
@@ -118,6 +124,8 @@ public class SerializeUtils {
                 .order(ByteOrder.LITTLE_ENDIAN)
                 .getLong();
     }
+
+
 
     /**
      * 写入字节数组到输出流（带长度前缀）

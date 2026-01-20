@@ -1,7 +1,9 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
@@ -21,7 +23,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "index", "scriptSig","output"})  // 按指定顺序输出
+@JsonPropertyOrder({"txId", "index","sequence","scriptSig","output"})  // 按指定顺序输出
 public class TxInput {
 
     /**
@@ -35,8 +37,9 @@ public class TxInput {
      */
     private int index;
 
-    //序列化时只占用4字节
-    private long sequence = 0xFFFFFFFF;//4294967295
+    //序列化时只占用4字节 无符号32位整数最大值
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private long sequence = 0xFFFFFFFFL;//4294967295
 
 
     /**
@@ -202,15 +205,10 @@ public class TxInput {
             DataOutputStream dos = new DataOutputStream(baos);
             com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, txId, TX_ID_LENGTH);
             com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, index);
-            //如果是coinbase输入非固定长度
-            if (isCoinbase()) {
-                // 如果是Coinbase输入，脚本长度可变，先写入长度(VarInt)，再写入内容
-                com.bit.coin.utils.SerializeUtils.writeVarInt(dos, scriptSig.length);
-                if (scriptSig.length > 0) {
-                    dos.write(scriptSig);
-                }
-            }else {
-                com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, scriptSig, scriptSig.length);
+            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, (int)sequence);
+            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, scriptSig.length);
+            if (scriptSig.length > 0) {
+                dos.write(scriptSig);
             }
             dos.close();
             return baos.toByteArray();
@@ -233,29 +231,23 @@ public class TxInput {
         byte[] txId = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, TX_ID_LENGTH);
         input.setTxId(txId);
 
-        // 2. 读取输出索引 (4字节，小端)
+        // 读取输出索引 (4字节，小端)
         int index = com.bit.coin.utils.SerializeUtils.readLittleEndianInt(dis);
         input.setIndex(index);
 
-        // 3. 读取解锁脚本
-        // 先判断是否为Coinbase输入
-        boolean isCoinbase = input.isCoinbase();
-        if (isCoinbase) {
-            // 如果是Coinbase输入，先读取长度(VarInt)，再读取内容
-            long scriptSigLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
-            if (scriptSigLength > 0) {
-                byte[] scriptSig = new byte[(int) scriptSigLength];
-                dis.readFully(scriptSig);
-                input.setScriptSig(scriptSig);
-            } else {
-                input.setScriptSig(new byte[0]);
-            }
-        } else {
-            // 如果是普通输入，读取固定长度的脚本
-            byte[] scriptSig = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, SCRIPT_SIG_LENGTH);
+        // 读取序列号 (4字节，小端)
+        int sequenceInt  = SerializeUtils.readLittleEndianInt(dis);
+        // 转换为无符号long
+        long sequence = sequenceInt & 0xFFFFFFFFL;
+        input.setSequence(sequence);
+        long scriptSigLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptSigLength > 0) {
+            byte[] scriptSig = new byte[(int) scriptSigLength];
+            dis.readFully(scriptSig);
             input.setScriptSig(scriptSig);
+        } else {
+            input.setScriptSig(new byte[0]);
         }
-
         return input;
     }
 

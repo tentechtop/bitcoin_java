@@ -1292,7 +1292,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         byte[] merkleRoot = calculateMerkleRoot(transactions);
         Block genesisBlock = new Block();
         genesisBlock.setHeight(0); // 创世区块高度为0
-        BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 98456);
+        BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 45259);
         genesisBlock.setBlockHeader(blockHeader);
         genesisBlock.setTxCount(1);
         genesisBlock.setTransactions(transactions);
@@ -1400,6 +1400,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         TxInput input = new TxInput();
         input.setTxId(new byte[32]); // 全零交易ID
         input.setIndex(0); // 特殊值表示CoinBase交易
+        input.setSequence(0xFFFFFFFFL);
         byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);//69字节
         input.setScriptSig(bytes);
         List<TxInput> inputs = new ArrayList<>();
