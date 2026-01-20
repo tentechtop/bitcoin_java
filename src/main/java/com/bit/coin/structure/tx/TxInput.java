@@ -50,7 +50,7 @@ public class TxInput {
     private TxOutput output;
 
     //未来可以使用
-    //private int sequence = 0;
+    private int sequence = 0xFFFFFFFF;
 
     // 常量定义
     public static final int SCRIPT_SIG_LENGTH = 97; // 解锁脚本长度: 64+1+32

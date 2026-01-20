@@ -625,7 +625,6 @@ public class Transaction {
 
 
 
-
     /**
      * 估算VarInt的大小
      * @param value 要编码的值
@@ -659,9 +658,6 @@ public class Transaction {
         System.out.println("打印{}"+SIGHASH_ALL_ANYONECANPAY);
         System.out.println("打印{}"+SIGHASH_NONE_ANYONECANPAY);
         System.out.println("打印{}"+SIGHASH_SINGLE_ANYONECANPAY);
-
-
-
 
         System.out.println("===== Transaction 序列化/反序列化测试 =====\n");
 
@@ -910,6 +906,8 @@ public class Transaction {
     }
 
 
+    public byte[] calculateSigHash(int inputIndex, long inputValue, int sigHash) {
 
-
+        return null;
+    }
 }
