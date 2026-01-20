@@ -69,6 +69,8 @@ public class ChainResultApi {
         return Result.OK(txsByAddress);
     }
 
+
+
     //查询地址最近的交易
     @GetMapping("/getRecentTx")
     public Result<Transaction[]> getRecentTx(String address) {
@@ -98,11 +100,10 @@ public class ChainResultApi {
     //
     //在创建钱包后 后台启动从网络中恢复钱包过去可能使用的地址
     //可以一次扫描1024个地址 节点返回128字节 1024位的数据 0表示无交易 1表示有交易
-
-
     //钱包能根据交易判断这笔交易对该钱包来说是支出还是收入
 
-    //查询已经确认的交易带出输入引用
+
+    //查询地址下已经确认的交易带出输入引用 分页
 
     //查询交易池中的交易带出输入引用
 
@@ -141,7 +142,7 @@ public class ChainResultApi {
         byte[] bytes3 = Sha.applyRIPEMD160(Sha.applySHA256(bytes2));
         log.info("解锁脚本{}",bytesToHex(bytes3));
 
-        byte[] bytes = Base58.decode("4Fu7xjEeBsFMyv19AxinTaBBBiUZzSev7UQeGQgPAxfU");
+        byte[] bytes = Base58.decode("Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz");
         log.info("公钥Hash{}",bytesToHex(bytes));
 
         byte[] bytes1 = Sha.applyRIPEMD160(Sha.applySHA256(bytes));

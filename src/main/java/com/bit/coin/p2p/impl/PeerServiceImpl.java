@@ -3,15 +3,15 @@ package com.bit.coin.p2p.impl;
 import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.PeerService;
-import com.bit.coin.p2p.peer.RoutingTable;
-import com.bit.coin.p2p.peer.Settings;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
 import com.bit.coin.p2p.protocol.impl.NetworkHandshakeHandler;
 import com.bit.coin.p2p.protocol.impl.PingHandler;
 import com.bit.coin.p2p.protocol.impl.TextHandler;
 import com.bit.coin.p2p.quic.QuicServiceHandler;
-import com.bit.coin.util.MultiAddress;
+
+import com.bit.coin.utils.MultiAddress;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.*;
@@ -42,14 +42,11 @@ import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 @Order(1) // 确保服务端优先于客户端初始化
 public class PeerServiceImpl implements PeerService {
     @Autowired
-    private Settings settings;
-    @Autowired
     private SystemConfig config;
     @Autowired
     private CommonConfig commonConfig;
     @Autowired
     private RoutingTable routingTable;
-
 
     @Autowired
     private ProtocolRegistry protocolRegistry;
@@ -75,9 +72,11 @@ public class PeerServiceImpl implements PeerService {
 
 
     @PostConstruct
-    @Override
     public void init() throws IOException, CertificateException, InterruptedException {
         //在项目启动前 用socket 且用8333端口去访问STUN服务器 或者中转服务器 让他们返回 你的公网IP和映射地址 然后再去连接 并主动上报
+
+
+
 
         startQuicServer();
 
@@ -91,14 +90,6 @@ public class PeerServiceImpl implements PeerService {
         //若A2秒内未收到则降级为中继 A标记B 为需要中继才能通信  A每次发送B的消息都通过X B收到后知道这条消息来自于A且通过X转发 B回复A 也通过X转发
 
 
-        MultiAddress address = MultiAddress.build(
-                "ip4",
-                "127.0.0.1",
-                MultiAddress.Protocol.QUIC,
-                commonConfig.getSelf().getPort(),
-                Base58.encode(commonConfig.getSelf().getId())
-        );
-        System.out.println("地址：" + address.toRawAddress());
 
         //注册协议
         protocolRegistry.registerResultHandler(ProtocolEnum.Network_handshake_V1,  networkHandshakeHandler);

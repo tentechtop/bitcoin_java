@@ -117,6 +117,17 @@ public class TxPoolImpl implements TxPool{
 
             // 5. 设置UTXO映射并验证交易
             tx.setUtxoMap(utxoMap);
+            //设置每一个输入的引用
+            for (int i = 0; i < inputs.size(); i++) {
+                TxInput txInput = inputs.get(i);
+                byte[] key = UTXO.getKey(txInput.getTxId(), txInput.getIndex());
+                UTXO utxo = utxoMap.get(bytesToHex(key));
+                TxOutput txOutput = new TxOutput();
+                txOutput.setValue(utxo.getValue());
+                txOutput.setScriptPubKey(utxo.getScript());
+                inputs.get(i).setOutput(txOutput);
+            }
+
             if (!tx.validate()) {
                 log.warn("交易验证失败：validate()返回false");
 
@@ -460,9 +471,6 @@ public class TxPoolImpl implements TxPool{
     public Transaction[] getTxsByAddress(String address) {
         byte[] decode = Base58.decode(address);
         address = bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(decode)));
-        if (address == null) {
-            return new Transaction[0];
-        }
         Set<byte[]> txIds = addressToTxs.get(address);
         if (txIds == null || txIds.isEmpty()) {
             return new Transaction[0];

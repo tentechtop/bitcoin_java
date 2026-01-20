@@ -1,6 +1,7 @@
 package com.bit.coin.p2p.quic;
 
 
+import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
@@ -48,6 +49,9 @@ public class QuicConnectionManager {
     @Autowired
     private SystemConfig config;
 
+    @Autowired
+    private CommonConfig commonConfig;
+
     @PostConstruct
     private void init(){
         DataBase dataBase = config.getDataBase();
@@ -85,7 +89,7 @@ public class QuicConnectionManager {
     }
 
 
-    //节点ID - > 连接ID
+    //节点ID - > 连接ID 公钥的hex是节点ID
     public static final Map<String, Long> PeerConnect = new HashMap<>();
     public static DatagramChannel Global_Channel = null;// UDP通道
     private static final Map<Long, QuicConnection> CONNECTION_MAP  = new HashMap<>();
@@ -190,9 +194,6 @@ public class QuicConnectionManager {
     }
 
 
-
-
-
     public static QuicConnection connectRemoteByAddr(String multiAddressString)
             throws ExecutionException, InterruptedException, TimeoutException, IOException {
         //不为空
@@ -206,10 +207,11 @@ public class QuicConnectionManager {
         }
         String peerId = multiAddress.getPeerId();
         log.info("节点ID{}",peerId);
+        String peerIdHex = multiAddress.getPeerIdHex();
         String ipAddress = multiAddress.getIpAddress();
         int port = multiAddress.getPort();
         InetSocketAddress remoteAddress = new InetSocketAddress(ipAddress, port);
-        return connectRemote(peerId, remoteAddress);
+        return connectRemote(peerIdHex, remoteAddress);
     }
 
 
@@ -312,6 +314,16 @@ public class QuicConnectionManager {
             addConnection(conId, connection);
             addPeerConnect(peerId,conId);
             resQuicFrame.release();
+
+
+            //保存或者更新节点 到Kadmlia DHT中
+
+
+
+
+
+
+
             return connection;
         }
         return null;

@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
@@ -85,7 +86,7 @@ public class TxApi {
         byte[] bytes = hexToBytes(publicKeyHex);
         // 3. 获取发送方的UTXO
         String senderAddress = Base58.encode(bytes);
-        Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT);
+        Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT|COINBASE_MATURED );
 
         List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
         long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额

@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
@@ -116,6 +118,13 @@ public class ChainApi {
     public List<UTXO> getUTXOsByAddres(String address) {
         return utxoCache.getAddressAllUTXO(address);
     }
+
+    @GetMapping("/getUTXOsByAddres2")
+    public Map<String, Object> getUTXOsByAddres2(String address) {
+        Map<String, Object> addressAllUTXOAndTotalByStatus = utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED);
+        return addressAllUTXOAndTotalByStatus;
+    }
+
 
     /**
      * 查询地址下所有的UTXO

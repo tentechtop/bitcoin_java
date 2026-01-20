@@ -103,7 +103,7 @@ public final class ParamsConfig {
                 BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE), // 工作量证明难度上限
                 0x1d00ffffL, // 难度上限的紧凑格式
                 false, // 是否禁用难度调整
-                100, // Coinbase 交易成熟度
+                10, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(10), // 目标出块时间
@@ -121,7 +121,7 @@ public final class ParamsConfig {
                 BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
                 0x1d00ffffL,
                 false,
-                100, // Coinbase 交易成熟度
+                10, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(10), // 目标出块时间
@@ -139,7 +139,7 @@ public final class ParamsConfig {
                 BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
                 0x207fffffL,
                 true, // 是否禁用难度调整
-                100, // Coinbase 交易成熟度
+                10, // Coinbase 交易成熟度
                 150, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(10), // 目标出块时间

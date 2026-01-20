@@ -1950,8 +1950,8 @@ public class BlockChainServiceImpl implements BlockChainService{
         // 限制pageSize最大值为20，最小值保底为1避免无效值
         pageSize = Math.max(1, Math.min(pageSize, 20));
 
-        // 先获取内存池中的未确认交易（保留原有逻辑）
-        Transaction[] txsByAddress = txPool.getTxsByAddress(address);
+        // 获取内存池中的未确认交易
+        //Transaction[] txsByAddress = txPool.getTxsByAddress(address);
 
         try {
             // 地址转换：Base58解码 -> 双重哈希得到前缀

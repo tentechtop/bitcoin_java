@@ -1,7 +1,7 @@
 package com.bit.coin.p2p.impl;
 
 import com.bit.coin.config.CommonConfig;
-import com.bit.coin.p2p.peer.RoutingTable;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.quic.QuicConnection;
@@ -79,6 +79,7 @@ public class PeerClient {
     }
 
 
+    //32字节hex
     public byte[] sendData(String peerId, ProtocolEnum protocol, byte[] request, int time)
             throws IOException, InterruptedException, ExecutionException, TimeoutException {
         P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), protocol, request);

@@ -19,7 +19,7 @@ public class UTXOStatusResolver {
 
     // 主要状态掩码（用于清除操作）
     public static final long LIFECYCLE_MASK =
-            UNCONFIRMED_OUTPUT | CONFIRMED_UNSPENT | PENDING_SPENT | SPENT | ORPHANED;
+            UNCONFIRMED_OUTPUT | CONFIRMED_UNSPENT | PENDING_SPENT | SPENT | ORPHANED  ;
 
     // ======================== 附加状态标志（可组合）========================
     // 高32位：附加状态标志
@@ -248,6 +248,71 @@ public class UTXOStatusResolver {
         if (flag == 0 || (flag & LIFECYCLE_MASK) != 0) {
             throw new IllegalArgumentException("无效的附加标志: " + flag);
         }
+    }
+
+
+    /**
+     * 设置Coinbase为成熟中状态
+     * 会将UTXO标记为成熟中，并自动清除已成熟状态
+     * 要求：当前必须处于已确认未花费状态
+     */
+    public static long setCoinbaseMaturing(long statusMask) {
+        // 验证当前状态是否允许设置为成熟中
+        if (!hasLifecycle(statusMask, CONFIRMED_UNSPENT)) {
+            throw new IllegalStateException("只有已确认未花费的UTXO才能设置为成熟中状态");
+        }
+
+        // 清除已成熟状态
+        statusMask = removeFlag(statusMask, COINBASE_MATURED);
+
+        // 设置为成熟中状态
+        statusMask = addFlag(statusMask, COINBASE_MATURING);
+
+        return statusMask;
+    }
+
+    /**
+     * 设置Coinbase为已成熟状态
+     * 会将UTXO标记为已成熟，并自动清除成熟中状态
+     * 要求：当前必须处于已确认未花费状态
+     */
+    public static long setCoinbaseMatured(long statusMask) {
+        // 清除成熟中状态
+        statusMask = removeFlag(statusMask, COINBASE_MATURING);
+        // 设置为已成熟状态
+        statusMask = addFlag(statusMask, COINBASE_MATURED);
+        return statusMask;
+    }
+
+    /**
+     * 清除Coinbase相关状态
+     * 移除成熟中和已成熟状态
+     */
+    public static long clearCoinbaseStatus(long statusMask) {
+        statusMask = removeFlag(statusMask, COINBASE_MATURING);
+        statusMask = removeFlag(statusMask, COINBASE_MATURED);
+        return statusMask;
+    }
+
+    /**
+     * 检查是否为成熟中的Coinbase
+     */
+    public static boolean isCoinbaseMaturing(long statusMask) {
+        return hasFlag(statusMask, COINBASE_MATURING);
+    }
+
+    /**
+     * 检查是否为已成熟的Coinbase
+     */
+    public static boolean isCoinbaseMatured(long statusMask) {
+        return hasFlag(statusMask, COINBASE_MATURED);
+    }
+
+    /**
+     * 检查是否为Coinbase输出（包含成熟中或已成熟）
+     */
+    public static boolean isCoinbaseOutput(long statusMask) {
+        return isCoinbaseMaturing(statusMask) || isCoinbaseMatured(statusMask);
     }
 
     public static void main(String[] args) {

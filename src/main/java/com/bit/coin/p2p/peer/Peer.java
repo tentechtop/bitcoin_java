@@ -21,13 +21,14 @@ import java.net.InetSocketAddress;
 public class Peer {
     // ==================== 核心标识（唯一确定节点身份） ====================
     /**
-     * 节点公钥（32字节，Base58编码字符串）
+     * 节点公钥（32字节，hex字符串）
      * Solana节点的唯一身份标识，用于加密通信、签名验证（如节点消息签名）
      * 例："7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"
      * 节点的公钥 base58编码后的值  Base58.encode(publicKey) 衍生字段 不参与序列化 只在反序列化衍生
      */
     private byte[] id;
 
+    //只有自己才保存
     private byte[] privateKey;
 
 
@@ -106,6 +107,10 @@ public class Peer {
     private byte[] sharedSecret;
 
 
+    //节点最新区块hash
+    private String hashHex;
+    //节点区块链顶端高度
+    private int height;
 
 
 

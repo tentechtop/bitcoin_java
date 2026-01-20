@@ -45,11 +45,12 @@ public class TxInput {
 
 
 
-    //扩展非核心字段 在查询交易时带出引用的输出 coinbase交易为空
-    @JsonInclude(JsonInclude.Include.NON_NULL) // 核心修改：添加该注解
+    //扩展非核心字段 在查询交易时带出引用的输出 coinbase交易为空 帮助钱包快速判断这笔交易对钱包来说是支出还是收入
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private TxOutput output;
 
-
+    //未来可以使用
+    //private int sequence = 0;
 
     // 常量定义
     public static final int SCRIPT_SIG_LENGTH = 97; // 解锁脚本长度: 64+1+32

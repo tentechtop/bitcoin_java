@@ -1,5 +1,6 @@
 package com.bit.coin.p2p.quic;
 
+
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.quic.control.FlowController;
 
@@ -13,6 +14,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +24,7 @@ import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.p2p.quic.SendQuicData.buildFromFullData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 @Slf4j
@@ -359,7 +362,7 @@ public class QuicConnection {
             NetworkHandshake deserialize = NetworkHandshake.deserialize(payload);
 
             byte[] nodeId = deserialize.getNodeId();
-            String peerId = Base58.encode(nodeId);
+            String peerId = bytesToHex(nodeId);
             byte[] aPublicKey = deserialize.getSharedSecret();
 
             byte[][] BKeys = SelfKey;
@@ -392,7 +395,10 @@ public class QuicConnection {
                     //将该节点上线
                     addPeerConnect(peerId,conId);
                     //通知业务层有节点上线了 现在需要完成业务握手
-                    //节点ID
+                    //保存或者更新节点
+
+
+
 
 
 

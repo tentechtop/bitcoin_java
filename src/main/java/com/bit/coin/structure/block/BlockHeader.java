@@ -46,7 +46,7 @@ public class BlockHeader {
 
     /**
      * 挖矿难度目标（压缩存储，4字节）
-     * 当前区块难度目标的数值
+     * 当前区块难度目标的数值 无符号4字节
      */
     private int bits;//5
 

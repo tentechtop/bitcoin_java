@@ -29,6 +29,7 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 /**
  * 用线程池并行签名 和 验证  现在是1毫秒一个验证 0.8毫秒一个签名 无法满足 每秒1万个签名和验证
+ * 设计时无需考虑延展性
  */
 
 @Slf4j
@@ -657,8 +658,6 @@ public class Ed25519Signer {
         System.out.println("===== 签名验证 =====");
         System.out.println("签名长度: " + signature1.length + "字节（应为64）");
         System.out.println("验签结果: " + verifyResult1 + "（应为true）");
-        byte[] bytes = hexToBytes("291b960b5ca8591653bea10d11afd883b240616a02ba49acc82be4fcd3aa5dc3");
-        String encode = Base58.encode(bytes);
-        System.out.println("Base58{}"+encode);
+        System.out.println("签名一致性: " +bytesToHex(signature1));
     }
 }

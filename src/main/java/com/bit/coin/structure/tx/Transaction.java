@@ -56,6 +56,8 @@ public class Transaction {
 
 
 
+
+
     //..............................扩展字段不参与序列化.........................
     /**
      * 参与交易待花费的UTXO
@@ -211,9 +213,73 @@ public class Transaction {
 
     // SIGHASH类型
     public static final byte SIGHASH_ALL = 0x01;//锁定输入和输出 不允许篡改
-    public static final byte SIGHASH_NONE = 0x02;//锁定所有输入 不锁定输出
-    public static final byte SIGHASH_SINGLE = 0x03; //所有输入 只签名对应的输出 第 1 个输入的签名只锁定第 1 个输出。如果输入比输出多，多余的输入对应的输出视为 “空”。这用于需要将多个输入的资金分别发送到不同地址的场景。
-    public static final byte SIGHASH_ANYONECANPAY = (byte) 0x80; // 只保留当前输入
+    public static final byte SIGHASH_NONE = 0x02;//锁定所有输入 不锁定输出 空支票
+    public static final byte SIGHASH_SINGLE = 0x03; //所有输入 定向支付 只签名对应的输出 第 1 个输入的签名只锁定第 1 个输出。如果输入比输出多，多余的输入对应的输出视为 “空”。这用于需要将多个输入的资金分别发送到不同地址的场景。
+    public static final byte SIGHASH_ANYONECANPAY = (byte) 0x10; // 只保留当前输入 输入锁定  控制其他输入是否可修改
+    //组合体
+    public static final byte SIGHASH_ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY;    // 0x01 | 0x80
+    public static final byte SIGHASH_NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY;   // 0x02 | 0x80
+    public static final byte SIGHASH_SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY;; // 0x03 | 0x80
+
+    //SIGHASH_ALL (0x01) - 标准支付
+    // 含义：
+    // 输入：锁定所有输入（不能添加/删除/修改任何输入）
+    // 输出：锁定所有输出（不能添加/删除/修改任何输出）
+    // 应用场景：
+    // - 普通转账
+    // - 大多数钱包默认使用
+    // - 最安全，防止任何篡改
+
+    //SIGHASH_NONE (0x02) - 空支票
+    // 允许修改输出的"空支票"
+    // 含义：
+    // 输入：锁定所有输入
+    // 输出：不锁定任何输出（可以任意修改、添加、删除输出）
+    // 应用场景：
+    // - 委托他人决定资金去向
+    // - 复杂多方协商的第一阶段
+    // - 高级合约场景
+
+    //SIGHASH_SINGLE (0x03) - 定向支付
+    // 每个输入对应一个输出
+    // 第i个输入只锁定第i个输出
+    // 含义：
+    // 输入：锁定所有输入
+    // 输出：只锁定与签名输入相同索引的输出
+    // 特殊情况：如果输入索引 >= 输出数量，则不锁定任何输出
+    // 应用场景：
+    // - 合并多个输入，分别支付给不同人
+    // - CoinJoin隐私交易
+    // - 复杂的资金分配
+
+
+    //CoinJoin隐私交易 多个用户合并输入，但只关心自己的部分
+    // Alice和Bob各自只签名自己的输入
+    // 但锁定所有输出（确保资金去向正确）
+    // 任何人都可以添加更多输入（ANYONECANPAY）
+    //众筹/捐款
+    // 捐款人：
+    // 1. 不关心其他输入（ANYONECANPAY：允许添加更多捐款人）
+    // 2. 但关心输出必须转到项目地址（ALL：锁定所有输出）
+
+    //SIGHASH_ALL|ANYONECANPAY (0x81) - 联合支付
+    // 任何人都可以添加输入，但输出固定
+    //signature = sign(tx, SIGHASH_ALL | SIGHASH_ANYONECANPAY);
+    // 含义：
+    //输入：只锁定当前输入（其他人可以添加/修改其他输入）
+    //输出：锁定所有输出
+    //应用场景：
+    //众筹捐款
+    //多人联合支付
+    //支付通道的协作开通
+
+
+    //SIGHASH_NONE|ANYONECANPAY (0x82) - 灵活联合 最灵活的模式
+    //含义：
+    //输入：只锁定当前输入
+    //输出：不锁定任何输出
+
+
 
 
 
@@ -278,6 +344,7 @@ public class Transaction {
 
             // 3. 处理输入 (Inputs)
             if (anyoneCanPay) {
+                log.info("任何人都能支付");
                 // SIGHASH_ANYONECANPAY: 只保留当前要签名的输入
                 TxInput input = this.inputs.get(inputIndex);
                 TxInput inputCopy = new TxInput();
@@ -589,6 +656,13 @@ public class Transaction {
 
 
     public static void main(String[] args) throws IOException {
+        System.out.println("打印{}"+SIGHASH_ALL_ANYONECANPAY);
+        System.out.println("打印{}"+SIGHASH_NONE_ANYONECANPAY);
+        System.out.println("打印{}"+SIGHASH_SINGLE_ANYONECANPAY);
+
+
+
+
         System.out.println("===== Transaction 序列化/反序列化测试 =====\n");
 
         // 创建交易

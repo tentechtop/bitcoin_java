@@ -1,5 +1,6 @@
 package com.bit.coin.utils;
 
+import lombok.Data;
 import org.bitcoinj.core.Base58;
 
 import java.net.Inet4Address;
@@ -8,6 +9,8 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.regex.Pattern;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+
 /**
  * 自解释型P2P多地址解析工具类（单类整合版）
  * 支持格式：/ip4/{IPv4}/tcp/{端口}/p2p/{节点ID}
@@ -15,6 +18,7 @@ import java.util.regex.Pattern;
  * 节点ID规则：Base58编码的32字节公钥（长度为52位的Base58字符串）
  * 使用方式：直接实例化或通过静态方法构建
  */
+@Data
 public class MultiAddress {
     // 静态常量定义
     private static final String SEGMENT_SEPARATOR = "/";
@@ -33,6 +37,9 @@ public class MultiAddress {
     private int port;            // 端口号
     private String peerId;       // P2P节点ID（Base58编码32字节公钥）
     private String rawAddress;   // 原始地址字符串
+    private byte[] peerIdBytes;
+    private String peerIdHex;
+
 
     // ======================== 构造方法 ========================
     /**
@@ -114,6 +121,8 @@ public class MultiAddress {
             throw new IllegalArgumentException("节点ID长度错误，请检查");
         }
         this.peerId = peerId;
+        this.peerIdBytes = decode;//32字节
+        this.peerIdHex = bytesToHex(decode);//32字节
     }
 
     // ======================== 静态构建方法（快捷创建） ========================
@@ -160,6 +169,9 @@ public class MultiAddress {
         multiAddress.peerId = peerId;
         // 生成原始地址
         multiAddress.rawAddress = multiAddress.toRawAddress();
+
+        multiAddress.peerIdHex = bytesToHex(decode);
+        multiAddress.peerIdBytes = decode;
         return multiAddress;
     }
 

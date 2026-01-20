@@ -1,6 +1,6 @@
 #http-json
 server:
-  port: 18335
+  port: 18555
 
 system:
   mining:

@@ -387,9 +387,9 @@ public class UTXOCacheImpl implements UTXOCache {
                             // 判断是否成熟：确认数必须大于Coinbase成熟度
                             boolean isMature = confirmations > coinbaseMaturity;
                             if (isMature){
-                                status = setLifecycleStatus(status, COINBASE_MATURED);
+                                status = setCoinbaseMatured(status);
                             }else {
-                                status = setLifecycleStatus(status, COINBASE_MATURING);
+                                status = setCoinbaseMaturing(status);
                             }
                         }
                         utxo.setStatus(status);
@@ -410,14 +410,39 @@ public class UTXOCacheImpl implements UTXOCache {
         log.info("批量查询UTXO完成：合并去重后{}个，命中缓存{}个，查询数据库{}个，最终返回{}个",
                 uniqueKeys.size(), cachedUTXOs.size(), missingKeys.size(), result.size());
 
+        //重新设置成熟度
+        for (UTXO utxo : result) {
+            long status = utxo.getStatus();
+            int coinbaseMaturity = params.getCoinbaseMaturity();
+            if (utxo.isCoinbase()){
+                int height = utxo.getHeight();
+                int mainHeight = mainTipBlock.getHeight();
+                // 计算确认数：当前主链高度 - UTXO所在区块高度 + 1
+                int confirmations = mainHeight - height + 1;
+                // 判断是否成熟：确认数必须大于Coinbase成熟度
+                boolean isMature = confirmations > coinbaseMaturity;
+                if (isMature){
+                    status = setCoinbaseMatured(status);
+                }else {
+                    status = setCoinbaseMaturing(status);
+                }
+            }
+            utxo.setStatus(status);
+        }
+
         return result;
     }
 
     @Override
     public List<UTXO> getAddressAllUTXOByStatus(String address, long status) {
         List<UTXO> addressAllUTXO = getAddressAllUTXO(address);
-        //只返回status一样的UTXO
-        return addressAllUTXO.stream().filter(utxo -> utxo.getStatus() == status).toList();
+        return addressAllUTXO.stream()
+                .filter(utxo -> {
+                    // 核心修改：从 !=0 改为 == status，确保所有目标位都匹配
+                    long utxoStatus = utxo.getStatus();
+                    return (utxoStatus & status) == status;
+                })
+                .toList();
     }
 
     @Override

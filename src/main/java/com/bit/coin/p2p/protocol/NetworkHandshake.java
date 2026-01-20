@@ -45,6 +45,17 @@ public class NetworkHandshake {
     //签名
     private byte[] signature;
 
+
+
+
+    //创世区块Hash
+    //节点信息
+
+
+
+
+    
+
     // ========================== 序列化/反序列化核心方法 ==========================
 
     /**
