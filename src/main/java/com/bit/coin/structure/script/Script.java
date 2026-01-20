@@ -497,7 +497,6 @@ public class Script {
 
     // 密码学操作码
     public static final int OP_RIPEMD160 = 0xa6;
-    public static final int OP_SHA1 = 0xa7;
     public static final int OP_SHA256 = 0xa8;
     public static final int OP_HASH160 = 0xa9;
     public static final int OP_HASH256 = 0xaa;
@@ -608,7 +607,6 @@ public class Script {
 
         // 密码学操作码
         OP_CODE_NAMES.put(OP_RIPEMD160, "OP_RIPEMD160");
-        OP_CODE_NAMES.put(OP_SHA1, "OP_SHA1");
         OP_CODE_NAMES.put(OP_SHA256, "OP_SHA256");
         OP_CODE_NAMES.put(OP_HASH160, "OP_HASH160");
         OP_CODE_NAMES.put(OP_HASH256, "OP_HASH256");

@@ -256,8 +256,6 @@ public class ScriptExecutor {
             // 加密操作
             case Script.OP_RIPEMD160:
                 return executeRipemd160();
-            case Script.OP_SHA1:
-                return executeSha1();
             case Script.OP_SHA256:
                 return executeSha256();
             case Script.OP_HASH160:
@@ -842,16 +840,6 @@ public class ScriptExecutor {
         }
         byte[] data = pop();
         byte[] hash = Sha.applyRIPEMD160(data);
-        push(hash);
-        return true;
-    }
-
-    private boolean executeSha1() throws ScriptExecutionException {
-        if (stack.isEmpty()) {
-            throw new ScriptExecutionException("栈下溢: OP_SHA1");
-        }
-        byte[] data = pop();
-        byte[] hash = Sha.applySHA256(data);
         push(hash);
         return true;
     }

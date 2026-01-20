@@ -35,6 +35,9 @@ public class TxInput {
      */
     private int index;
 
+    //序列化时只占用4字节
+    private long sequence = 0xFFFFFFFF;//4294967295
+
 
     /**
      * 解锁脚本
@@ -45,12 +48,14 @@ public class TxInput {
 
 
 
+
+
     //扩展非核心字段 在查询交易时带出引用的输出 coinbase交易为空 帮助钱包快速判断这笔交易对钱包来说是支出还是收入
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private TxOutput output;
 
-    //未来可以使用
-    private int sequence = 0xFFFFFFFF;
+
+
 
     // 常量定义
     public static final int SCRIPT_SIG_LENGTH = 97; // 解锁脚本长度: 64+1+32
@@ -58,26 +63,6 @@ public class TxInput {
     public static final int SIGNATURE_TYPE_LENGTH = 1; // <-- 新增常量
     public static final int PUBLIC_KEY_LENGTH = 32;
     public static final int SERIALIZED_LENGTH = 133; // 序列化总长度: 32+4+1+96=133字节
-
-
-
-    /**
-     * 验证输入合法性
-     */
-    public boolean verify(TxOutput output) {
-        byte[] scriptPubKey = output.getScriptPubKey();
-        //解锁脚本中的公钥经过Sha256 160后是否和锁定脚本一致
-        byte[] publicKey = this.getPublicKey();
-        byte[] bytes = Sha.applySHA256(Sha.applyRIPEMD160(publicKey));
-        if (!Arrays.equals(bytes, scriptPubKey)){
-            return false;
-        }
-
-
-        //如果不一致返回false
-        //如果一致则验证签名
-        return true;
-    }
 
 
     /**
