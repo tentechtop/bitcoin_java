@@ -906,7 +906,7 @@ public class ScriptExecutor {
             log.info("签名类型{}",signatureType);
 
             // 计算签名哈希
-            byte[] sigHashBytes = tx.calculateSigHash(inputIndex);
+            byte[] sigHashBytes = tx.calculateSigHash(inputIndex,signatureType);
 
             // 验证签名
             boolean result = Ed25519Signer.fastVerify(pubKeyBytes,sigHashBytes, signature);
@@ -920,79 +920,115 @@ public class ScriptExecutor {
     }
 
     private boolean executeCheckMultiSig(Transaction tx, int inputIndex) throws ScriptExecutionException {
-        if (stack.size() < 1) {
-            throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG");
+        log.info("执行多签（支持乱序匹配版本）");
+        // ========== 步骤1: 弹出总公钥数量 n (OP_n) ==========
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 缺少总公钥数量n");
         }
-
-        // 获取公钥数量
         byte[] nBytes = pop();
         int n = decodeNumber(nBytes).intValueExact();
-        if (n < 0 || n > 20) {  // 比特币限制最多20个公钥
-            throw new ScriptExecutionException("公钥数量无效: " + n);
+        log.info("读取总公钥数量n: {}", n);
+
+        // 校验n的合法范围（比特币规范0-20）
+        if (n < 0 || n > 20) {
+            throw new ScriptExecutionException("总公钥数量无效: " + n + " (合法范围0-20)");
         }
 
-        // 获取公钥
+        // ========== 步骤2: 弹出 n 个公钥（栈是LIFO，弹出顺序是pubn→pub1，需反转） ==========
         List<byte[]> pubKeys = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             if (stack.isEmpty()) {
-                throw new ScriptExecutionException("栈下溢: 公钥数量不足");
+                throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 公钥数量不足，预期" + n + "个，已读取" + i + "个");
             }
             pubKeys.add(pop());
+            //打印公钥
+            log.info("读取公钥{} 长度{}", bytesToHex(pubKeys.get(i)), pubKeys.get(i).length);
         }
 
-        // 获取签名数量
+        // ========== 步骤3: 弹出需要的签名数量 m (OP_m) ==========
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 缺少需要的签名数量m");
+        }
         byte[] mBytes = pop();
         int m = decodeNumber(mBytes).intValueExact();
-        if (m < 0 || m > n) {
-            throw new ScriptExecutionException("签名数量无效: " + m);
+        log.info("读取需要的签名数量m: {}", m);
+
+        // 校验m的合法性
+        if (m < 0 || m > n || m > 20) {
+            throw new ScriptExecutionException(
+                    String.format("签名数量无效: m=%d (需满足 0≤m≤n=%d 且 m≤20)", m, n)
+            );
         }
 
-        // 获取签名
+        // ========== 步骤4: 弹出 m 个签名（栈是LIFO，弹出顺序是sigm→sig1，需反转） ==========
         List<byte[]> signatures = new ArrayList<>();
         for (int i = 0; i < m; i++) {
             if (stack.isEmpty()) {
-                throw new ScriptExecutionException("栈下溢: 签名数量不足");
+                throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 签名数量不足，预期" + m + "个，已读取" + i + "个");
             }
             signatures.add(pop());
+            //打印签名
+            log.info("读取签名{} 长度{}", bytesToHex(signatures.get(i)), signatures.get(i).length);
         }
 
-        // 弹出额外的无用字节（由于历史原因）
-        if (stack.isEmpty()) {
-            throw new ScriptExecutionException("栈下溢: 缺少额外字节");
-        }
-        pop();
-
-        // 验证签名
+        // ========== 步骤5: 签名验证核心逻辑（支持乱序匹配） ==========
         int successCount = 0;
-        int sigIndex = 0;
-        int pubKeyIndex = 0;
+        // 记录已使用的公钥索引，避免一个公钥验证多个签名
+        boolean[] usedPubKeys = new boolean[n];
 
-        while (sigIndex < m && pubKeyIndex < n) {
-            byte[] sigBytes = signatures.get(sigIndex);
-            byte[] pubKey = pubKeys.get(pubKeyIndex);
+        // 遍历每个签名，尝试为每个签名找到一个未使用的匹配公钥
+        for (int sigIdx = 0; sigIdx < m; sigIdx++) {
+            byte[] sigBytes = signatures.get(sigIdx);
+            boolean sigMatched = false; // 标记当前签名是否找到匹配的公钥
 
-            try {
-                // 分离签名和哈希类型
-                int sigHash = sigBytes[sigBytes.length - 1] & 0xFF;
-                byte[] signature = Arrays.copyOfRange(sigBytes, 0, sigBytes.length - 1);
-
-                // 计算签名哈希
-                byte[] sigHashBytes = tx.calculateSigHash(inputIndex);
-
-                // 验证签名
-                if (Ed25519Signer.fastVerify(pubKey,sigHashBytes, signature)) {
-                    successCount++;
-                    sigIndex++;
+            // 遍历所有未使用的公钥，寻找匹配
+            for (int pubIdx = 0; pubIdx < n; pubIdx++) {
+                if (usedPubKeys[pubIdx]) {
+                    continue; // 跳过已使用的公钥，避免重复验证
                 }
-                pubKeyIndex++;
 
-            } catch (Exception e) {
-                pubKeyIndex++;
+                byte[] pubKey = pubKeys.get(pubIdx);
+                log.debug("验证签名{} vs 公钥{} (未使用)", sigIdx + 1, pubIdx + 1);
+
+                try {
+                    // 分离签名内容和哈希类型（最后1字节是SIGHASH类型）
+                    if (sigBytes.length < 1) {
+                        log.debug("签名{}为空，跳过匹配公钥{}", sigIdx + 1, pubIdx + 1);
+                        continue;
+                    }
+                    byte[] signature = Arrays.copyOfRange(sigBytes, 0, sigBytes.length - 1);
+                    byte sigHashType = sigBytes[sigBytes.length - 1];
+                    log.debug("签名{}哈希类型: 0x{}", sigIdx + 1, Integer.toHexString(sigHashType));
+
+                    // 计算签名哈希（交易的签名摘要）
+                    byte[] sigHash = tx.calculateSigHash(inputIndex,sigHashType);
+                    log.info("签名数据{}",bytesToHex(sigHash));
+
+                    // Ed25519签名验证
+                    if (Ed25519Signer.fastVerify(pubKey, sigHash, signature)) {
+                        successCount++;
+                        usedPubKeys[pubIdx] = true; // 标记该公钥已使用
+                        sigMatched = true;
+                        log.debug("签名{}与公钥{}匹配成功，已验证{}个签名", sigIdx + 1, pubIdx + 1, successCount);
+                        break; // 找到匹配的公钥，无需继续遍历其他公钥
+                    }
+                } catch (Exception e) {
+                    log.warn("签名{}验证公钥{}时异常: {}", sigIdx + 1, pubIdx + 1, e.getMessage());
+                }
+            }
+
+            // 如果当前签名没有找到任何匹配的公钥，直接终止后续验证（无法满足m个签名要求）
+            if (!sigMatched) {
+                log.debug("签名{}未找到匹配的公钥，多签验证提前终止", sigIdx + 1);
+                break;
             }
         }
 
-        boolean result = (successCount == m);
-        push(encodeNumber(result ? 1 : 0));
+        // ========== 步骤6: 验证结果判断 & 入栈 ==========
+        boolean verifyResult = successCount == m;
+        push(encodeNumber(verifyResult ? 1 : 0));
+        log.info("多签验证完成 - 成功验证{}个签名 / 需要{}个签名 → 结果: {}", successCount, m, verifyResult ? "通过" : "失败");
+
         return true;
     }
 
@@ -1203,106 +1239,6 @@ public class ScriptExecutor {
 
     // ==================== 公共方法 ====================
 
-    /**
-     * 验证P2PKH脚本
-     */
-    public static boolean verifyP2PKH(byte[] signature, byte[] pubKey, byte[] pubKeyHash,
-                                      Transaction tx, int inputIndex, long inputValue) {
-        try {
-            // 创建解锁脚本
-            Script unlockingScript = new Script();
-            unlockingScript.addData(signature);
-            unlockingScript.addData(pubKey);
-
-            // 创建锁定脚本
-            Script lockingScript = new Script();
-            lockingScript.addOpCode(Script.OP_DUP);
-            lockingScript.addOpCode(Script.OP_HASH160);
-            lockingScript.addData(pubKeyHash);
-            lockingScript.addOpCode(Script.OP_EQUALVERIFY);
-            lockingScript.addOpCode(Script.OP_CHECKSIG);
-
-            // 合并脚本
-            Script combinedScript = combineScripts(unlockingScript, lockingScript);
-
-            // 执行脚本
-            ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex);
-
-        } catch (Exception e) {
-            log.error("P2PKH验证失败: ", e);
-            return false;
-        }
-    }
-
-    /**
-     * 验证P2SH脚本
-     */
-    public static boolean verifyP2SH(byte[] redeemScript, byte[][] signatures,
-                                     byte[][] pubKeys, Transaction tx,
-                                     int inputIndex, long inputValue) {
-        try {
-            // 创建解锁脚本
-            Script unlockingScript = new Script();
-            unlockingScript.addOpCode(Script.OP_0);  // 多签的额外字节
-            for (byte[] signature : signatures) {
-                unlockingScript.addData(signature);
-            }
-            unlockingScript.addData(redeemScript);
-
-            // 创建锁定脚本
-            Script lockingScript = new Script();
-            lockingScript.addOpCode(Script.OP_HASH160);
-            lockingScript.addData(Sha.applyRIPEMD160(redeemScript));
-            lockingScript.addOpCode(Script.OP_EQUAL);
-
-            // 合并脚本
-            Script combinedScript = combineScripts(unlockingScript, lockingScript);
-
-            // 执行脚本
-            ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex);
-
-        } catch (Exception e) {
-            log.error("P2SH验证失败: ", e);
-            return false;
-        }
-    }
-
-    /**
-     * 验证多签脚本
-     */
-    public static boolean verifyMultiSig(int m, byte[][] pubKeys, byte[][] signatures,
-                                         Transaction tx, int inputIndex, long inputValue) {
-        try {
-            // 创建解锁脚本
-            Script unlockingScript = new Script();
-            unlockingScript.addOpCode(Script.OP_0);  // 额外的无用字节
-            for (byte[] signature : signatures) {
-                unlockingScript.addData(signature);
-            }
-
-            // 创建锁定脚本
-            Script lockingScript = new Script();
-            lockingScript.addSmallInteger(m);
-            for (byte[] pubKey : pubKeys) {
-                lockingScript.addData(pubKey);
-            }
-            lockingScript.addSmallInteger(pubKeys.length);
-            lockingScript.addOpCode(Script.OP_CHECKMULTISIG);
-
-            // 合并脚本
-            Script combinedScript = combineScripts(unlockingScript, lockingScript);
-
-            // 执行脚本
-            ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex);
-
-        } catch (Exception e) {
-            log.error("多签验证失败: ", e);
-            return false;
-        }
-    }
 
     /**
      * 合并解锁脚本和锁定脚本
@@ -1333,180 +1269,203 @@ public class ScriptExecutor {
     }
 
 
-
-    //{
-    //    "txId": "7cf155bd127aed86c6208b2af0afa20007af717728215613901a2e04a11c993c",
-    //    "version": 1,
-    //    "lockTime": 0,
-    //    "inputs": [
-    //        {
-    //            "txId": "06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd",
-    //            "index": 0,
-    //            "sequence": "4294967295",
-    //            "scriptSig": "45d5a3aaa5c4eb767f82785b35da1e16f968be6029df82cb47e763564dc9e0c0e2871d9946065a228972f981fb0fdc76759d16626ee1b27b9964fe8156e3b40f01dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1",
-    //            "output": {
-    //                "value": 5000000000,
-    //                "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
-    //            }
-    //        },
-    //        {
-    //            "txId": "e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d",
-    //            "index": 0,
-    //            "sequence": "4294967295",
-    //            "scriptSig": "19954135d76a96e408dd11a3ae8814a5ff1fc816c9fc0996f50534d3e76c5aad42d046a125a4d9a379c28a2b77e3f2312ff39c927e7f792ac5c30e81c3df490101dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1",
-    //            "output": {
-    //                "value": 5000000000,
-    //                "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
-    //            }
-    //        }
-    //    ],
-    //    "outputs": [
-    //        {
-    //            "value": 5000000000,
-    //            "scriptPubKey": "76934d8111b97796af8d22443628399ebb612124"
-    //        },
-    //        {
-    //            "value": 4999995780,
-    //            "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
-    //        }
-    //    ],
-    //    "status": 2130303778818,
-    //    "statusStr": "交易池 | 已验证 | 签名验证 | 脚本验证 | 输入验证 | 输出验证"
-    //}
-
-    // ========== 新增main方法 ==========
     public static void main(String[] args) {
         try {
+            byte[] privateKey1 = hexToBytes("1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8");
+            byte[] publicKey1 = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
 
-            // ========== 步骤1：生成Ed25519密钥对 ==========
-            log.info("===== 1. 生成Ed25519密钥对 =====");
+            byte[] privateKey2 = hexToBytes("fafe8913e58be4b29cd914317ca4bdd2e5ccc62d1fb7e25d180b1dc19b590c1f");
+            byte[] publicKey2 = hexToBytes("eacdc6e4aec120c247cd35959e6e875e0a35add4cf80e9f05e6d5aa29d511f53");
 
-            byte[] privateKey = hexToBytes("1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8");
-            byte[] publicKey = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
-            byte[] pubKeyHash = Sha.applyRIPEMD160(Sha.applySHA256(publicKey)); // 公钥哈希 = RIPEMD160(SHA256(公钥))
-
-            log.info("私钥: {}", SerializeUtils.bytesToHex(privateKey));
-            log.info("公钥: {}", SerializeUtils.bytesToHex(publicKey));
-            log.info("公钥哈希: {}", SerializeUtils.bytesToHex(pubKeyHash));
-
-            // ========== 步骤2：创建测试交易 ==========
-            log.info("\n===== 2. 创建测试交易 =====");
-            Transaction tx = new Transaction();
-
-            // 添加交易输入
-            TxInput txInput1 = new TxInput();
-            txInput1.setTxId(hexToBytes("06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd")); // 前序交易哈希（测试用空值）
-            txInput1.setIndex(0);
-            txInput1.setSequence(0xFFFFFFFFL);
-
-            TxInput txInput2 = new TxInput();
-            txInput2.setTxId(hexToBytes("e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d")); // 前序交易哈希（测试用空值）
-            txInput2.setIndex(0);
-            txInput2.setSequence(0xFFFFFFFFL);
-
-            ArrayList<TxInput> txInputs = new ArrayList<>();
-            txInputs.add(txInput1);
-            txInputs.add(txInput2);
-            tx.setInputs(txInputs);
-
-
-            // 添加交易输出
-            TxOutput txOutput1 = new TxOutput();
-            txOutput1.setValue(5000000000L); // 输出金额（单位：satoshi）
-            txOutput1.setScriptPubKey(hexToBytes("76934d8111b97796af8d22443628399ebb612124")); // 锁定脚本后续构造
-            TxOutput txOutput2 = new TxOutput();
-            txOutput2.setValue(4999995780L); // 输出金额（单位：satoshi）
-            txOutput2.setScriptPubKey(hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56")); // 锁定脚本后续构造
-            ArrayList<TxOutput> txOutputs = new ArrayList<>();
-            txOutputs.add(txOutput1);
-            txOutputs.add(txOutput2);
-            tx.setOutputs(txOutputs);
-            tx.setVersion(1);
-            tx.setLockTime(0);
-
-
-            //根据模拟交易构建UTXOMap
-            Map<String, UTXO> utxoMap = new HashMap<>();
-            String txId1 = "06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd";
-            int index1 = 0;
-            long value1 = 5000000000L; // 注意加L避免整数溢出（50亿satoshi）
-            byte[] scriptPubKey1 = hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56");
-            UTXO utxo1 = new UTXO();
-            utxo1.setTxId(hexToBytes(txId1));          // 前序交易ID
-            utxo1.setIndex(index1);        // 前序交易输出索引
-            utxo1.setValue(value1);        // 输出金额（satoshi）
-            utxo1.setScript(scriptPubKey1); // 锁定脚本
-           // UTXO唯一标识：交易ID + 输出索引（核心键规则）
-            byte[] key = UTXO.getKey(hexToBytes(txId1), index1);
-            utxoMap.put(bytesToHex(key), utxo1);
-
-            // 2. 构建第二个UTXO（对应模拟交易第二个输入的前序输出）
-            // 注意：原JSON中该txId疑似少1位，按原始内容处理
-            String txId2 = "e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d";
-            int index2 = 0;
-            long value2 = 5000000000L;
-            byte[] scriptPubKey2 = hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56");
-            UTXO utxo2 = new UTXO();
-            utxo2.setTxId(hexToBytes(txId2));
-            utxo2.setIndex(index2);
-            utxo2.setValue(value2);
-            utxo2.setScript(scriptPubKey2);
-            byte[] utxoKey2 = UTXO.getKey(hexToBytes(txId2), index2);
-            utxoMap.put(bytesToHex(utxoKey2), utxo2);
-            tx.setUtxoMap(utxoMap);
-
-
-            // ========== 步骤3：签名交易 ==========
-            log.info("\n===== 3. 对交易进行签名 =====");
-            byte[] sigHash = tx.prepareDataForSigning(0, hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"), SIGHASH_ALL);
-            byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(sigHash));
+            byte[] privateKey3 = hexToBytes("ac58a008c9e6c89d884b4611415750bba6b50d40da5e28cc087b590fc8a207c3");
+            byte[] publicKey3 = hexToBytes("f7908979baf0c46cc37cba0d0348bf6baa99098b4e8943b0860fa9edf5e6e092");
 
 
 
-            log.info("签名哈希: {}", SerializeUtils.bytesToHex(sigHash));
-            log.info("交易签名: {}", SerializeUtils.bytesToHex(signature));
+            //谁能提供一个脚本，它的哈希值等于我指定的值，并且这个脚本能被成功执行，钱就归谁
 
-            //实现在签名signature的后面加上1字节的SIGHASH_ALL
-            byte[] signatureWithHashType = new byte[signature.length + 1];
-            System.arraycopy(signature, 0, signatureWithHashType, 0, signature.length);
-            signatureWithHashType[signature.length] = SIGHASH_ALL; // 追加0x01
+            //测试多签 OP_2 <公钥1> <公钥2> <公钥3> OP_3 OP_CHECKMULTISIG
 
 
-            // ========== 步骤4：构造P2PKH脚本 ==========
-            log.info("\n===== 4. 构造P2PKH解锁/锁定脚本 =====");
-            // 解锁脚本：[签名] [公钥]
-            Script unlockingScript = new Script();
-            unlockingScript.addData(signatureWithHashType);
-            unlockingScript.addData(publicKey);
 
-            // 锁定脚本：OP_DUP OP_HASH160 [公钥哈希] OP_EQUALVERIFY OP_CHECKSIG
-            Script lockingScript = new Script();
-            lockingScript.addOpCode(Script.OP_DUP);
-            lockingScript.addOpCode(Script.OP_HASH160);
-            lockingScript.addData(pubKeyHash);
-            lockingScript.addOpCode(Script.OP_EQUALVERIFY);
-            lockingScript.addOpCode(Script.OP_CHECKSIG);
+            //收款方创建脚本 并提供脚本的Hash160 byte[] 20字节 -> scriptHash
 
-            log.info("解锁脚本: {}", unlockingScript.toString());
-            log.info("锁定脚本: {}", lockingScript.toString());
-            log.info("解锁脚本十六进制: {}", unlockingScript.toHex());
-            log.info("锁定脚本十六进制: {}", lockingScript.toHex());
+            //付款方 创建锁定脚本 OP_HASH160 <scriptHash> OP_EQUAL
 
-            // ========== 步骤5：合并脚本并执行验证 ==========
-            log.info("\n===== 5. 执行脚本验证 =====");
-            // 合并解锁脚本 + 锁定脚本
-            Script combinedScript = ScriptExecutor.combineScripts(unlockingScript, lockingScript);
-            log.info("合并后脚本: {}", combinedScript.toString());
+            //收款方使用这笔钱要提供: 原始的赎回脚本（包含复杂的解锁条件，如多个公钥和签名要求）。
 
-            // 创建脚本执行器并验证
-            ScriptExecutor executor = new ScriptExecutor();
-            boolean verifyResult = executor.execute(
-                    combinedScript,
-                    tx,
+            Script redeemScript = new Script();
+            redeemScript.addOpCode(Script.OP_2);  // 需要2个签名
+            redeemScript.addData(publicKey1);     // 公钥1
+            redeemScript.addData(publicKey2);     // 公钥2
+            redeemScript.addData(publicKey3);     // 公钥3
+            redeemScript.addOpCode(Script.OP_3);  // 总共3个公钥
+            redeemScript.addOpCode(Script.OP_CHECKMULTISIG);  // 多重签名检查
+
+            String redeemScriptHex = redeemScript.toHex();
+            log.info("赎回脚本: {}", redeemScript.toString());
+            log.info("赎回脚本长度: {} 字节", redeemScriptHex.length() / 2);
+            log.info("赎回脚本十六进制: {}\n", redeemScriptHex);
+
+            byte[] redeemScriptHash = Sha.applyRIPEMD160(Sha.applySHA256(redeemScript.serialize()));
+            log.info("赎回脚本哈希 (20字节): {}", bytesToHex(redeemScriptHash));
+
+            Script p2shLockingScript = new Script();
+            p2shLockingScript.addOpCode(Script.OP_HASH160);
+            p2shLockingScript.addData(redeemScriptHash);  // 20字节的脚本哈希
+            p2shLockingScript.addOpCode(Script.OP_EQUAL);
+            log.info("P2SH锁定脚本: {}", p2shLockingScript.toString());
+            log.info("P2SH锁定脚本十六进制: {}\n", p2shLockingScript.toHex());
+
+            String previousTxId = "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456";
+            int previousOutputIndex = 0;
+            long utxoValue = 100000000L;  // 1 BTC = 100,000,000 satoshis
+
+            UTXO utxo = new UTXO();
+            utxo.setTxId(hexToBytes(previousTxId));
+            utxo.setIndex(previousOutputIndex);
+            utxo.setValue(utxoValue);
+            utxo.setScript(p2shLockingScript.serialize());  // 锁定脚本是P2SH脚本
+            log.info("UTXO交易ID: {}", previousTxId);
+            log.info("UTXO输出索引: {}", previousOutputIndex);
+            log.info("UTXO金额: {} satoshis ({} BTC)", utxoValue, utxoValue / 100000000.0);
+            log.info("UTXO锁定脚本: {}\n", p2shLockingScript.toString());
+
+            // ========== 6. 创建花费交易 ==========
+            log.info("======= 6. 创建花费交易 =======");
+            Transaction spendingTx = new Transaction();
+            spendingTx.setVersion(1);
+            spendingTx.setLockTime(0);
+            // 添加交易输入（引用UTXO）
+            TxInput txInput = new TxInput();
+            txInput.setTxId(hexToBytes(previousTxId));
+            txInput.setIndex(previousOutputIndex);
+            txInput.setSequence(0xFFFFFFFFL);
+            // 解锁脚本稍后设置
+            ArrayList<TxInput> inputs = new ArrayList<>();
+            inputs.add(txInput);
+            spendingTx.setInputs(inputs);
+            // 添加交易输出（发送到新地址）
+            TxOutput txOutput = new TxOutput();
+            txOutput.setValue(utxoValue - 1000);  // 减去手续费
+
+            // 假设发送到一个简单的P2PKH地址
+            byte[] recipientPubKeyHash = hexToBytes("76934d8111b97796af8d22443628399ebb612124");
+            Script recipientScript = new Script();
+            recipientScript.addOpCode(Script.OP_DUP);
+            recipientScript.addOpCode(Script.OP_HASH160);
+            recipientScript.addData(recipientPubKeyHash);
+            recipientScript.addOpCode(Script.OP_EQUALVERIFY);
+            recipientScript.addOpCode(Script.OP_CHECKSIG);
+            txOutput.setScriptPubKey(recipientScript.serialize());
+
+            ArrayList<TxOutput> outputs = new ArrayList<>();
+            outputs.add(txOutput);
+            spendingTx.setOutputs(outputs);
+
+            // 设置UTXO映射（用于签名）
+            Map<String, UTXO> utxoMap2 = new HashMap<>();
+            byte[] utxoKey = UTXO.getKey(hexToBytes(previousTxId), previousOutputIndex);
+            utxoMap2.put(bytesToHex(utxoKey), utxo);
+            spendingTx.setUtxoMap(utxoMap2);
+            log.info("花费交易创建成功");
+            log.info("输入数量: 1");
+            log.info("输出数量: 1");
+            log.info("手续费: 1000 satoshis\n");
+            // ========== 7. 创建签名 ==========
+            log.info("======= 7. 创建多重签名 =======");
+
+            // 对于P2SH，签名时需要将锁定脚本替换为赎回脚本
+            // 准备签名数据
+            byte[] serialize = redeemScript.serialize();
+            log.info("脚本数据{}",bytesToHex(serialize));
+            log.info("脚本数据Hash160{}",bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(serialize))));
+
+            byte[] sigHash2 = spendingTx.prepareDataForSigning(
+                    0,  // 输入索引
+                    p2shLockingScript.serialize(),  // 使用P2SH锁定脚本
+                    SIGHASH_ALL
+            );
+            log.info("签名哈希: {}", bytesToHex(sigHash2).substring(0, 20) + "...");
+            // 使用私钥1和私钥2进行签名（2-of-3）
+            byte[] sigHashDigest = Sha.applySHA256(sigHash2);
+            log.info("原始签名数据{}",bytesToHex(sigHashDigest));
+
+            byte[] bytes = spendingTx.calculateSigHash(0,SIGHASH_ALL);
+            log.info("原始签名数据2{}",bytesToHex(bytes));
+
+            // 第一个签名
+            byte[] signature1 = Ed25519Signer.fastSign(privateKey1, sigHashDigest);
+            byte[] signatureWithHashType1 = new byte[signature1.length + 1];
+            System.arraycopy(signature1, 0, signatureWithHashType1, 0, signature1.length);
+            signatureWithHashType1[signature1.length] = SIGHASH_ALL;
+
+
+            // 第二个签名
+            byte[] signature2 = Ed25519Signer.fastSign(privateKey2, sigHashDigest);
+            byte[] signatureWithHashType2 = new byte[signature2.length + 1];
+            System.arraycopy(signature2, 0, signatureWithHashType2, 0, signature2.length);
+            signatureWithHashType2[signature2.length] = SIGHASH_ALL;
+
+            log.info("签名1 (使用私钥1): {}...", bytesToHex(signature1).substring(0, 20));
+            log.info("签名2 (使用私钥2): {}...\n", bytesToHex(signature2).substring(0, 20));
+
+            // ========== 8. 构造P2SH解锁脚本 ==========
+            log.info("======= 8. 构造P2SH解锁脚本 =======");
+
+            // 解锁脚本格式: [OP_0] [signature1] [signature2] [redeemScript]
+            Script unlockingScript2 = new Script();
+
+            // 添加两个签名（顺序必须与赎回脚本中的公钥顺序一致）
+            unlockingScript2.addData(signatureWithHashType1);  // 对应公钥1
+            unlockingScript2.addData(signatureWithHashType2);  // 对应公钥2
+            // 添加完整的赎回脚本
+            unlockingScript2.addData(redeemScript.serialize());
+
+            log.info("解锁脚本: {}", unlockingScript2.toString());
+            log.info("解锁脚本十六进制: {}\n", unlockingScript2.toHex());
+            // 将解锁脚本设置到交易输入中
+            txInput.setScriptSig(unlockingScript2.serialize());
+            // ========== 9. 执行脚本验证 ==========
+            log.info("======= 9. 执行脚本验证 =======");
+
+            // 创建脚本执行器
+            ScriptExecutor executor1 = new ScriptExecutor();
+
+
+            Script combinedP2SHScript = ScriptExecutor.combineScripts(unlockingScript2, p2shLockingScript);
+
+
+            // 执行验证
+            boolean verificationResult = executor1.execute(
+                    combinedP2SHScript,
+                    spendingTx,
                     0
             );
-            //验证结果
-            log.info("验证结果: {}", verifyResult);
+
+            if (verificationResult) {
+                log.info("✅ 验证成功！2-of-3多重签名P2SH交易有效。");
+            } else {
+                log.info("❌ 验证失败！交易无效。");
+            }
+            // ========== 第二步：执行赎回脚本的多签逻辑 ==========
+
+            List<Script.ScriptElement> unlockElements = new ArrayList<>(unlockingScript2.getElements());
+            if (unlockElements.isEmpty()) {
+                log.error("解锁脚本为空");
+            }
+            unlockElements.remove(unlockElements.size() - 1); // 移除最后一个元素（赎回脚本）
+            Script unlockWithoutRedeem = new Script(unlockElements);
+
+            Script combinedRedeemScript = combineScripts(unlockWithoutRedeem, redeemScript);
+            // 4. 执行赎回脚本（真正的多签验证）
+            ScriptExecutor redeemExecutor = new ScriptExecutor();
+            boolean redeemVerify = redeemExecutor.execute(combinedRedeemScript, spendingTx, 0);
+            if (!redeemVerify) {
+                log.error("P2SH赎回脚本执行失败（多签验证不通过）");
+            }else {
+                log.info("✅ P2SH赎回脚本执行成功（多签验证通过）");
+            }
 
         } catch (Exception e) {
             log.error("脚本验证过程出错: ", e);

@@ -1,6 +1,7 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.structure.script.Script;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 import tools.jackson.databind.annotation.JsonSerialize;
@@ -10,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 
 
 @JsonPropertyOrder({"value", "scriptPubKey"})  // 按指定顺序输出
@@ -27,12 +29,30 @@ public class TxOutput {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptPubKey;
+    private WeakReference<Script> scriptPubKeyWk;
+
 
     // 常量定义
     public static final int SCRIPT_PUBKEY_LENGTH = 20; // 锁定脚本长度
     public static final int SERIALIZED_LENGTH = 28;    // 序列化总长度: 8+20=28字节
 
 
+
+    public Script getScriptPubKeyWk() {
+        Script script = null;
+        if (scriptPubKeyWk != null) {
+            script = scriptPubKeyWk.get();
+        }
+        if (script == null) {
+            try {
+                script = Script.deserialize(scriptPubKey);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            scriptPubKeyWk = new WeakReference<>(script);
+        }
+        return script;
+    }
 
     /**
      * 验证字段长度
@@ -52,7 +72,11 @@ public class TxOutput {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DataOutputStream dos = new DataOutputStream(baos);
         dos.write(com.bit.coin.utils.SerializeUtils.longToLittleEndian(value));
-        com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, scriptPubKey, SCRIPT_PUBKEY_LENGTH);
+        //写非固定长度的脚本
+        com.bit.coin.utils.SerializeUtils.writeVarInt(dos, scriptPubKey.length);
+        if (scriptPubKey.length > 0) {
+            dos.write(scriptPubKey);
+        }
         dos.close();
         return baos.toByteArray();
     }
@@ -68,8 +92,14 @@ public class TxOutput {
         byte[] valueBytes = new byte[8];
         dis.readFully(valueBytes);
         output.setValue(com.bit.coin.utils.SerializeUtils.littleEndianToLong(valueBytes));
-        byte[] scriptPubKey = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, SCRIPT_PUBKEY_LENGTH);
-        output.setScriptPubKey(scriptPubKey);
+        long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptPubKeyLength > 0) {
+            byte[] scriptSig = new byte[(int) scriptPubKeyLength];
+            dis.readFully(scriptSig);
+            output.setScriptPubKey(scriptSig);
+        } else {
+            output.setScriptPubKey(new byte[0]);
+        }
         return output;
     }
 

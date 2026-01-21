@@ -1304,7 +1304,6 @@ public class BlockChainServiceImpl implements BlockChainService{
     public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee) {
         // 获取当前时间毫秒数
         long currentTimeMillis = System.nanoTime();
-
         byte[] timeBytes = longToLittleEndian(currentTimeMillis);
         // 对时间字节数组进行第一次SHA256哈希
         byte[] firstHash = Sha.applySHA256(timeBytes);

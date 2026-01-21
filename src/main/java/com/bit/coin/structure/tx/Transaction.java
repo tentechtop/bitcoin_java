@@ -905,7 +905,7 @@ public class Transaction {
 
 
 
-    public byte[] calculateSigHash(int inputIndex) {
+    public byte[] calculateSigHash(int inputIndex,byte signatureType) {
         // 1. 参数合法性校验
         if (inputIndex < 0 || inputIndex >= inputs.size()) {
             throw new IllegalArgumentException("输入索引非法：inputIndex=" + inputIndex + "，输入总数=" + inputs.size());
@@ -926,7 +926,7 @@ public class Transaction {
         byte[] scriptPubKey = referencedUtxo.getScript();
 
         // 3. 准备待签名的原始数据（复用已实现的 prepareDataForSigning 方法）
-        byte[] dataToSign = prepareDataForSigning(inputIndex, scriptPubKey, SIGHASH_ALL);
+        byte[] dataToSign = prepareDataForSigning(inputIndex, scriptPubKey, signatureType);
 
         // 4. 计算双重 SHA256 哈希（比特币标准：SHA256(SHA256(data))）
         byte[] firstHash = Sha.applySHA256(dataToSign);

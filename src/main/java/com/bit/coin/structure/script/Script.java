@@ -15,6 +15,9 @@ import java.util.*;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
+/**
+ * 兼容极简验证和脚本验证  即如果解锁脚本固定为20字节 且解锁脚本固定为97字节 则认为是P2PKH
+ */
 @Slf4j
 @Data
 public class Script {
@@ -99,6 +102,32 @@ public class Script {
      * 从字节数组指定位置反序列化
      */
     public static Script deserialize(byte[] bytes, int offset, int length) throws IOException {
+        //如果是20字节
+        if (length == 20) {
+            Script lockingScript = new Script();
+            lockingScript.addOpCode(Script.OP_DUP);
+            lockingScript.addOpCode(Script.OP_HASH160);
+            lockingScript.addData(bytes);
+            lockingScript.addOpCode(Script.OP_EQUALVERIFY);
+            lockingScript.addOpCode(Script.OP_CHECKSIG);
+            return lockingScript;
+        }
+        //如果是97字节
+        if (length == 97) {
+            //提取前65
+            //提取后32
+            Script unlockingScript = new Script();
+            unlockingScript.addData(Arrays.copyOfRange(bytes, 0, 65));
+            unlockingScript.addData(Arrays.copyOfRange(bytes, 65, 97));
+            return unlockingScript;
+        }
+        //如果是16字节则是coinBase的extraNonce
+        if (length == 16) {
+            Script coinBaseScript = new Script();
+            coinBaseScript.addData(Arrays.copyOfRange(bytes, 0, 16));
+            return coinBaseScript;
+        }
+
         Script script = new Script();
         ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
                 .order(ByteOrder.LITTLE_ENDIAN);

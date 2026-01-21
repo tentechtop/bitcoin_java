@@ -130,13 +130,11 @@ public class TxPoolImpl implements TxPool{
 
             if (!tx.validate()) {
                 log.warn("交易验证失败：validate()返回false");
-
                 // 标记验证失败状态
                 long status = tx.getStatus();
                 status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.REJECTED);
                 status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.INVALID_SIG);
                 tx.setStatus(status);
-
                 return false;
             }
 
@@ -144,12 +142,10 @@ public class TxPoolImpl implements TxPool{
             byte[] calculatedTxId = tx.calculateTxId();
             if (!Arrays.equals(tx.getTxId(), calculatedTxId)) {
                 log.warn("交易验证失败：交易ID不匹配");
-
                 // 标记ID不匹配状态
                 long status = tx.getStatus();
                 status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.REJECTED);
                 tx.setStatus(status);
-
                 return false;
             }
 
@@ -158,14 +154,12 @@ public class TxPoolImpl implements TxPool{
 
         } catch (Exception e) {
             log.error("交易验证异常", e);
-
             // 标记异常状态
             if (tx != null) {
                 long status = tx.getStatus();
                 status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.REJECTED);
                 tx.setStatus(status);
             }
-
             return false;
         }
     }

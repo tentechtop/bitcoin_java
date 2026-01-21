@@ -1,6 +1,7 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.structure.script.Script;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonFormat;
@@ -16,11 +17,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 
 import static com.bit.coin.structure.tx.Transaction.TX_ID_LENGTH;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
+/**
+ * 兼容极简验证和脚本验证  即如果解锁脚本固定为20字节 且解锁脚本固定为97字节 则认为是P2PKH
+ */
 @Slf4j
 @Data
 @JsonPropertyOrder({"txId", "index","sequence","scriptSig","output"})  // 按指定顺序输出
@@ -49,8 +54,7 @@ public class TxInput {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptSig;
-
-
+    private WeakReference<Script> scriptSigWk;
 
 
 
@@ -67,6 +71,23 @@ public class TxInput {
     public static final int SIGNATURE_TYPE_LENGTH = 1; // <-- 新增常量
     public static final int PUBLIC_KEY_LENGTH = 32;
     public static final int SERIALIZED_LENGTH = 133; // 序列化总长度: 32+4+1+96=133字节
+
+
+    public Script getScriptSigWk() {
+        Script script = null;
+        if (scriptSigWk != null) {
+            script = scriptSigWk.get();
+        }
+        if (script == null) {
+            try {
+                script = Script.deserialize(scriptSig);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            scriptSigWk = new WeakReference<>(script);
+        }
+        return script;
+    }
 
 
     /**
