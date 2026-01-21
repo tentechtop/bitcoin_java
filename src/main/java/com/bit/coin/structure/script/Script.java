@@ -229,10 +229,10 @@ public class Script {
                         sb.append(bi.toString(10));
                     } else if (data.length == 20) {
                         // 20字节可能是公钥哈希
-                        sb.append(HexFormat.of().formatHex(data), 0, 8).append("...");
+                        sb.append(HexFormat.of().formatHex(data));
                     } else if (data.length == 33 || data.length == 65) {
                         // 可能是公钥
-                        sb.append(HexFormat.of().formatHex(data), 0, 8).append("...");
+                        sb.append(HexFormat.of().formatHex(data));
                     } else {
                         sb.append(HexFormat.of().formatHex(data));
                     }
@@ -360,6 +360,9 @@ public class Script {
         log.info("serialize{}",bytesToHex(serialize));
         Script deserialize = deserialize(hexToBytes("76a91460c275b1ff20de69f3099596fa75a0a7fd439e2c88ac"));
         log.info("fromHex{}",deserialize.toHex());
+
+
+
     }
 
 

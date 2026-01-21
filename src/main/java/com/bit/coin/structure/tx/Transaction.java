@@ -217,9 +217,9 @@ public class Transaction {
     public static final byte SIGHASH_SINGLE = 0x03; //所有输入 定向支付 只签名对应的输出 第 1 个输入的签名只锁定第 1 个输出。如果输入比输出多，多余的输入对应的输出视为 “空”。这用于需要将多个输入的资金分别发送到不同地址的场景。
     public static final byte SIGHASH_ANYONECANPAY = (byte) 0x10; // 只保留当前输入 输入锁定  控制其他输入是否可修改
     //组合体
-    public static final byte SIGHASH_ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY;    // 0x01 | 0x80
-    public static final byte SIGHASH_NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY;   // 0x02 | 0x80
-    public static final byte SIGHASH_SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY;; // 0x03 | 0x80
+    public static final byte SIGHASH_ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY;    // 0x01 | 0x10
+    public static final byte SIGHASH_NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY;   // 0x02 | 0x10
+    public static final byte SIGHASH_SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY;; // 0x03 | 0x10
 
     //SIGHASH_ALL (0x01) - 标准支付
     // 含义：
@@ -329,7 +329,7 @@ public class Transaction {
      * @param sighashType  签名哈希类型 (e.g., SIGHASH_ALL, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)。
      * @return 用于 SHA256(SHA256(data)) 哈希计算的字节数组。
      */
-    private byte[] prepareDataForSigning(int inputIndex, byte[] scriptPubKey, byte sighashType) {
+    public byte[] prepareDataForSigning(int inputIndex, byte[] scriptPubKey, byte sighashType) {
         try {
             // 1. 解析 sighash 标志
             // 低3位用于区分 ALL, NONE, SINGLE
@@ -444,8 +444,6 @@ public class Transaction {
             throw new RuntimeException("准备签名数据失败", e);
         }
     }
-
-
 
 
 
@@ -906,8 +904,42 @@ public class Transaction {
     }
 
 
-    public byte[] calculateSigHash(int inputIndex, long inputValue, int sigHash) {
 
-        return null;
+    public byte[] calculateSigHash(int inputIndex) {
+        // 1. 参数合法性校验
+        if (inputIndex < 0 || inputIndex >= inputs.size()) {
+            throw new IllegalArgumentException("输入索引非法：inputIndex=" + inputIndex + "，输入总数=" + inputs.size());
+        }
+        if (utxoMap == null || utxoMap.isEmpty()) {
+            throw new IllegalArgumentException("UTXO映射表为空，无法获取锁定脚本");
+        }
+
+        // 2. 获取当前输入对应的UTXO锁定脚本（scriptPubKey）
+        TxInput input = inputs.get(inputIndex);
+        String utxoKey = bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex()));
+        UTXO referencedUtxo = utxoMap.get(utxoKey);
+
+        // 校验UTXO金额一致性（防止金额篡改）
+        if (referencedUtxo == null) {
+            throw new IllegalArgumentException("找不到输入对应的UTXO：utxoKey=" + utxoKey);
+        }
+        byte[] scriptPubKey = referencedUtxo.getScript();
+
+        // 3. 准备待签名的原始数据（复用已实现的 prepareDataForSigning 方法）
+        byte[] dataToSign = prepareDataForSigning(inputIndex, scriptPubKey, SIGHASH_ALL);
+
+        // 4. 计算双重 SHA256 哈希（比特币标准：SHA256(SHA256(data))）
+        byte[] firstHash = Sha.applySHA256(dataToSign);
+
+
+        log.info("SigHash计算完成 | 输入索引={} | SighashType=0x{} | SigHash={}",
+                inputIndex,
+                Integer.toHexString(SIGHASH_ALL & 0xFF),
+                bytesToHex(firstHash));
+
+        return firstHash;
     }
+
+
+
 }

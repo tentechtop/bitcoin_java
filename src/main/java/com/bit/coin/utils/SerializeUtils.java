@@ -157,7 +157,7 @@ public class SerializeUtils {
      */
     public static void writeFixedBytes(DataOutputStream dos, byte[] bytes, int fixedLength) throws IOException {
         if (bytes == null || bytes.length != fixedLength) {
-            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength);
+            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength+"当前是"+bytes.length);
         }
         dos.write(bytes);
     }

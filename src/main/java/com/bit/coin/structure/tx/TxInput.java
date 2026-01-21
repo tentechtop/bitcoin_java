@@ -45,6 +45,7 @@ public class TxInput {
     /**
      * 解锁脚本 脚本类型
      * 包含签名和公钥 [固定64字节签名][1字节签名类型][32公钥]
+     * [1字节 签名总长度]+ [64字节 Ed25519签名] + [1字节 SIGHASH类型]+ [1字节 公钥长度]+ [32字节 Ed25519公钥]
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptSig;

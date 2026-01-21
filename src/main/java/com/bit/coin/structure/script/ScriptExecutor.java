@@ -3,7 +3,9 @@ package com.bit.coin.structure.script;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
+import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.utils.Ed25519Signer;
+import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import lombok.extern.slf4j.Slf4j;
 
@@ -14,6 +16,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
 import java.util.function.BiFunction;
+
+import static com.bit.coin.structure.tx.Transaction.SIGHASH_ALL;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
 public class ScriptExecutor {
@@ -44,12 +50,9 @@ public class ScriptExecutor {
      * @param script 要执行的脚本
      * @param tx 交易（用于签名验证）
      * @param inputIndex 输入索引
-     * @param inputValue 输入金额（用于签名哈希计算）
-     * @param sigHashType 签名哈希类型
      * @return 执行结果
      */
-    public boolean execute(Script script, Transaction tx, int inputIndex,
-                           long inputValue, int sigHashType) {
+    public boolean execute(Script script, Transaction tx, int inputIndex) {
         this.script = script;
         this.cursor = 0;
         this.stack.clear();
@@ -72,7 +75,7 @@ public class ScriptExecutor {
 
                 if (element.isOpCode()) {
                     int opCode = element.getOpCode();
-                    if (!executeOpCode(opCode, tx, inputIndex, inputValue, sigHashType)) {
+                    if (!executeOpCode(opCode, tx, inputIndex)) {
                         return false;
                     }
                 } else {
@@ -107,8 +110,7 @@ public class ScriptExecutor {
     /**
      * 执行操作码
      */
-    private boolean executeOpCode(int opCode, Transaction tx, int inputIndex,
-                                  long inputValue, int sigHashType) throws ScriptExecutionException {
+    private boolean executeOpCode(int opCode, Transaction tx, int inputIndex) throws ScriptExecutionException {
         switch (opCode) {
             // 常量操作码
             case Script.OP_0:
@@ -263,17 +265,17 @@ public class ScriptExecutor {
             case Script.OP_HASH256:
                 return executeHash256();
             case Script.OP_CHECKSIG:
-                return executeCheckSig(tx, inputIndex, inputValue, sigHashType);
+                return executeCheckSig(tx, inputIndex);
             case Script.OP_CHECKSIGVERIFY:
-                if (executeCheckSig(tx, inputIndex, inputValue, sigHashType)) {
+                if (executeCheckSig(tx, inputIndex)) {
                     byte[] result = pop();
                     return castToBool(result);
                 }
                 return false;
             case Script.OP_CHECKMULTISIG:
-                return executeCheckMultiSig(tx, inputIndex, inputValue, sigHashType);
+                return executeCheckMultiSig(tx, inputIndex);
             case Script.OP_CHECKMULTISIGVERIFY:
-                if (executeCheckMultiSig(tx, inputIndex, inputValue, sigHashType)) {
+                if (executeCheckMultiSig(tx, inputIndex)) {
                     byte[] result = pop();
                     return castToBool(result);
                 }
@@ -531,6 +533,7 @@ public class ScriptExecutor {
     // ==================== 位逻辑操作实现 ====================
 
     private boolean executeEqual() throws ScriptExecutionException {
+        log.info("执行是否相等");
         if (stack.size() < 2) {
             throw new ScriptExecutionException("栈下溢: OP_EQUAL");
         }
@@ -856,11 +859,12 @@ public class ScriptExecutor {
     }
 
     private boolean executeHash160() throws ScriptExecutionException {
+        log.info("对值进行Hash160");
         if (stack.isEmpty()) {
             throw new ScriptExecutionException("栈下溢: OP_HASH160");
         }
         byte[] data = pop();
-        byte[] hash = Sha.applyRIPEMD160(data);
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(data));
         push(hash);
         return true;
     }
@@ -884,29 +888,30 @@ public class ScriptExecutor {
         return true;
     }
 
-    private boolean executeCheckSig(Transaction tx, int inputIndex,
-                                    long inputValue, int sigHashType) throws ScriptExecutionException {
+    private boolean executeCheckSig(Transaction tx, int inputIndex) throws ScriptExecutionException {
+        log.info("检查签名");
         if (stack.size() < 2) {
             throw new ScriptExecutionException("栈下溢: OP_CHECKSIG");
         }
-
         // 弹出公钥和签名
-        byte[] pubKeyBytes = pop();
-        byte[] signatureBytes = pop();
-
+        byte[] pubKeyBytes = pop();//[32字节]
+        byte[] signatureBytes = pop();//[64字节][1字节类型]
+        log.info("弹出公钥{} 长度{}",bytesToHex(pubKeyBytes),pubKeyBytes.length);
+        log.info("弹出签名{} 长度{}",bytesToHex(signatureBytes),signatureBytes.length);
         try {
-            // 分离签名和哈希类型
-            int sigHash = signatureBytes[signatureBytes.length - 1] & 0xFF;
             byte[] signature = Arrays.copyOfRange(signatureBytes, 0, signatureBytes.length - 1);
+            log.info("签名{} 长度{}",bytesToHex(signature),signature.length);
+            //签名类型
+            byte signatureType = signatureBytes[signatureBytes.length - 1];
+            log.info("签名类型{}",signatureType);
 
             // 计算签名哈希
-            byte[] sigHashBytes = tx.calculateSigHash(inputIndex, inputValue, sigHash);
+            byte[] sigHashBytes = tx.calculateSigHash(inputIndex);
 
             // 验证签名
-            boolean result = Ed25519Signer.fastVerify(sigHashBytes, signature, pubKeyBytes);
+            boolean result = Ed25519Signer.fastVerify(pubKeyBytes,sigHashBytes, signature);
             push(encodeNumber(result ? 1 : 0));
             return true;
-
         } catch (Exception e) {
             log.error("签名验证失败: ", e);
             push(encodeNumber(0));
@@ -914,8 +919,7 @@ public class ScriptExecutor {
         }
     }
 
-    private boolean executeCheckMultiSig(Transaction tx, int inputIndex,
-                                         long inputValue, int sigHashType) throws ScriptExecutionException {
+    private boolean executeCheckMultiSig(Transaction tx, int inputIndex) throws ScriptExecutionException {
         if (stack.size() < 1) {
             throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG");
         }
@@ -973,10 +977,10 @@ public class ScriptExecutor {
                 byte[] signature = Arrays.copyOfRange(sigBytes, 0, sigBytes.length - 1);
 
                 // 计算签名哈希
-                byte[] sigHashBytes = tx.calculateSigHash(inputIndex, inputValue, sigHash);
+                byte[] sigHashBytes = tx.calculateSigHash(inputIndex);
 
                 // 验证签名
-                if (Ed25519Signer.fastVerify(sigHashBytes, signature, pubKey)) {
+                if (Ed25519Signer.fastVerify(pubKey,sigHashBytes, signature)) {
                     successCount++;
                     sigIndex++;
                 }
@@ -1223,7 +1227,7 @@ public class ScriptExecutor {
 
             // 执行脚本
             ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex, inputValue, 0x01);
+            return executor.execute(combinedScript, tx, inputIndex);
 
         } catch (Exception e) {
             log.error("P2PKH验证失败: ", e);
@@ -1257,7 +1261,7 @@ public class ScriptExecutor {
 
             // 执行脚本
             ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex, inputValue, 0x01);
+            return executor.execute(combinedScript, tx, inputIndex);
 
         } catch (Exception e) {
             log.error("P2SH验证失败: ", e);
@@ -1292,7 +1296,7 @@ public class ScriptExecutor {
 
             // 执行脚本
             ScriptExecutor executor = new ScriptExecutor();
-            return executor.execute(combinedScript, tx, inputIndex, inputValue, 0x01);
+            return executor.execute(combinedScript, tx, inputIndex);
 
         } catch (Exception e) {
             log.error("多签验证失败: ", e);
@@ -1326,6 +1330,187 @@ public class ScriptExecutor {
 
     public boolean isVerified() {
         return verified;
+    }
+
+
+
+    //{
+    //    "txId": "7cf155bd127aed86c6208b2af0afa20007af717728215613901a2e04a11c993c",
+    //    "version": 1,
+    //    "lockTime": 0,
+    //    "inputs": [
+    //        {
+    //            "txId": "06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd",
+    //            "index": 0,
+    //            "sequence": "4294967295",
+    //            "scriptSig": "45d5a3aaa5c4eb767f82785b35da1e16f968be6029df82cb47e763564dc9e0c0e2871d9946065a228972f981fb0fdc76759d16626ee1b27b9964fe8156e3b40f01dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1",
+    //            "output": {
+    //                "value": 5000000000,
+    //                "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
+    //            }
+    //        },
+    //        {
+    //            "txId": "e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d",
+    //            "index": 0,
+    //            "sequence": "4294967295",
+    //            "scriptSig": "19954135d76a96e408dd11a3ae8814a5ff1fc816c9fc0996f50534d3e76c5aad42d046a125a4d9a379c28a2b77e3f2312ff39c927e7f792ac5c30e81c3df490101dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1",
+    //            "output": {
+    //                "value": 5000000000,
+    //                "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
+    //            }
+    //        }
+    //    ],
+    //    "outputs": [
+    //        {
+    //            "value": 5000000000,
+    //            "scriptPubKey": "76934d8111b97796af8d22443628399ebb612124"
+    //        },
+    //        {
+    //            "value": 4999995780,
+    //            "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
+    //        }
+    //    ],
+    //    "status": 2130303778818,
+    //    "statusStr": "交易池 | 已验证 | 签名验证 | 脚本验证 | 输入验证 | 输出验证"
+    //}
+
+    // ========== 新增main方法 ==========
+    public static void main(String[] args) {
+        try {
+
+            // ========== 步骤1：生成Ed25519密钥对 ==========
+            log.info("===== 1. 生成Ed25519密钥对 =====");
+
+            byte[] privateKey = hexToBytes("1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8");
+            byte[] publicKey = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
+            byte[] pubKeyHash = Sha.applyRIPEMD160(Sha.applySHA256(publicKey)); // 公钥哈希 = RIPEMD160(SHA256(公钥))
+
+            log.info("私钥: {}", SerializeUtils.bytesToHex(privateKey));
+            log.info("公钥: {}", SerializeUtils.bytesToHex(publicKey));
+            log.info("公钥哈希: {}", SerializeUtils.bytesToHex(pubKeyHash));
+
+            // ========== 步骤2：创建测试交易 ==========
+            log.info("\n===== 2. 创建测试交易 =====");
+            Transaction tx = new Transaction();
+
+            // 添加交易输入
+            TxInput txInput1 = new TxInput();
+            txInput1.setTxId(hexToBytes("06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd")); // 前序交易哈希（测试用空值）
+            txInput1.setIndex(0);
+            txInput1.setSequence(0xFFFFFFFFL);
+
+            TxInput txInput2 = new TxInput();
+            txInput2.setTxId(hexToBytes("e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d")); // 前序交易哈希（测试用空值）
+            txInput2.setIndex(0);
+            txInput2.setSequence(0xFFFFFFFFL);
+
+            ArrayList<TxInput> txInputs = new ArrayList<>();
+            txInputs.add(txInput1);
+            txInputs.add(txInput2);
+            tx.setInputs(txInputs);
+
+
+            // 添加交易输出
+            TxOutput txOutput1 = new TxOutput();
+            txOutput1.setValue(5000000000L); // 输出金额（单位：satoshi）
+            txOutput1.setScriptPubKey(hexToBytes("76934d8111b97796af8d22443628399ebb612124")); // 锁定脚本后续构造
+            TxOutput txOutput2 = new TxOutput();
+            txOutput2.setValue(4999995780L); // 输出金额（单位：satoshi）
+            txOutput2.setScriptPubKey(hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56")); // 锁定脚本后续构造
+            ArrayList<TxOutput> txOutputs = new ArrayList<>();
+            txOutputs.add(txOutput1);
+            txOutputs.add(txOutput2);
+            tx.setOutputs(txOutputs);
+            tx.setVersion(1);
+            tx.setLockTime(0);
+
+
+            //根据模拟交易构建UTXOMap
+            Map<String, UTXO> utxoMap = new HashMap<>();
+            String txId1 = "06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd";
+            int index1 = 0;
+            long value1 = 5000000000L; // 注意加L避免整数溢出（50亿satoshi）
+            byte[] scriptPubKey1 = hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56");
+            UTXO utxo1 = new UTXO();
+            utxo1.setTxId(hexToBytes(txId1));          // 前序交易ID
+            utxo1.setIndex(index1);        // 前序交易输出索引
+            utxo1.setValue(value1);        // 输出金额（satoshi）
+            utxo1.setScript(scriptPubKey1); // 锁定脚本
+           // UTXO唯一标识：交易ID + 输出索引（核心键规则）
+            byte[] key = UTXO.getKey(hexToBytes(txId1), index1);
+            utxoMap.put(bytesToHex(key), utxo1);
+
+            // 2. 构建第二个UTXO（对应模拟交易第二个输入的前序输出）
+            // 注意：原JSON中该txId疑似少1位，按原始内容处理
+            String txId2 = "e9e11fb89505f0efb292316cb54d504d3ff9a26777c997c6469d7ae097b8fb2d";
+            int index2 = 0;
+            long value2 = 5000000000L;
+            byte[] scriptPubKey2 = hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56");
+            UTXO utxo2 = new UTXO();
+            utxo2.setTxId(hexToBytes(txId2));
+            utxo2.setIndex(index2);
+            utxo2.setValue(value2);
+            utxo2.setScript(scriptPubKey2);
+            byte[] utxoKey2 = UTXO.getKey(hexToBytes(txId2), index2);
+            utxoMap.put(bytesToHex(utxoKey2), utxo2);
+            tx.setUtxoMap(utxoMap);
+
+
+            // ========== 步骤3：签名交易 ==========
+            log.info("\n===== 3. 对交易进行签名 =====");
+            byte[] sigHash = tx.prepareDataForSigning(0, hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"), SIGHASH_ALL);
+            byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(sigHash));
+
+
+
+            log.info("签名哈希: {}", SerializeUtils.bytesToHex(sigHash));
+            log.info("交易签名: {}", SerializeUtils.bytesToHex(signature));
+
+            //实现在签名signature的后面加上1字节的SIGHASH_ALL
+            byte[] signatureWithHashType = new byte[signature.length + 1];
+            System.arraycopy(signature, 0, signatureWithHashType, 0, signature.length);
+            signatureWithHashType[signature.length] = SIGHASH_ALL; // 追加0x01
+
+
+            // ========== 步骤4：构造P2PKH脚本 ==========
+            log.info("\n===== 4. 构造P2PKH解锁/锁定脚本 =====");
+            // 解锁脚本：[签名] [公钥]
+            Script unlockingScript = new Script();
+            unlockingScript.addData(signatureWithHashType);
+            unlockingScript.addData(publicKey);
+
+            // 锁定脚本：OP_DUP OP_HASH160 [公钥哈希] OP_EQUALVERIFY OP_CHECKSIG
+            Script lockingScript = new Script();
+            lockingScript.addOpCode(Script.OP_DUP);
+            lockingScript.addOpCode(Script.OP_HASH160);
+            lockingScript.addData(pubKeyHash);
+            lockingScript.addOpCode(Script.OP_EQUALVERIFY);
+            lockingScript.addOpCode(Script.OP_CHECKSIG);
+
+            log.info("解锁脚本: {}", unlockingScript.toString());
+            log.info("锁定脚本: {}", lockingScript.toString());
+            log.info("解锁脚本十六进制: {}", unlockingScript.toHex());
+            log.info("锁定脚本十六进制: {}", lockingScript.toHex());
+
+            // ========== 步骤5：合并脚本并执行验证 ==========
+            log.info("\n===== 5. 执行脚本验证 =====");
+            // 合并解锁脚本 + 锁定脚本
+            Script combinedScript = ScriptExecutor.combineScripts(unlockingScript, lockingScript);
+            log.info("合并后脚本: {}", combinedScript.toString());
+
+            // 创建脚本执行器并验证
+            ScriptExecutor executor = new ScriptExecutor();
+            boolean verifyResult = executor.execute(
+                    combinedScript,
+                    tx,
+                    0
+            );
+            //验证结果
+            log.info("验证结果: {}", verifyResult);
+
+        } catch (Exception e) {
+            log.error("脚本验证过程出错: ", e);
+        }
     }
 }
 

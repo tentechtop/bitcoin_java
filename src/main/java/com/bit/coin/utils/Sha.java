@@ -46,6 +46,56 @@ public class Sha {
     });
 
 
+    // ========== 新增 SHA3/Keccak 系列 ThreadLocal 实例 ==========
+    // 标准SHA3-224 (NIST标准)
+    private static final ThreadLocal<MessageDigest> SHA3_224_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA3-224", BouncyCastleProvider.PROVIDER_NAME);
+        } catch (Exception e) {
+            throw new RuntimeException("创建线程本地SHA3-224实例失败", e);
+        }
+    });
+
+    // 标准SHA3-256 (NIST标准)
+    private static final ThreadLocal<MessageDigest> SHA3_256_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA3-256", BouncyCastleProvider.PROVIDER_NAME);
+        } catch (Exception e) {
+            throw new RuntimeException("创建线程本地SHA3-256实例失败", e);
+        }
+    });
+
+    // 标准SHA3-384 (NIST标准)
+    private static final ThreadLocal<MessageDigest> SHA3_384_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA3-384", BouncyCastleProvider.PROVIDER_NAME);
+        } catch (Exception e) {
+            throw new RuntimeException("创建线程本地SHA3-384实例失败", e);
+        }
+    });
+
+    // 标准SHA3-512 (NIST标准)
+    private static final ThreadLocal<MessageDigest> SHA3_512_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA3-512", BouncyCastleProvider.PROVIDER_NAME);
+        } catch (Exception e) {
+            throw new RuntimeException("创建线程本地SHA3-512实例失败", e);
+        }
+    });
+
+    // Keccak-256 (以太坊专用，区别于标准SHA3-256)
+    private static final ThreadLocal<MessageDigest> KECCAK_256_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            // BouncyCastle中Keccak-256的标准名称是"Keccak-256"
+            return MessageDigest.getInstance("Keccak-256", BouncyCastleProvider.PROVIDER_NAME);
+        } catch (Exception e) {
+            throw new RuntimeException("创建线程本地Keccak-256实例失败(以太坊专用)", e);
+        }
+    });
+
+
+
+
     // 静态代码块：确保BouncyCastle先注册
     static {
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
@@ -62,12 +112,25 @@ public class Sha {
             MessageDigest.getInstance("SHA-512", provider);
             MessageDigest.getInstance("RIPEMD160", provider);
 
+            // 验证新增的SHA3/Keccak系列算法
+            MessageDigest.getInstance("SHA3-224", provider);
+            MessageDigest.getInstance("SHA3-256", provider);
+            MessageDigest.getInstance("SHA3-384", provider);
+            MessageDigest.getInstance("SHA3-512", provider);
+            MessageDigest.getInstance("Keccak-256", provider);
+
+
 
             // 提前触发ThreadLocal初始化（预热）
             SHA256_THREAD_LOCAL.get();
             SHA512_THREAD_LOCAL.get();
             SHA3_THREAD_LOCAL.get();
             RIPEMD160_THREAD_LOCAL.get();
+            SHA3_224_THREAD_LOCAL.get();
+            SHA3_256_THREAD_LOCAL.get();
+            SHA3_384_THREAD_LOCAL.get();
+            SHA3_512_THREAD_LOCAL.get();
+            KECCAK_256_THREAD_LOCAL.get();
         } catch (Exception e) {
             throw new RuntimeException("哈希算法初始化验证失败：" + e.getMessage()
                     + "，请确保BouncyCastle依赖正确（建议版本1.68+）", e);
@@ -178,5 +241,91 @@ public class Sha {
 
     public static byte[] doubleSha256(byte[] serialized) {
         return applySHA256(applyRIPEMD160(serialized));
+    }
+
+
+    // ========== 新增 SHA3/Keccak 系列方法 ==========
+    @Deprecated
+    public static byte[] applySha3New(byte[] data) {
+        return applySha3_256(data);
+    }
+
+    /**
+     * 线程安全的标准SHA3-224计算（NIST标准）
+     */
+    public static byte[] applySha3_224(byte[] data) {
+        data = data == null ? new byte[0] : data;
+        MessageDigest digest = SHA3_224_THREAD_LOCAL.get();
+        digest.reset();
+        return digest.digest(data);
+    }
+
+    /**
+     * 线程安全的标准SHA3-256计算（NIST标准）
+     */
+    public static byte[] applySha3_256(byte[] data) {
+        data = data == null ? new byte[0] : data;
+        MessageDigest digest = SHA3_256_THREAD_LOCAL.get();
+        digest.reset();
+        return digest.digest(data);
+    }
+
+    /**
+     * 线程安全的标准SHA3-384计算（NIST标准）
+     */
+    public static byte[] applySha3_384(byte[] data) {
+        data = data == null ? new byte[0] : data;
+        MessageDigest digest = SHA3_384_THREAD_LOCAL.get();
+        digest.reset();
+        return digest.digest(data);
+    }
+
+    /**
+     * 线程安全的标准SHA3-512计算（NIST标准）
+     */
+    public static byte[] applySha3_512(byte[] data) {
+        data = data == null ? new byte[0] : data;
+        MessageDigest digest = SHA3_512_THREAD_LOCAL.get();
+        digest.reset();
+        return digest.digest(data);
+    }
+
+    /**
+     * 线程安全的Keccak-256计算（以太坊专用，区别于标准SHA3-256）
+     * 以太坊黄皮书中的SHA3实际是Keccak-256，无后缀填充
+     */
+    public static byte[] applyKeccak256(byte[] data) {
+        data = data == null ? new byte[0] : data;
+        MessageDigest digest = KECCAK_256_THREAD_LOCAL.get();
+        digest.reset();
+        return digest.digest(data);
+    }
+
+    /**
+     * 线程安全的Keccak-256计算（支持ByteBuffer输入，适配大内存场景）
+     */
+    public static byte[] applyKeccak256(ByteBuffer data) {
+        if (data == null) {
+            throw new IllegalArgumentException("输入数据不能为空");
+        }
+        MessageDigest digest = KECCAK_256_THREAD_LOCAL.get();
+        digest.reset();
+
+        if (data.hasArray()) {
+            // 堆缓冲区：直接使用底层数组，避免拷贝
+            digest.update(data.array(), data.arrayOffset() + data.position(), data.remaining());
+        } else {
+            // 堆外缓冲区：批量读取，减少系统调用
+            ThreadLocal<byte[]> tempCache = ThreadLocal.withInitial(() -> new byte[4096]);
+            byte[] temp = tempCache.get();
+            int remaining = data.remaining();
+            while (remaining > 0) {
+                int len = Math.min(remaining, temp.length);
+                data.get(temp, 0, len);
+                digest.update(temp, 0, len);
+                remaining -= len;
+            }
+        }
+        return digest.digest();
     }
 }
