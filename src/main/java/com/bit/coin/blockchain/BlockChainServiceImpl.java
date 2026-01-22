@@ -40,6 +40,8 @@ import java.util.stream.Collectors;
 import static com.bit.coin.database.rocksDb.RocksDb.bytesToInt;
 import static com.bit.coin.database.rocksDb.TableEnum.*;
 import static com.bit.coin.structure.block.BlockHeader.convertTargetToBits;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.setLifecycleStatus;
 import static com.bit.coin.utils.SerializeUtils.*;
 
 
@@ -1620,6 +1622,8 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     public Map<String, Object> getUTXOs(String address) {
+        ParamsConfig.Params params = config.getParams();
+        int coinbaseMaturity = params.getCoinbaseMaturity();
         //key:total value:long
         //key:utxoList: value:List<UTXO>
         byte[] pubkey = Base58.decode(address);
@@ -1636,6 +1640,23 @@ public class BlockChainServiceImpl implements BlockChainService{
             byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
             byte[] bytes = dataBase.get(TUTXO, utxoKey);
             UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
+            //设置UTXO的状态
+            long status = 0L;
+            status = setLifecycleStatus(status, CONFIRMED_UNSPENT);
+            if (deserialize.isCoinbase()){
+                //是否成熟
+                int height = deserialize.getHeight();
+                int mainHeight = mainTipBlock.getHeight();
+                int confirmations = mainHeight - height + 1;
+                boolean isMature = confirmations > coinbaseMaturity;
+                if (!isMature){
+                    //天机未成熟状态
+                    status = UTXOStatusResolver.setCoinbaseMaturing(status);
+                }else {
+                    status = UTXOStatusResolver.setCoinbaseMatured(status);
+                }
+            }
+            deserialize.setStatus(status);
             utxos.add(deserialize);
             //金额
             long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
