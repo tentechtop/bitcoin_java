@@ -1,5 +1,6 @@
 package com.bit.coin.structure.script;
 
+import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
@@ -8,18 +9,21 @@ import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import lombok.extern.slf4j.Slf4j;
+import org.bitcoinj.core.Utils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.BiFunction;
 
 import static com.bit.coin.structure.tx.Transaction.SIGHASH_ALL;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
+import static org.apache.logging.log4j.ThreadContext.peek;
 
 @Slf4j
 public class ScriptExecutor {
@@ -88,16 +92,14 @@ public class ScriptExecutor {
                     }
                 }
             }
-
-            // 检查最终结果
+            
             if (stack.isEmpty()) {
-                return false;
+                verified = false;
+            } else {
+                byte[] result = stack.peek();
+                verified = castToBool(result); 
             }
-
-            byte[] result = pop();
-            verified = castToBool(result);
             return verified;
-
         } catch (ScriptExecutionException e) {
             log.error("脚本执行错误: {}", e.getMessage());
             return false;
@@ -107,10 +109,30 @@ public class ScriptExecutor {
         }
     }
 
+
+
     /**
      * 执行操作码
      */
-    private boolean executeOpCode(int opCode, Transaction tx, int inputIndex) throws ScriptExecutionException {
+    public boolean executeOpCode(int opCode, Transaction tx, int inputIndex) throws ScriptExecutionException {
+        // 处理OP_PUSHBYTES_1~75（数据推送操作码）
+        if (opCode >= 0x01 && opCode <= 0x4b) {
+            if (cursor + opCode > script.getElements().size()) {
+                throw new ScriptExecutionException("OP_PUSHBYTES_" + opCode + " 数据不足");
+            }
+            // 拼接后续n字节数据
+            ByteBuffer buffer = ByteBuffer.allocate(opCode);
+            for (int i = 0; i < opCode; i++) {
+                Script.ScriptElement dataElement = script.getElements().get(cursor++);
+                if (dataElement.isOpCode()) {
+                    throw new ScriptExecutionException("OP_PUSHBYTES_" + opCode + " 后续不是数据");
+                }
+                buffer.put(dataElement.getData());
+            }
+            push(buffer.array());
+            return true;
+        }
+
         switch (opCode) {
             // 常量操作码
             case Script.OP_0:
@@ -147,8 +169,9 @@ public class ScriptExecutor {
             case Script.OP_ENDIF:
                 return executeEndif();
             case Script.OP_RETURN:
-                return false;  // 立即失败
-
+                log.warn("执行OP_RETURN，脚本立即终止并失败");
+                verified = false; // 强制标记验证失败
+                return false; // 终止脚本执行流程
             // 栈操作
             case Script.OP_DUP:
                 return executeDup();
@@ -350,12 +373,12 @@ public class ScriptExecutor {
         if (stack.size() < 3) {
             throw new ScriptExecutionException("栈下溢: OP_ROT");
         }
-        byte[] x1 = pop();  // 栈顶
-        byte[] x2 = pop();  // 次栈顶
-        byte[] x3 = pop();  // 第三
-        push(x2);
-        push(x1);
-        push(x3);
+        byte[] c = pop();
+        byte[] b = pop();
+        byte[] a = pop();
+        push(b);
+        push(c);
+        push(a);
         return true;
     }
 
@@ -372,41 +395,65 @@ public class ScriptExecutor {
     }
 
     private boolean executePick() throws ScriptExecutionException {
+        // 规则1：栈不能为空（需要弹出n）
         if (stack.isEmpty()) {
-            throw new ScriptExecutionException("栈下溢: OP_PICK");
+            throw new ScriptExecutionException("栈下溢: OP_PICK - 无可用数值n");
         }
+        // 步骤1：弹出栈顶的n并解码（小端→整数）
         byte[] nBytes = pop();
-        int n = decodeNumber(nBytes).intValueExact();
-        if (n < 0 || stack.size() <= n) {
-            throw new ScriptExecutionException("无效的索引: OP_PICK");
+        BigInteger nBig = decodeNumber(nBytes);
+        // 规则2：n必须是非负整数且不超过Integer范围（比特币限制）
+        if (nBig.signum() < 0 || nBig.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new ScriptExecutionException("无效的索引: OP_PICK - n必须是非负整数且≤" + Integer.MAX_VALUE);
         }
-        Iterator<byte[]> iterator = stack.iterator();
-        byte[] element = null;
-        for (int i = 0; i <= n; i++) {
-            element = iterator.next();
+        int n = nBig.intValueExact();
+        // 规则3：n必须小于当前栈大小（弹出n后的栈）
+        if (stack.size() <= n) {
+            throw new ScriptExecutionException(
+                    String.format("无效的索引: OP_PICK - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size())
+            );
         }
-        push(element.clone());
+        // 步骤2：获取栈底→栈顶顺序的第n个元素（修复迭代器反向问题）
+        // ArrayDeque的iterator是栈顶→栈底，先转为列表并反转得到栈底→栈顶
+        List<byte[]> stackList = new ArrayList<>(stack);
+        Collections.reverse(stackList); // 现在stackList[0]是栈底，stackList[n]是目标元素
+        byte[] targetElement = stackList.get(n).clone(); // 复制元素（避免引用共享）
+        // 步骤3：将目标元素压入栈顶
+        push(targetElement);
+        log.debug("OP_PICK执行成功 - 复制栈底索引{}的元素到栈顶，当前栈大小:{}", n, stack.size());
         return true;
     }
 
     private boolean executeRoll() throws ScriptExecutionException {
+        // 规则1：栈不能为空（需要弹出n）
         if (stack.isEmpty()) {
-            throw new ScriptExecutionException("栈下溢: OP_ROLL");
+            throw new ScriptExecutionException("栈下溢: OP_ROLL - 无可用数值n");
         }
+        // 步骤1：弹出栈顶的n并解码
         byte[] nBytes = pop();
-        int n = decodeNumber(nBytes).intValueExact();
-        if (n < 0 || stack.size() <= n) {
-            throw new ScriptExecutionException("无效的索引: OP_ROLL");
+        BigInteger nBig = decodeNumber(nBytes);
+        if (nBig.signum() < 0 || nBig.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new ScriptExecutionException("无效的索引: OP_ROLL - n必须是非负整数且≤" + Integer.MAX_VALUE);
         }
-        if (n == 0) {
-            return true;  // 0表示复制栈顶
+        int n = nBig.intValueExact();
+        // 规则2：n必须小于当前栈大小（弹出n后的栈）
+        if (stack.size() <= n) {
+            throw new ScriptExecutionException(
+                    String.format("无效的索引: OP_ROLL - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size())
+            );
         }
-        Iterator<byte[]> iterator = stack.iterator();
-        byte[] element = null;
-        for (int i = 0; i <= n; i++) {
-            element = iterator.next();
-        }
-        push(element.clone());
+        // 步骤2：获取栈底→栈顶顺序的元素，并移除原位置元素
+        List<byte[]> stackList = new ArrayList<>(stack);
+        Collections.reverse(stackList); // 转为栈底→栈顶顺序
+        byte[] targetElement = stackList.remove(n); // 移除第n个元素
+        // 恢复栈为 ArrayDeque（栈顶→栈底）
+        stack.clear();
+        Collections.reverse(stackList); // 转回栈顶→栈底
+        stack.addAll(stackList);
+
+        // 步骤3：将移除的元素压入栈顶
+        push(targetElement);
+        log.debug("OP_ROLL执行成功 - 移动栈底索引{}的元素到栈顶，当前栈大小:{}", n, stack.size());
         return true;
     }
 
@@ -474,18 +521,19 @@ public class ScriptExecutor {
         if (stack.size() < 6) {
             throw new ScriptExecutionException("栈下溢: OP_2ROT");
         }
-        byte[] x1 = pop();  // 栈顶
-        byte[] x2 = pop();  // 2
-        byte[] x3 = pop();  // 3
-        byte[] x4 = pop();  // 4
-        byte[] x5 = pop();  // 5
-        byte[] x6 = pop();  // 6
-        push(x4);
-        push(x3);
-        push(x2);
-        push(x1);
-        push(x6);
-        push(x5);
+        // 栈：[a,b,c,d,e,f] (f是栈顶) → 2ROT后 → [c,d,e,f,a,b]
+        byte[] f = pop();
+        byte[] e = pop();
+        byte[] d = pop();
+        byte[] c = pop();
+        byte[] b = pop();
+        byte[] a = pop();
+        push(d);
+        push(c);
+        push(f);
+        push(e);
+        push(b);
+        push(a);
         return true;
     }
 
@@ -1061,10 +1109,9 @@ public class ScriptExecutor {
             return false;  // OP_ELSE没有对应的OP_IF
         }
 
-        boolean lastCondition = conditionStack.pop();
-        boolean newCondition = !lastCondition && exec;
-        conditionStack.push(newCondition);
-        exec = newCondition;
+        // 核心修复：ELSE块执行状态 = OP_IF条件的相反值
+        boolean ifCondition = conditionStack.peek(); // 取出OP_IF的条件结果
+        exec = !ifCondition; // 切换为相反的执行状态
         return true;
     }
 
@@ -1074,12 +1121,8 @@ public class ScriptExecutor {
         }
 
         conditionStack.pop();
-        if (conditionStack.isEmpty()) {
-            exec = true;  // 回到顶层
-        } else {
-            // 恢复上一层的执行状态
-            exec = conditionStack.peek();
-        }
+        // 恢复上一层的执行状态（无上层则恢复为true）
+        exec = conditionStack.isEmpty() || conditionStack.peek();
         return true;
     }
 
@@ -1123,7 +1166,7 @@ public class ScriptExecutor {
 
     // ==================== 工具方法 ====================
 
-    private void push(byte[] data) {
+    public void push(byte[] data) {
         stack.push(data);
     }
 
@@ -1139,7 +1182,7 @@ public class ScriptExecutor {
         return iterator.next();
     }
 
-    private static boolean castToBool(byte[] data) {
+    public static boolean castToBool(byte[] data) {
         if (data == null || data.length == 0) {
             return false;
         }
@@ -1158,7 +1201,7 @@ public class ScriptExecutor {
         return encodeNumber(BigInteger.valueOf(n));
     }
 
-    private static byte[] encodeNumber(BigInteger n) {
+    public static byte[] encodeNumber(BigInteger n) {
         if (n.equals(BigInteger.ZERO)) {
             return new byte[0];
         }
@@ -1166,52 +1209,77 @@ public class ScriptExecutor {
         boolean negative = n.compareTo(BigInteger.ZERO) < 0;
         BigInteger absN = n.abs();
 
-        // 转换为小端字节数组
+        // 转换为大端字节数组（去除前导零）
         byte[] bytes = absN.toByteArray();
-        ByteBuffer buffer = ByteBuffer.allocate(bytes.length + 1)
-                .order(ByteOrder.LITTLE_ENDIAN);
+        int start = 0;
+        while (start < bytes.length && bytes[start] == 0) {
+            start++;
+        }
+        byte[] trimmed = new byte[bytes.length - start];
+        System.arraycopy(bytes, start, trimmed, 0, trimmed.length);
 
-        // 反转字节序
-        for (int i = bytes.length - 1; i >= 0; i--) {
-            buffer.put(bytes[i]);
+        // 小端化处理
+        byte[] littleEndian = new byte[trimmed.length];
+        for (int i = 0; i < trimmed.length; i++) {
+            littleEndian[i] = trimmed[trimmed.length - 1 - i];
         }
 
-        // 添加符号位
-        if ((buffer.get(buffer.position() - 1) & 0x80) != 0) {
-            buffer.put((byte)(negative ? 0x80 : 0x00));
-        } else if (negative) {
-            buffer.put(buffer.position() - 1, (byte)(buffer.get(buffer.position() - 1) | 0x80));
+        // 处理符号位和最高位
+        List<Byte> resultList = new ArrayList<>();
+        for (byte b : littleEndian) {
+            resultList.add(b);
         }
 
-        byte[] result = new byte[buffer.position()];
-        buffer.rewind();
-        buffer.get(result);
+        // 检查最高位是否为1，若是则添加空字节
+        if ((littleEndian[littleEndian.length - 1] & 0x80) != 0) {
+            resultList.add((byte) 0x00);
+        }
+
+        // 处理负数：设置最高位为1
+        if (negative) {
+            int lastIdx = resultList.size() - 1;
+            byte last = resultList.get(lastIdx);
+            resultList.set(lastIdx, (byte) (last | 0x80));
+        }
+
+        // 转换为数组
+        byte[] result = new byte[resultList.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = resultList.get(i);
+        }
         return result;
     }
 
-    private static BigInteger decodeNumber(byte[] data) {
+    public static BigInteger decodeNumber(byte[] data) {
         if (data == null || data.length == 0) {
             return BigInteger.ZERO;
         }
 
-        // 复制并反转字节序
-        byte[] reversed = new byte[data.length];
-        for (int i = 0; i < data.length; i++) {
-            reversed[data.length - 1 - i] = data[i];
-        }
-
         // 检查符号位
-        boolean negative = (reversed[0] & 0x80) != 0;
+        boolean negative = (data[data.length - 1] & 0x80) != 0;
+        byte[] temp = Arrays.copyOf(data, data.length);
+
+        // 清除符号位
         if (negative) {
-            reversed[0] &= 0x7F;  // 清除符号位
+            temp[temp.length - 1] &= 0x7F;
         }
 
-        BigInteger result = new BigInteger(1, reversed);
-        if (negative) {
-            result = result.negate();
-        }
+        // 小端转大端
+        byte[] bigEndian = BlockHeader.reverseBytes(temp);
 
-        return result;
+        // 去除末尾的零（小端转大端后的前导零）
+        int nonZeroStart = 0;
+        while (nonZeroStart < bigEndian.length && bigEndian[nonZeroStart] == 0) {
+            nonZeroStart++;
+        }
+        byte[] trimmed = new byte[bigEndian.length - nonZeroStart];
+        if (trimmed.length == 0) {
+            return BigInteger.ZERO;
+        }
+        System.arraycopy(bigEndian, nonZeroStart, trimmed, 0, trimmed.length);
+
+        BigInteger result = new BigInteger(1, trimmed);
+        return negative ? result.negate() : result;
     }
 
     private static boolean isConditionalOp(Script.ScriptElement element) {
@@ -1226,15 +1294,41 @@ public class ScriptExecutor {
     }
 
     private boolean verifyLockTime(long txLockTime, long lockTime, TxInput input) {
-        // 实现锁定时间验证逻辑
-        // 这里简化实现，实际需要检查锁定时间类型和序列号
+        // 规则1：sequence=0xFFFFFFFF → CLTV 直接失效（返回true）
+        if (input.getSequence() == 0xFFFFFFFFL) {
+            return true;
+        }
+        // 规则2：锁定时间为0 → 无效（返回false）
+        if (lockTime == 0 || txLockTime == 0) {
+            return false;
+        }
+        // 规则3：类型必须一致（区块高度 <500000000，时间戳 ≥500000000）
+        boolean isScriptBlockHeight = lockTime < 500000000L;
+        boolean isTxBlockHeight = txLockTime < 500000000L;
+        if (isScriptBlockHeight != isTxBlockHeight) {
+            return false;
+        }
+        // 规则4：交易锁定时间 ≥ 脚本锁定时间
         return txLockTime >= lockTime;
     }
 
+
+
     private boolean verifySequence(long inputSequence, long sequence) {
-        // 实现序列号验证逻辑
-        // 这里简化实现
-        return (inputSequence & 0xFFFF) >= (sequence & 0xFFFF);
+        // 高2位：类型标志（0=区块高度，1=时间戳）
+        long scriptType = (sequence >> 30) & 0x03; // 提取脚本值的类型标志
+        long inputType = (inputSequence >> 30) & 0x03; // 提取输入sequence的类型标志
+
+        // 低30位：实际的数值部分
+        long scriptValue = sequence & 0x3FFFFFFF; // 仅保留低30位
+        long inputValue = inputSequence & 0x3FFFFFFF; // 仅保留低30位
+
+        // 规则1：类型必须完全匹配
+        if (scriptType != inputType) {
+            return false;
+        }
+        // 规则2：输入数值 ≥ 脚本数值
+        return inputValue >= scriptValue;
     }
 
     // ==================== 公共方法 ====================
@@ -1251,10 +1345,13 @@ public class ScriptExecutor {
     }
 
     /**
-     * 获取栈内容（用于调试）
+     * 栈内容（栈底→栈顶）
      */
     public List<byte[]> getStack() {
-        return new ArrayList<>(stack);
+        List<byte[]> stackList = new ArrayList<>(stack);
+        // ArrayDeque的迭代器顺序是栈顶→栈底，反转后变为栈底→栈顶
+        Collections.reverse(stackList);
+        return stackList;
     }
 
     /**
@@ -1266,210 +1363,6 @@ public class ScriptExecutor {
 
     public boolean isVerified() {
         return verified;
-    }
-
-
-    public static void main(String[] args) {
-        try {
-            byte[] privateKey1 = hexToBytes("1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8");
-            byte[] publicKey1 = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
-
-            byte[] privateKey2 = hexToBytes("fafe8913e58be4b29cd914317ca4bdd2e5ccc62d1fb7e25d180b1dc19b590c1f");
-            byte[] publicKey2 = hexToBytes("eacdc6e4aec120c247cd35959e6e875e0a35add4cf80e9f05e6d5aa29d511f53");
-
-            byte[] privateKey3 = hexToBytes("ac58a008c9e6c89d884b4611415750bba6b50d40da5e28cc087b590fc8a207c3");
-            byte[] publicKey3 = hexToBytes("f7908979baf0c46cc37cba0d0348bf6baa99098b4e8943b0860fa9edf5e6e092");
-
-
-
-            //谁能提供一个脚本，它的哈希值等于我指定的值，并且这个脚本能被成功执行，钱就归谁
-
-            //测试多签 OP_2 <公钥1> <公钥2> <公钥3> OP_3 OP_CHECKMULTISIG
-
-
-
-            //收款方创建脚本 并提供脚本的Hash160 byte[] 20字节 -> scriptHash
-
-            //付款方 创建锁定脚本 OP_HASH160 <scriptHash> OP_EQUAL
-
-            //收款方使用这笔钱要提供: 原始的赎回脚本（包含复杂的解锁条件，如多个公钥和签名要求）。
-
-            Script redeemScript = new Script();
-            redeemScript.addOpCode(Script.OP_2);  // 需要2个签名
-            redeemScript.addData(publicKey1);     // 公钥1
-            redeemScript.addData(publicKey2);     // 公钥2
-            redeemScript.addData(publicKey3);     // 公钥3
-            redeemScript.addOpCode(Script.OP_3);  // 总共3个公钥
-            redeemScript.addOpCode(Script.OP_CHECKMULTISIG);  // 多重签名检查
-
-            String redeemScriptHex = redeemScript.toHex();
-            log.info("赎回脚本: {}", redeemScript.toString());
-            log.info("赎回脚本长度: {} 字节", redeemScriptHex.length() / 2);
-            log.info("赎回脚本十六进制: {}\n", redeemScriptHex);
-
-            byte[] redeemScriptHash = Sha.applyRIPEMD160(Sha.applySHA256(redeemScript.serialize()));
-            log.info("赎回脚本哈希 (20字节): {}", bytesToHex(redeemScriptHash));
-
-            Script p2shLockingScript = new Script();
-            p2shLockingScript.addOpCode(Script.OP_HASH160);
-            p2shLockingScript.addData(redeemScriptHash);  // 20字节的脚本哈希
-            p2shLockingScript.addOpCode(Script.OP_EQUAL);
-            log.info("P2SH锁定脚本: {}", p2shLockingScript.toString());
-            log.info("P2SH锁定脚本十六进制: {}\n", p2shLockingScript.toHex());
-
-            String previousTxId = "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456";
-            int previousOutputIndex = 0;
-            long utxoValue = 100000000L;  // 1 BTC = 100,000,000 satoshis
-
-            UTXO utxo = new UTXO();
-            utxo.setTxId(hexToBytes(previousTxId));
-            utxo.setIndex(previousOutputIndex);
-            utxo.setValue(utxoValue);
-            utxo.setScript(p2shLockingScript.serialize());  // 锁定脚本是P2SH脚本
-            log.info("UTXO交易ID: {}", previousTxId);
-            log.info("UTXO输出索引: {}", previousOutputIndex);
-            log.info("UTXO金额: {} satoshis ({} BTC)", utxoValue, utxoValue / 100000000.0);
-            log.info("UTXO锁定脚本: {}\n", p2shLockingScript.toString());
-
-            // ========== 6. 创建花费交易 ==========
-            log.info("======= 6. 创建花费交易 =======");
-            Transaction spendingTx = new Transaction();
-            spendingTx.setVersion(1);
-            spendingTx.setLockTime(0);
-            // 添加交易输入（引用UTXO）
-            TxInput txInput = new TxInput();
-            txInput.setTxId(hexToBytes(previousTxId));
-            txInput.setIndex(previousOutputIndex);
-            txInput.setSequence(0xFFFFFFFFL);
-            // 解锁脚本稍后设置
-            ArrayList<TxInput> inputs = new ArrayList<>();
-            inputs.add(txInput);
-            spendingTx.setInputs(inputs);
-            // 添加交易输出（发送到新地址）
-            TxOutput txOutput = new TxOutput();
-            txOutput.setValue(utxoValue - 1000);  // 减去手续费
-
-            // 假设发送到一个简单的P2PKH地址
-            byte[] recipientPubKeyHash = hexToBytes("76934d8111b97796af8d22443628399ebb612124");
-            Script recipientScript = new Script();
-            recipientScript.addOpCode(Script.OP_DUP);
-            recipientScript.addOpCode(Script.OP_HASH160);
-            recipientScript.addData(recipientPubKeyHash);
-            recipientScript.addOpCode(Script.OP_EQUALVERIFY);
-            recipientScript.addOpCode(Script.OP_CHECKSIG);
-            txOutput.setScriptPubKey(recipientScript.serialize());
-
-            ArrayList<TxOutput> outputs = new ArrayList<>();
-            outputs.add(txOutput);
-            spendingTx.setOutputs(outputs);
-
-            // 设置UTXO映射（用于签名）
-            Map<String, UTXO> utxoMap2 = new HashMap<>();
-            byte[] utxoKey = UTXO.getKey(hexToBytes(previousTxId), previousOutputIndex);
-            utxoMap2.put(bytesToHex(utxoKey), utxo);
-            spendingTx.setUtxoMap(utxoMap2);
-            log.info("花费交易创建成功");
-            log.info("输入数量: 1");
-            log.info("输出数量: 1");
-            log.info("手续费: 1000 satoshis\n");
-            // ========== 7. 创建签名 ==========
-            log.info("======= 7. 创建多重签名 =======");
-
-            // 对于P2SH，签名时需要将锁定脚本替换为赎回脚本
-            // 准备签名数据
-            byte[] serialize = redeemScript.serialize();
-            log.info("脚本数据{}",bytesToHex(serialize));
-            log.info("脚本数据Hash160{}",bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(serialize))));
-
-            byte[] sigHash2 = spendingTx.prepareDataForSigning(
-                    0,  // 输入索引
-                    p2shLockingScript.serialize(),  // 使用P2SH锁定脚本
-                    SIGHASH_ALL
-            );
-            log.info("签名哈希: {}", bytesToHex(sigHash2).substring(0, 20) + "...");
-            // 使用私钥1和私钥2进行签名（2-of-3）
-            byte[] sigHashDigest = Sha.applySHA256(sigHash2);
-            log.info("原始签名数据{}",bytesToHex(sigHashDigest));
-
-            byte[] bytes = spendingTx.calculateSigHash(0,SIGHASH_ALL);
-            log.info("原始签名数据2{}",bytesToHex(bytes));
-
-            // 第一个签名
-            byte[] signature1 = Ed25519Signer.fastSign(privateKey1, sigHashDigest);
-            byte[] signatureWithHashType1 = new byte[signature1.length + 1];
-            System.arraycopy(signature1, 0, signatureWithHashType1, 0, signature1.length);
-            signatureWithHashType1[signature1.length] = SIGHASH_ALL;
-
-
-            // 第二个签名
-            byte[] signature2 = Ed25519Signer.fastSign(privateKey2, sigHashDigest);
-            byte[] signatureWithHashType2 = new byte[signature2.length + 1];
-            System.arraycopy(signature2, 0, signatureWithHashType2, 0, signature2.length);
-            signatureWithHashType2[signature2.length] = SIGHASH_ALL;
-
-            log.info("签名1 (使用私钥1): {}...", bytesToHex(signature1).substring(0, 20));
-            log.info("签名2 (使用私钥2): {}...\n", bytesToHex(signature2).substring(0, 20));
-
-            // ========== 8. 构造P2SH解锁脚本 ==========
-            log.info("======= 8. 构造P2SH解锁脚本 =======");
-
-            // 解锁脚本格式: [OP_0] [signature1] [signature2] [redeemScript]
-            Script unlockingScript2 = new Script();
-
-            // 添加两个签名（顺序必须与赎回脚本中的公钥顺序一致）
-            unlockingScript2.addData(signatureWithHashType1);  // 对应公钥1
-            unlockingScript2.addData(signatureWithHashType2);  // 对应公钥2
-            // 添加完整的赎回脚本
-            unlockingScript2.addData(redeemScript.serialize());
-
-            log.info("解锁脚本: {}", unlockingScript2.toString());
-            log.info("解锁脚本十六进制: {}\n", unlockingScript2.toHex());
-            // 将解锁脚本设置到交易输入中
-            txInput.setScriptSig(unlockingScript2.serialize());
-            // ========== 9. 执行脚本验证 ==========
-            log.info("======= 9. 执行脚本验证 =======");
-
-            // 创建脚本执行器
-            ScriptExecutor executor1 = new ScriptExecutor();
-
-
-            Script combinedP2SHScript = ScriptExecutor.combineScripts(unlockingScript2, p2shLockingScript);
-
-
-            // 执行验证
-            boolean verificationResult = executor1.execute(
-                    combinedP2SHScript,
-                    spendingTx,
-                    0
-            );
-
-            if (verificationResult) {
-                log.info("✅ 验证成功！2-of-3多重签名P2SH交易有效。");
-            } else {
-                log.info("❌ 验证失败！交易无效。");
-            }
-            // ========== 第二步：执行赎回脚本的多签逻辑 ==========
-
-            List<Script.ScriptElement> unlockElements = new ArrayList<>(unlockingScript2.getElements());
-            if (unlockElements.isEmpty()) {
-                log.error("解锁脚本为空");
-            }
-            unlockElements.remove(unlockElements.size() - 1); // 移除最后一个元素（赎回脚本）
-            Script unlockWithoutRedeem = new Script(unlockElements);
-
-            Script combinedRedeemScript = combineScripts(unlockWithoutRedeem, redeemScript);
-            // 4. 执行赎回脚本（真正的多签验证）
-            ScriptExecutor redeemExecutor = new ScriptExecutor();
-            boolean redeemVerify = redeemExecutor.execute(combinedRedeemScript, spendingTx, 0);
-            if (!redeemVerify) {
-                log.error("P2SH赎回脚本执行失败（多签验证不通过）");
-            }else {
-                log.info("✅ P2SH赎回脚本执行成功（多签验证通过）");
-            }
-
-        } catch (Exception e) {
-            log.error("脚本验证过程出错: ", e);
-        }
     }
 }
 

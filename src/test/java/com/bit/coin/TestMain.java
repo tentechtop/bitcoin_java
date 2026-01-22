@@ -6,15 +6,25 @@ import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.script.ScriptBuilder;
+import org.bitcoinj.script.ScriptChunk;
+import org.bitcoinj.script.ScriptException;
 import org.bouncycastle.util.encoders.Hex;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.EnumSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 public class TestMain {
 
     //main
     public static void main(String[] args) throws IOException {
 
+/*
         NetworkParameters params = TestNet3Params.get(); // 使用测试网络
 
         System.out.println("=== 区块创建与哈希计算测试 ===\n");
@@ -46,6 +56,10 @@ public class TestMain {
         TransactionOutput txOutput = new TransactionOutput(NET_PARAMS, tx, amount, scriptPubKey.getProgram());
         tx.addOutput(txOutput);
 
+
+
+
+
         // 4. 设置交易版本号和锁定时间
         tx.setVersion(1); // 版本号1（比特币默认）
         tx.setLockTime(0); // 0表示立即生效
@@ -70,10 +84,50 @@ public class TestMain {
         System.out.println("\n交易TxID：" + txId);
         System.out.println("交易大小（字节）：" + txSize);
 
+*/
 
 
+        try {
+            // ========== 1. 构建符合最小推送规则的ScriptChunk ==========
+            List<ScriptChunk> chunks = new LinkedList<>();
+            // 推送1字节数据01：opcode=1（数据长度），符合最小推送
+            byte[] data1 = hexToBytes("01");
+            chunks.add(new ScriptChunk(data1.length, data1));
+            // 推送1字节数据02：opcode=1
+            byte[] data2 = hexToBytes("02");
+            chunks.add(new ScriptChunk(data2.length, data2));
+            // 推送1字节数据03：opcode=1
+            byte[] data3 = hexToBytes("03");
+            chunks.add(new ScriptChunk(data3.length, data3));
+            // 执行OP_ROT：opcode=123
+            chunks.add(new ScriptChunk(123, null));
 
+            // ========== 2. 序列化为字节数组 ==========
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            for (ScriptChunk chunk : chunks) {
+                chunk.write(bos);
+            }
+            byte[] programBytes = bos.toByteArray();
 
+            // ========== 3. 创建Script对象 ==========
+            Script rotScript = new Script(programBytes);
+            System.out.println("测试脚本：" + rotScript);
+
+            // ========== 4. 执行脚本（保留MINIMALDATA校验） ==========
+            LinkedList<byte[]> stack = new LinkedList<>();
+            Set<Script.VerifyFlag> flags = EnumSet.allOf(Script.VerifyFlag.class); // 包含MINIMALDATA
+            Script.executeScript(null, 0, rotScript, stack, flags);
+
+            // ========== 5. 输出结果 ==========
+            System.out.println("\nOP_ROT执行后栈内容（栈顶→栈底）：");
+            int index = 0;
+            for (byte[] data : stack) {
+                System.out.printf("栈元素[%d]: %s%n", index++, Utils.HEX.encode(data));
+            }
+
+        } catch (ScriptException | IOException e) {
+            e.printStackTrace();
+        }
 
 
     }

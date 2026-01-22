@@ -54,6 +54,8 @@ public class TxInput {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptSig;
+
+    @JsonIgnore
     private WeakReference<Script> scriptSigWk;
 
 

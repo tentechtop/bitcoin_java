@@ -102,36 +102,9 @@ public class Script {
      * 从字节数组指定位置反序列化
      */
     public static Script deserialize(byte[] bytes, int offset, int length) throws IOException {
-        //如果是20字节
-        if (length == 20) {
-            Script lockingScript = new Script();
-            lockingScript.addOpCode(Script.OP_DUP);
-            lockingScript.addOpCode(Script.OP_HASH160);
-            lockingScript.addData(bytes);
-            lockingScript.addOpCode(Script.OP_EQUALVERIFY);
-            lockingScript.addOpCode(Script.OP_CHECKSIG);
-            return lockingScript;
-        }
-        //如果是97字节
-        if (length == 97) {
-            //提取前65
-            //提取后32
-            Script unlockingScript = new Script();
-            unlockingScript.addData(Arrays.copyOfRange(bytes, 0, 65));
-            unlockingScript.addData(Arrays.copyOfRange(bytes, 65, 97));
-            return unlockingScript;
-        }
-        //如果是16字节则是coinBase的extraNonce
-        if (length == 16) {
-            Script coinBaseScript = new Script();
-            coinBaseScript.addData(Arrays.copyOfRange(bytes, 0, 16));
-            return coinBaseScript;
-        }
-
         Script script = new Script();
         ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
                 .order(ByteOrder.LITTLE_ENDIAN);
-
         while (buffer.remaining() > 0) {
             int opCode = buffer.get() & 0xFF;
 
@@ -330,9 +303,12 @@ public class Script {
      */
     public void addSmallInteger(int n) {
         if (n == -1) {
-            addOpCode(OP_1NEGATE);
-        } else if (n >= 0 && n <= 16) {
-            addOpCode(OP_0 + n);
+            addOpCode(OP_1NEGATE); // 0x4f
+        } else if (n == 0) {
+            addOpCode(OP_0); // 0x00
+        } else if (n >= 1 && n <= 16) {
+            // 正确的OP_1~OP_16：0x51~0x60（OP_1=0x51, OP_2=0x52...OP_16=0x60）
+            addOpCode(OP_1 + (n - 1));
         } else {
             throw new IllegalArgumentException("整数必须在-1到16之间: " + n);
         }
@@ -652,9 +628,5 @@ public class Script {
         OP_CODE_NAMES.put(OP_NOP, "OP_NOP");
         OP_CODE_NAMES.put(OP_CHECKLOCKTIMEVERIFY, "OP_CHECKLOCKTIMEVERIFY");
         OP_CODE_NAMES.put(OP_CHECKSEQUENCEVERIFY, "OP_CHECKSEQUENCEVERIFY");
-
     }
-
-
-
 }

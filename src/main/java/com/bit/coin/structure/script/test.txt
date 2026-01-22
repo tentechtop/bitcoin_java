@@ -1,0 +1,1846 @@
+package com.bit.coin.structure.script;
+
+import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.TxInput;
+import com.bit.coin.structure.tx.TxOutput;
+import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.utils.Ed25519Signer;
+import com.bit.coin.utils.SerializeUtils;
+import com.bit.coin.utils.Sha;
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.*;
+import java.util.function.BiFunction;
+
+import static com.bit.coin.structure.tx.Transaction.SIGHASH_ALL;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
+
+@Slf4j
+public class ScriptExecutor {
+
+    // 执行栈
+    private Deque<byte[]> stack;
+    // 备用栈
+    private Deque<byte[]> altStack;
+    // 条件栈（用于OP_IF/OP_NOTIF）
+    private Deque<Boolean> conditionStack;
+    // 当前是否执行
+    private boolean exec = true;
+    // 脚本验证结果
+    private boolean verified = false;
+    // 脚本执行器
+    private Script script;
+    // 脚本执行位置
+    private int cursor = 0;
+
+    public ScriptExecutor() {
+        this.stack = new ArrayDeque<>();
+        this.altStack = new ArrayDeque<>();
+        this.conditionStack = new ArrayDeque<>();
+    }
+
+    /**
+     * 执行脚本
+     * @param script 要执行的脚本
+     * @param tx 交易（用于签名验证）
+     * @param inputIndex 输入索引
+     * @return 执行结果
+     */
+    public boolean execute(Script script, Transaction tx, int inputIndex) {
+        this.script = script;
+        this.cursor = 0;
+        this.stack.clear();
+        this.altStack.clear();
+        this.conditionStack.clear();
+        this.exec = true;
+        this.verified = false;
+
+        List<Script.ScriptElement> elements = script.getElements();
+
+        try {
+            while (cursor < elements.size()) {
+                Script.ScriptElement element = elements.get(cursor);
+                cursor++;
+
+                if (!exec && !isConditionalOp(element)) {
+                    // 当前不执行，跳过（除非是条件控制操作码）
+                    continue;
+                }
+
+                if (element.isOpCode()) {
+                    int opCode = element.getOpCode();
+                    if (!executeOpCode(opCode, tx, inputIndex)) {
+                        return false;
+                    }
+                } else {
+                    // 数据入栈
+                    byte[] data = element.getData();
+                    if (data == null) {
+                        push(new byte[0]);
+                    } else {
+                        push(data);
+                    }
+                }
+            }
+
+            // 检查最终结果
+            if (stack.isEmpty()) {
+                return false;
+            }
+
+            byte[] result = pop();
+            verified = castToBool(result);
+            return verified;
+
+        } catch (ScriptExecutionException e) {
+            log.error("脚本执行错误: {}", e.getMessage());
+            return false;
+        } catch (Exception e) {
+            log.error("脚本执行异常: ", e);
+            return false;
+        }
+    }
+
+    /**
+     * 用于测试的执行方法（跳过最终pop，保留栈完整）
+     */
+    public boolean executeForTest(Script script, Transaction tx, int inputIndex) {
+        this.script = script;
+        this.cursor = 0;
+        this.stack.clear();
+        this.altStack.clear();
+        this.conditionStack.clear();
+        this.exec = true;
+        this.verified = false;
+
+        List<Script.ScriptElement> elements = script.getElements();
+
+        try {
+            while (cursor < elements.size()) {
+                Script.ScriptElement element = elements.get(cursor);
+                cursor++;
+
+                if (!exec && !isConditionalOp(element)) {
+                    continue;
+                }
+
+                if (element.isOpCode()) {
+                    int opCode = element.getOpCode();
+                    if (!executeOpCode(opCode, tx, inputIndex)) {
+                        return false;
+                    }
+                } else {
+                    byte[] data = element.getData();
+                    if (data == null) {
+                        push(new byte[0]);
+                    } else {
+                        push(data);
+                    }
+                }
+            }
+            // 测试模式：不弹出栈顶，直接检查栈非空
+            verified = !stack.isEmpty();
+            return verified;
+
+        } catch (ScriptExecutionException e) {
+            log.error("脚本执行错误: {}", e.getMessage());
+            return false;
+        } catch (Exception e) {
+            log.error("脚本执行异常: ", e);
+            return false;
+        }
+    }
+
+
+    /**
+     * 执行操作码
+     */
+    private boolean executeOpCode(int opCode, Transaction tx, int inputIndex) throws ScriptExecutionException {
+        switch (opCode) {
+            // 常量操作码
+            case Script.OP_0:
+                push(new byte[0]);
+                break;
+            case Script.OP_1NEGATE:
+                push(encodeNumber(-1));
+                break;
+            case Script.OP_1:
+            case Script.OP_2:
+            case Script.OP_3:
+            case Script.OP_4:
+            case Script.OP_5:
+            case Script.OP_6:
+            case Script.OP_7:
+            case Script.OP_8:
+            case Script.OP_9:
+            case Script.OP_10:
+            case Script.OP_11:
+            case Script.OP_12:
+            case Script.OP_13:
+            case Script.OP_14:
+            case Script.OP_15:
+            case Script.OP_16:
+                push(encodeNumber(opCode - 80));  // OP_1 = 81 -> 1
+                break;
+
+            // 流程控制
+            case Script.OP_IF:
+            case Script.OP_NOTIF:
+                return executeIf(opCode);
+            case Script.OP_ELSE:
+                return executeElse();
+            case Script.OP_ENDIF:
+                return executeEndif();
+            case Script.OP_RETURN:
+                return false;  // 立即失败
+
+            // 栈操作
+            case Script.OP_DUP:
+                return executeDup();
+            case Script.OP_DROP:
+                return executeDrop();
+            case Script.OP_SWAP:
+                return executeSwap();
+            case Script.OP_OVER:
+                return executeOver();
+            case Script.OP_ROT:
+                return executeRot();
+            case Script.OP_TUCK:
+                return executeTuck();
+            case Script.OP_PICK:
+                return executePick();
+            case Script.OP_ROLL:
+                return executeRoll();
+            case Script.OP_TOALTSTACK:
+                return executeToAltStack();
+            case Script.OP_FROMALTSTACK:
+                return executeFromAltStack();
+            case Script.OP_2DROP:
+                return execute2Drop();
+            case Script.OP_2DUP:
+                return execute2Dup();
+            case Script.OP_3DUP:
+                return execute3Dup();
+            case Script.OP_2OVER:
+                return execute2Over();
+            case Script.OP_2ROT:
+                return execute2Rot();
+            case Script.OP_2SWAP:
+                return execute2Swap();
+            case Script.OP_IFDUP:
+                return executeIfDup();
+            case Script.OP_DEPTH:
+                return executeDepth();
+            case Script.OP_NIP:
+                return executeNip();
+
+            // 位逻辑操作
+            case Script.OP_EQUAL:
+                return executeEqual();
+            case Script.OP_EQUALVERIFY:
+                if (executeEqual()) {
+                    byte[] result = pop();
+                    return castToBool(result);
+                }
+                return false;
+
+            // 数值操作
+            case Script.OP_1ADD:
+                return execute1Add();
+            case Script.OP_1SUB:
+                return execute1Sub();
+            case Script.OP_NEGATE:
+                return executeNegate();
+            case Script.OP_ABS:
+                return executeAbs();
+            case Script.OP_NOT:
+                return executeNot();
+            case Script.OP_0NOTEQUAL:
+                return execute0NotEqual();
+            case Script.OP_ADD:
+                return executeAdd();
+            case Script.OP_SUB:
+                return executeSub();
+            case Script.OP_MUL:
+                return executeMul();
+            case Script.OP_DIV:
+                return executeDiv();
+            case Script.OP_MOD:
+                return executeMod();
+            case Script.OP_LSHIFT:
+                return executeLShift();
+            case Script.OP_RSHIFT:
+                return executeRShift();
+            case Script.OP_BOOLAND:
+                return executeBoolAnd();
+            case Script.OP_BOOLOR:
+                return executeBoolOr();
+            case Script.OP_NUMEQUAL:
+                return executeNumEqual();
+            case Script.OP_NUMEQUALVERIFY:
+                if (executeNumEqual()) {
+                    byte[] result = pop();
+                    return castToBool(result);
+                }
+                return false;
+            case Script.OP_NUMNOTEQUAL:
+                return executeNumNotEqual();
+            case Script.OP_LESSTHAN:
+                return executeLessThan();
+            case Script.OP_GREATERTHAN:
+                return executeGreaterThan();
+            case Script.OP_LESSTHANOREQUAL:
+                return executeLessThanOrEqual();
+            case Script.OP_GREATERTHANOREQUAL:
+                return executeGreaterThanOrEqual();
+            case Script.OP_MIN:
+                return executeMin();
+            case Script.OP_MAX:
+                return executeMax();
+            case Script.OP_WITHIN:
+                return executeWithin();
+
+            // 加密操作
+            case Script.OP_RIPEMD160:
+                return executeRipemd160();
+            case Script.OP_SHA256:
+                return executeSha256();
+            case Script.OP_HASH160:
+                return executeHash160();
+            case Script.OP_HASH256:
+                return executeHash256();
+            case Script.OP_CHECKSIG:
+                return executeCheckSig(tx, inputIndex);
+            case Script.OP_CHECKSIGVERIFY:
+                if (executeCheckSig(tx, inputIndex)) {
+                    byte[] result = pop();
+                    return castToBool(result);
+                }
+                return false;
+            case Script.OP_CHECKMULTISIG:
+                return executeCheckMultiSig(tx, inputIndex);
+            case Script.OP_CHECKMULTISIGVERIFY:
+                if (executeCheckMultiSig(tx, inputIndex)) {
+                    byte[] result = pop();
+                    return castToBool(result);
+                }
+                return false;
+
+            // 其他操作
+            case Script.OP_SIZE:
+                return executeSize();
+            case Script.OP_CODESEPARATOR:
+                // 记录代码分隔位置
+                // 简化实现：记录当前cursor
+                break;
+            case Script.OP_CHECKLOCKTIMEVERIFY:
+                return executeCheckLockTimeVerify(tx, inputIndex);
+            case Script.OP_CHECKSEQUENCEVERIFY:
+                return executeCheckSequenceVerify(tx, inputIndex);
+
+            case Script.OP_NOP:
+                // 无操作
+                break;
+
+            default:
+                throw new ScriptExecutionException("不支持的操作码: 0x" +
+                        Integer.toHexString(opCode));
+        }
+
+        return true;
+    }
+
+    // ==================== 栈操作实现 ====================
+
+    private boolean executeDup() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_DUP");
+        }
+        byte[] top = stack.peek();
+        push(top.clone());
+        return true;
+    }
+
+    private boolean executeDrop() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_DROP");
+        }
+        pop();
+        return true;
+    }
+
+    private boolean executeSwap() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_SWAP");
+        }
+        byte[] x1 = pop();
+        byte[] x2 = pop();
+        push(x1);
+        push(x2);
+        return true;
+    }
+
+    private boolean executeOver() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_OVER");
+        }
+        byte[] x1 = pop();
+        byte[] x2 = stack.peek();
+        push(x1);
+        push(x2.clone());
+        return true;
+    }
+
+    private boolean executeRot() throws ScriptExecutionException {
+        if (stack.size() < 3) {
+            throw new ScriptExecutionException("栈下溢: OP_ROT");
+        }
+        // 栈结构：[A, B, C] (C是栈顶) → ROT后 → [B, C, A]
+        byte[] c = pop();  // 栈顶
+        byte[] b = pop();  // 次栈顶
+        byte[] a = pop();  // 第三层
+        push(c);
+        push(a);
+        push(b);
+        return true;
+    }
+
+    private boolean executeTuck() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_TUCK");
+        }
+        byte[] x1 = pop();
+        byte[] x2 = pop();
+        push(x1);
+        push(x2);
+        push(x1.clone());
+        return true;
+    }
+
+    private boolean executePick() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_PICK");
+        }
+        byte[] nBytes = pop();
+        int n = decodeNumber(nBytes).intValueExact();
+        if (n < 0 || stack.size() <= n) {
+            throw new ScriptExecutionException("无效的索引: OP_PICK");
+        }
+        Iterator<byte[]> iterator = stack.iterator();
+        byte[] element = null;
+        for (int i = 0; i <= n; i++) {
+            element = iterator.next();
+        }
+        push(element.clone());
+        return true;
+    }
+
+    private boolean executeRoll() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_ROLL");
+        }
+        byte[] nBytes = pop();
+        int n = decodeNumber(nBytes).intValueExact();
+        if (n < 0 || stack.size() <= n) {
+            throw new ScriptExecutionException("无效的索引: OP_ROLL");
+        }
+        if (n == 0) {
+            return true;  // 0表示复制栈顶
+        }
+        Iterator<byte[]> iterator = stack.iterator();
+        byte[] element = null;
+        for (int i = 0; i <= n; i++) {
+            element = iterator.next();
+        }
+        push(element.clone());
+        return true;
+    }
+
+    private boolean executeToAltStack() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_TOALTSTACK");
+        }
+        altStack.push(pop());
+        return true;
+    }
+
+    private boolean executeFromAltStack() throws ScriptExecutionException {
+        if (altStack.isEmpty()) {
+            throw new ScriptExecutionException("备用栈下溢: OP_FROMALTSTACK");
+        }
+        push(altStack.pop());
+        return true;
+    }
+
+    private boolean execute2Drop() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_2DROP");
+        }
+        pop();
+        pop();
+        return true;
+    }
+
+    private boolean execute2Dup() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_2DUP");
+        }
+        byte[] x1 = get(1);
+        byte[] x2 = get(0);
+        push(x2.clone());
+        push(x1.clone());
+        return true;
+    }
+
+    private boolean execute3Dup() throws ScriptExecutionException {
+        if (stack.size() < 3) {
+            throw new ScriptExecutionException("栈下溢: OP_3DUP");
+        }
+        byte[] x1 = get(2);
+        byte[] x2 = get(1);
+        byte[] x3 = get(0);
+        push(x3.clone());
+        push(x2.clone());
+        push(x1.clone());
+        return true;
+    }
+
+    private boolean execute2Over() throws ScriptExecutionException {
+        if (stack.size() < 4) {
+            throw new ScriptExecutionException("栈下溢: OP_2OVER");
+        }
+        byte[] x1 = get(3);
+        byte[] x2 = get(2);
+        push(x2.clone());
+        push(x1.clone());
+        return true;
+    }
+
+    private boolean execute2Rot() throws ScriptExecutionException {
+        if (stack.size() < 6) {
+            throw new ScriptExecutionException("栈下溢: OP_2ROT");
+        }
+        // 栈：[a,b,c,d,e,f] (f是栈顶) → 2ROT后 → [c,d,e,f,a,b]
+        byte[] f = pop();
+        byte[] e = pop();
+        byte[] d = pop();
+        byte[] c = pop();
+        byte[] b = pop();
+        byte[] a = pop();
+        push(d);
+        push(c);
+        push(f);
+        push(e);
+        push(b);
+        push(a);
+        return true;
+    }
+
+    private boolean execute2Swap() throws ScriptExecutionException {
+        if (stack.size() < 4) {
+            throw new ScriptExecutionException("栈下溢: OP_2SWAP");
+        }
+        byte[] x1 = pop();
+        byte[] x2 = pop();
+        byte[] x3 = pop();
+        byte[] x4 = pop();
+        push(x2);
+        push(x1);
+        push(x4);
+        push(x3);
+        return true;
+    }
+
+    private boolean executeIfDup() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_IFDUP");
+        }
+        byte[] top = stack.peek();
+        if (castToBool(top)) {
+            push(top.clone());
+        }
+        return true;
+    }
+
+    private boolean executeDepth() {
+        push(encodeNumber(stack.size()));
+        return true;
+    }
+
+    private boolean executeNip() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_NIP");
+        }
+        byte[] top = pop();
+        pop();
+        push(top);
+        return true;
+    }
+
+    // ==================== 位逻辑操作实现 ====================
+
+    private boolean executeEqual() throws ScriptExecutionException {
+        log.info("执行是否相等");
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_EQUAL");
+        }
+        byte[] x1 = pop();
+        byte[] x2 = pop();
+        push(encodeNumber(Arrays.equals(x1, x2) ? 1 : 0));
+        return true;
+    }
+
+    // ==================== 数值操作实现 ====================
+
+    private boolean execute1Add() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_1ADD");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.add(BigInteger.ONE)));
+        return true;
+    }
+
+    private boolean execute1Sub() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_1SUB");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.subtract(BigInteger.ONE)));
+        return true;
+    }
+
+    private boolean executeNegate() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_NEGATE");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.negate()));
+        return true;
+    }
+
+    private boolean executeAbs() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_ABS");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.abs()));
+        return true;
+    }
+
+    private boolean executeNot() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_NOT");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.equals(BigInteger.ZERO) ? 1 : 0));
+        return true;
+    }
+
+    private boolean execute0NotEqual() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_0NOTEQUAL");
+        }
+        byte[] num = pop();
+        BigInteger n = decodeNumber(num);
+        push(encodeNumber(n.equals(BigInteger.ZERO) ? 0 : 1));
+        return true;
+    }
+
+    private boolean executeAdd() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_ADD");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(a.add(b)));
+        return true;
+    }
+
+    private boolean executeSub() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_SUB");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(b.subtract(a)));
+        return true;
+    }
+
+    private boolean executeMul() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_MUL");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(a.multiply(b)));
+        return true;
+    }
+
+    private boolean executeDiv() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_DIV");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        if (a.equals(BigInteger.ZERO)) {
+            throw new ScriptExecutionException("除零错误: OP_DIV");
+        }
+        push(encodeNumber(b.divide(a)));
+        return true;
+    }
+
+    private boolean executeMod() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_MOD");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        if (a.equals(BigInteger.ZERO)) {
+            throw new ScriptExecutionException("模零错误: OP_MOD");
+        }
+        push(encodeNumber(b.mod(a.abs())));
+        return true;
+    }
+
+    private boolean executeLShift() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_LSHIFT");
+        }
+        byte[] shiftBytes = pop();
+        byte[] numBytes = pop();
+        BigInteger shift = decodeNumber(shiftBytes);
+        BigInteger num = decodeNumber(numBytes);
+        if (shift.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new ScriptExecutionException("移位过大: OP_LSHIFT");
+        }
+        push(encodeNumber(num.shiftLeft(shift.intValue())));
+        return true;
+    }
+
+    private boolean executeRShift() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_RSHIFT");
+        }
+        byte[] shiftBytes = pop();
+        byte[] numBytes = pop();
+        BigInteger shift = decodeNumber(shiftBytes);
+        BigInteger num = decodeNumber(numBytes);
+        if (shift.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new ScriptExecutionException("移位过大: OP_RSHIFT");
+        }
+        push(encodeNumber(num.shiftRight(shift.intValue())));
+        return true;
+    }
+
+    private boolean executeBoolAnd() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_BOOLAND");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        boolean a = castToBool(aBytes);
+        boolean b = castToBool(bBytes);
+        push(encodeNumber(a && b ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeBoolOr() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_BOOLOR");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        boolean a = castToBool(aBytes);
+        boolean b = castToBool(bBytes);
+        push(encodeNumber(a || b ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeNumEqual() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_NUMEQUAL");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(a.equals(b) ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeNumNotEqual() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_NUMNOTEQUAL");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(!a.equals(b) ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeLessThan() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_LESSTHAN");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(b.compareTo(a) < 0 ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeGreaterThan() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_GREATERTHAN");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(b.compareTo(a) > 0 ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeLessThanOrEqual() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_LESSTHANOREQUAL");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(b.compareTo(a) <= 0 ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeGreaterThanOrEqual() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_GREATERTHANOREQUAL");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(b.compareTo(a) >= 0 ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeMin() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_MIN");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(a.compareTo(b) < 0 ? a : b));
+        return true;
+    }
+
+    private boolean executeMax() throws ScriptExecutionException {
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_MAX");
+        }
+        byte[] aBytes = pop();
+        byte[] bBytes = pop();
+        BigInteger a = decodeNumber(aBytes);
+        BigInteger b = decodeNumber(bBytes);
+        push(encodeNumber(a.compareTo(b) > 0 ? a : b));
+        return true;
+    }
+
+    private boolean executeWithin() throws ScriptExecutionException {
+        if (stack.size() < 3) {
+            throw new ScriptExecutionException("栈下溢: OP_WITHIN");
+        }
+        byte[] maxBytes = pop();
+        byte[] minBytes = pop();
+        byte[] xBytes = pop();
+        BigInteger max = decodeNumber(maxBytes);
+        BigInteger min = decodeNumber(minBytes);
+        BigInteger x = decodeNumber(xBytes);
+        boolean result = x.compareTo(min) >= 0 && x.compareTo(max) < 0;
+        push(encodeNumber(result ? 1 : 0));
+        return true;
+    }
+
+    // ==================== 加密操作实现 ====================
+
+    private boolean executeRipemd160() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_RIPEMD160");
+        }
+        byte[] data = pop();
+        byte[] hash = Sha.applyRIPEMD160(data);
+        push(hash);
+        return true;
+    }
+
+    private boolean executeSha256() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_SHA256");
+        }
+        byte[] data = pop();
+        byte[] hash = Sha.applySHA256(data);
+        push(hash);
+        return true;
+    }
+
+    private boolean executeHash160() throws ScriptExecutionException {
+        log.info("对值进行Hash160");
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_HASH160");
+        }
+        byte[] data = pop();
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(data));
+        push(hash);
+        return true;
+    }
+
+    private boolean executeHash256() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_HASH256");
+        }
+        byte[] data = pop();
+        byte[] hash = Sha.applySHA256(data);
+        push(hash);
+        return true;
+    }
+
+    private boolean executeSize() throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_SIZE");
+        }
+        byte[] data = stack.peek();
+        push(encodeNumber(data.length));
+        return true;
+    }
+
+    private boolean executeCheckSig(Transaction tx, int inputIndex) throws ScriptExecutionException {
+        log.info("检查签名");
+        if (stack.size() < 2) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKSIG");
+        }
+        // 弹出公钥和签名
+        byte[] pubKeyBytes = pop();//[32字节]
+        byte[] signatureBytes = pop();//[64字节][1字节类型]
+        log.info("弹出公钥{} 长度{}",bytesToHex(pubKeyBytes),pubKeyBytes.length);
+        log.info("弹出签名{} 长度{}",bytesToHex(signatureBytes),signatureBytes.length);
+        try {
+            byte[] signature = Arrays.copyOfRange(signatureBytes, 0, signatureBytes.length - 1);
+            log.info("签名{} 长度{}",bytesToHex(signature),signature.length);
+            //签名类型
+            byte signatureType = signatureBytes[signatureBytes.length - 1];
+            log.info("签名类型{}",signatureType);
+
+            // 计算签名哈希
+            byte[] sigHashBytes = tx.calculateSigHash(inputIndex,signatureType);
+
+            // 验证签名
+            boolean result = Ed25519Signer.fastVerify(pubKeyBytes,sigHashBytes, signature);
+            push(encodeNumber(result ? 1 : 0));
+            return true;
+        } catch (Exception e) {
+            log.error("签名验证失败: ", e);
+            push(encodeNumber(0));
+            return true;  // 验证失败但不终止执行
+        }
+    }
+
+    private boolean executeCheckMultiSig(Transaction tx, int inputIndex) throws ScriptExecutionException {
+        log.info("执行多签（支持乱序匹配版本）");
+        // ========== 步骤1: 弹出总公钥数量 n (OP_n) ==========
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 缺少总公钥数量n");
+        }
+        byte[] nBytes = pop();
+        int n = decodeNumber(nBytes).intValueExact();
+        log.info("读取总公钥数量n: {}", n);
+
+        // 校验n的合法范围（比特币规范0-20）
+        if (n < 0 || n > 20) {
+            throw new ScriptExecutionException("总公钥数量无效: " + n + " (合法范围0-20)");
+        }
+
+        // ========== 步骤2: 弹出 n 个公钥（栈是LIFO，弹出顺序是pubn→pub1，需反转） ==========
+        List<byte[]> pubKeys = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (stack.isEmpty()) {
+                throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 公钥数量不足，预期" + n + "个，已读取" + i + "个");
+            }
+            pubKeys.add(pop());
+            //打印公钥
+            log.info("读取公钥{} 长度{}", bytesToHex(pubKeys.get(i)), pubKeys.get(i).length);
+        }
+
+        // ========== 步骤3: 弹出需要的签名数量 m (OP_m) ==========
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 缺少需要的签名数量m");
+        }
+        byte[] mBytes = pop();
+        int m = decodeNumber(mBytes).intValueExact();
+        log.info("读取需要的签名数量m: {}", m);
+
+        // 校验m的合法性
+        if (m < 0 || m > n || m > 20) {
+            throw new ScriptExecutionException(
+                    String.format("签名数量无效: m=%d (需满足 0≤m≤n=%d 且 m≤20)", m, n)
+            );
+        }
+
+        // ========== 步骤4: 弹出 m 个签名（栈是LIFO，弹出顺序是sigm→sig1，需反转） ==========
+        List<byte[]> signatures = new ArrayList<>();
+        for (int i = 0; i < m; i++) {
+            if (stack.isEmpty()) {
+                throw new ScriptExecutionException("栈下溢: OP_CHECKMULTISIG - 签名数量不足，预期" + m + "个，已读取" + i + "个");
+            }
+            signatures.add(pop());
+            //打印签名
+            log.info("读取签名{} 长度{}", bytesToHex(signatures.get(i)), signatures.get(i).length);
+        }
+
+        // ========== 步骤5: 签名验证核心逻辑（支持乱序匹配） ==========
+        int successCount = 0;
+        // 记录已使用的公钥索引，避免一个公钥验证多个签名
+        boolean[] usedPubKeys = new boolean[n];
+
+        // 遍历每个签名，尝试为每个签名找到一个未使用的匹配公钥
+        for (int sigIdx = 0; sigIdx < m; sigIdx++) {
+            byte[] sigBytes = signatures.get(sigIdx);
+            boolean sigMatched = false; // 标记当前签名是否找到匹配的公钥
+
+            // 遍历所有未使用的公钥，寻找匹配
+            for (int pubIdx = 0; pubIdx < n; pubIdx++) {
+                if (usedPubKeys[pubIdx]) {
+                    continue; // 跳过已使用的公钥，避免重复验证
+                }
+
+                byte[] pubKey = pubKeys.get(pubIdx);
+                log.debug("验证签名{} vs 公钥{} (未使用)", sigIdx + 1, pubIdx + 1);
+
+                try {
+                    // 分离签名内容和哈希类型（最后1字节是SIGHASH类型）
+                    if (sigBytes.length < 1) {
+                        log.debug("签名{}为空，跳过匹配公钥{}", sigIdx + 1, pubIdx + 1);
+                        continue;
+                    }
+                    byte[] signature = Arrays.copyOfRange(sigBytes, 0, sigBytes.length - 1);
+                    byte sigHashType = sigBytes[sigBytes.length - 1];
+                    log.debug("签名{}哈希类型: 0x{}", sigIdx + 1, Integer.toHexString(sigHashType));
+
+                    // 计算签名哈希（交易的签名摘要）
+                    byte[] sigHash = tx.calculateSigHash(inputIndex,sigHashType);
+                    log.info("签名数据{}",bytesToHex(sigHash));
+
+                    // Ed25519签名验证
+                    if (Ed25519Signer.fastVerify(pubKey, sigHash, signature)) {
+                        successCount++;
+                        usedPubKeys[pubIdx] = true; // 标记该公钥已使用
+                        sigMatched = true;
+                        log.debug("签名{}与公钥{}匹配成功，已验证{}个签名", sigIdx + 1, pubIdx + 1, successCount);
+                        break; // 找到匹配的公钥，无需继续遍历其他公钥
+                    }
+                } catch (Exception e) {
+                    log.warn("签名{}验证公钥{}时异常: {}", sigIdx + 1, pubIdx + 1, e.getMessage());
+                }
+            }
+
+            // 如果当前签名没有找到任何匹配的公钥，直接终止后续验证（无法满足m个签名要求）
+            if (!sigMatched) {
+                log.debug("签名{}未找到匹配的公钥，多签验证提前终止", sigIdx + 1);
+                break;
+            }
+        }
+
+        // ========== 步骤6: 验证结果判断 & 入栈 ==========
+        boolean verifyResult = successCount == m;
+        push(encodeNumber(verifyResult ? 1 : 0));
+        log.info("多签验证完成 - 成功验证{}个签名 / 需要{}个签名 → 结果: {}", successCount, m, verifyResult ? "通过" : "失败");
+
+        return true;
+    }
+
+    // ==================== 流程控制实现 ====================
+
+    private boolean executeIf(int opCode) throws ScriptExecutionException {
+        if (!exec) {
+            // 当前不执行，跳过整个块
+            conditionStack.push(false);
+            return true;
+        }
+
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_IF/OP_NOTIF");
+        }
+
+        byte[] condition = pop();
+        boolean result = castToBool(condition);
+        if (opCode == Script.OP_NOTIF) {
+            result = !result;
+        }
+
+        conditionStack.push(result);
+        exec = result;
+        return true;
+    }
+
+    private boolean executeElse() {
+        if (conditionStack.isEmpty()) {
+            return false;  // OP_ELSE没有对应的OP_IF
+        }
+
+        boolean lastCondition = conditionStack.pop();
+        boolean newCondition = !lastCondition && exec;
+        conditionStack.push(newCondition);
+        exec = newCondition;
+        return true;
+    }
+
+    private boolean executeEndif() {
+        if (conditionStack.isEmpty()) {
+            return false;  // OP_ENDIF没有对应的OP_IF
+        }
+
+        conditionStack.pop();
+        if (conditionStack.isEmpty()) {
+            exec = true;  // 回到顶层
+        } else {
+            // 恢复上一层的执行状态
+            exec = conditionStack.peek();
+        }
+        return true;
+    }
+
+    // ==================== 时间锁定实现 ====================
+
+    private boolean executeCheckLockTimeVerify(Transaction tx, int inputIndex)
+            throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKLOCKTIMEVERIFY");
+        }
+
+        byte[] lockTimeBytes = pop();
+        long lockTime = decodeNumber(lockTimeBytes).longValueExact();
+
+        // 获取交易锁定时间
+        long txLockTime = tx.getLockTime();
+
+        // 检查锁定时间
+        boolean result = verifyLockTime(txLockTime, lockTime, tx.getInputs().get(inputIndex));
+        push(encodeNumber(result ? 1 : 0));
+        return true;
+    }
+
+    private boolean executeCheckSequenceVerify(Transaction tx, int inputIndex)
+            throws ScriptExecutionException {
+        if (stack.isEmpty()) {
+            throw new ScriptExecutionException("栈下溢: OP_CHECKSEQUENCEVERIFY");
+        }
+
+        byte[] sequenceBytes = pop();
+        long sequence = decodeNumber(sequenceBytes).longValueExact();
+
+        // 获取输入序列号
+        long inputSequence = tx.getInputs().get(inputIndex).getSequence();
+
+        // 检查序列号
+        boolean result = verifySequence(inputSequence, sequence);
+        push(encodeNumber(result ? 1 : 0));
+        return true;
+    }
+
+    // ==================== 工具方法 ====================
+
+    private void push(byte[] data) {
+        stack.push(data);
+    }
+
+    private byte[] pop() {
+        return stack.pop();
+    }
+
+    private byte[] get(int index) {
+        Iterator<byte[]> iterator = stack.iterator();
+        for (int i = 0; i < index; i++) {
+            iterator.next();
+        }
+        return iterator.next();
+    }
+
+    private static boolean castToBool(byte[] data) {
+        if (data == null || data.length == 0) {
+            return false;
+        }
+        for (int i = 0; i < data.length; i++) {
+            if (data[i] != 0) {
+                if (i == data.length - 1 && data[i] == 0x80) {
+                    return false;  // 负零
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static byte[] encodeNumber(long n) {
+        return encodeNumber(BigInteger.valueOf(n));
+    }
+
+    private static byte[] encodeNumber(BigInteger n) {
+        if (n.equals(BigInteger.ZERO)) {
+            return new byte[0];
+        }
+
+        boolean negative = n.compareTo(BigInteger.ZERO) < 0;
+        BigInteger absN = n.abs();
+
+        // 转换为小端字节数组
+        byte[] bytes = absN.toByteArray();
+        ByteBuffer buffer = ByteBuffer.allocate(bytes.length + 1)
+                .order(ByteOrder.LITTLE_ENDIAN);
+
+        // 反转字节序
+        for (int i = bytes.length - 1; i >= 0; i--) {
+            buffer.put(bytes[i]);
+        }
+
+        // 添加符号位
+        if ((buffer.get(buffer.position() - 1) & 0x80) != 0) {
+            buffer.put((byte)(negative ? 0x80 : 0x00));
+        } else if (negative) {
+            buffer.put(buffer.position() - 1, (byte)(buffer.get(buffer.position() - 1) | 0x80));
+        }
+
+        byte[] result = new byte[buffer.position()];
+        buffer.rewind();
+        buffer.get(result);
+        return result;
+    }
+
+    private static BigInteger decodeNumber(byte[] data) {
+        if (data == null || data.length == 0) {
+            return BigInteger.ZERO;
+        }
+
+        // 复制并反转字节序
+        byte[] reversed = new byte[data.length];
+        for (int i = 0; i < data.length; i++) {
+            reversed[data.length - 1 - i] = data[i];
+        }
+
+        // 检查符号位
+        boolean negative = (reversed[0] & 0x80) != 0;
+        if (negative) {
+            reversed[0] &= 0x7F;  // 清除符号位
+        }
+
+        BigInteger result = new BigInteger(1, reversed);
+        if (negative) {
+            result = result.negate();
+        }
+
+        return result;
+    }
+
+    private static boolean isConditionalOp(Script.ScriptElement element) {
+        if (!element.isOpCode()) {
+            return false;
+        }
+        int opCode = element.getOpCode();
+        return opCode == Script.OP_IF ||
+                opCode == Script.OP_NOTIF ||
+                opCode == Script.OP_ELSE ||
+                opCode == Script.OP_ENDIF;
+    }
+
+    private boolean verifyLockTime(long txLockTime, long lockTime, TxInput input) {
+        // 实现锁定时间验证逻辑
+        // 这里简化实现，实际需要检查锁定时间类型和序列号
+        return txLockTime >= lockTime;
+    }
+
+    private boolean verifySequence(long inputSequence, long sequence) {
+        // 实现序列号验证逻辑
+        // 这里简化实现
+        return (inputSequence & 0xFFFF) >= (sequence & 0xFFFF);
+    }
+
+    // ==================== 公共方法 ====================
+
+
+    /**
+     * 合并解锁脚本和锁定脚本
+     */
+    public static Script combineScripts(Script unlockingScript, Script lockingScript) {
+        List<Script.ScriptElement> combined = new ArrayList<>();
+        combined.addAll(unlockingScript.getElements());
+        combined.addAll(lockingScript.getElements());
+        return new Script(combined);
+    }
+
+    /**
+     * 获取栈内容（用于调试）
+     */
+    public List<byte[]> getStack() {
+        return new ArrayList<>(stack);
+    }
+
+    /**
+     * 获取备用栈内容（用于调试）
+     */
+    public List<byte[]> getAltStack() {
+        return new ArrayList<>(altStack);
+    }
+
+    public boolean isVerified() {
+        return verified;
+    }
+
+
+    public static void main(String[] args) {
+        try {
+            log.info("===== 开始全量脚本指令测试 =====");
+
+            // ========== 测试1: 基础栈操作指令 ==========
+            log.info("\n===== 测试1: 基础栈操作指令 =====");
+            testStackOperations();
+
+            // ========== 测试2: 数值操作指令 ==========
+            log.info("\n===== 测试2: 数值操作指令 =====");
+            testNumericOperations();
+
+            // ========== 测试3: 逻辑操作指令 ==========
+            log.info("\n===== 测试3: 逻辑操作指令 =====");
+            testLogicalOperations();
+
+            // ========== 测试4: 加密哈希操作指令 ==========
+            log.info("\n===== 测试4: 加密哈希操作指令 =====");
+            testCryptoOperations();
+
+            // ========== 测试5: 条件控制指令 ==========
+            log.info("\n===== 测试5: 条件控制指令 =====");
+            testConditionalOperations();
+
+            // ========== 测试6: 特殊指令 ==========
+            log.info("\n===== 测试6: 特殊指令（SIZE/NOT/0NOTEQUAL） =====");
+            testSpecialOperations();
+
+
+
+            // ========== 测试8: 边界情况（栈下溢/无效操作码） ==========
+            log.info("\n===== 测试8: 边界情况测试 =====");
+            testEdgeCases();
+
+            log.info("\n===== 所有测试完成 =====");
+
+        } catch (Exception e) {
+            log.error("测试过程出错: ", e);
+        }
+    }
+
+    /**
+     * 修复：基础栈操作指令测试（增加容错、修正栈顺序理解）
+     * OP_DUP/OP_SWAP/OP_OVER/OP_ROT/OP_2DUP/OP_2SWAP/OP_DROP等
+     */
+    private static void testStackOperations() throws IOException {
+        // 1. OP_DUP 测试（增加容错，先判断栈大小）
+        Script dupScript = new Script();
+        dupScript.addData(hexToBytes("010203"));  // 压入数据
+        dupScript.addOpCode(Script.OP_DUP);       // 复制栈顶
+        ScriptExecutor executor = new ScriptExecutor();
+        boolean result = executor.execute(dupScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        log.info("OP_DUP测试 - 执行结果: {} | 栈大小: {} | 预期栈大小: 2",
+                result, stack.size(), 2);
+
+        // 修复：先判断栈大小，再访问元素，避免越界
+        if (stack.size() >= 2) {
+            log.info("OP_DUP栈内容 - 栈顶1: {} | 栈顶2: {}",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)));
+        } else {
+            log.warn("OP_DUP栈大小异常，实际: {}，预期: 2", stack.size());
+            // 打印现有栈内容（便于调试）
+            for (int i = 0; i < stack.size(); i++) {
+                log.info("异常栈内容[{}]: {}", i, bytesToHex(stack.get(i)));
+            }
+        }
+
+        // 2. OP_SWAP 测试（增加容错）
+        Script swapScript = new Script();
+        swapScript.addData(hexToBytes("01"));
+        swapScript.addData(hexToBytes("02"));
+        swapScript.addOpCode(Script.OP_SWAP);
+        executor = new ScriptExecutor();
+        executor.execute(swapScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_SWAP测试 - 栈大小: {} | 预期: 2", stack.size(), 2);
+        if (stack.size() >= 2) {
+            log.info("OP_SWAP栈内容 - 栈顶1: {} | 栈顶2: {} | 预期: 01 02",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)));
+        } else {
+            log.warn("OP_SWAP栈大小异常，实际: {}", stack.size());
+        }
+
+        // 3. OP_2DUP 测试（增加容错）
+        Script twoDupScript = new Script();
+        twoDupScript.addData(hexToBytes("01"));
+        twoDupScript.addData(hexToBytes("02"));
+        twoDupScript.addOpCode(Script.OP_2DUP);
+        executor = new ScriptExecutor();
+        executor.execute(twoDupScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_2DUP测试 - 栈大小: {} | 预期: 4", stack.size(), 4);
+        if (stack.size() >= 4) {
+            log.info("OP_2DUP栈内容 - {} {} {} {}",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)),
+                    bytesToHex(stack.get(2)), bytesToHex(stack.get(3)));
+        }
+
+        // 4. OP_ROT 测试（增加容错）
+        Script rotScript = new Script();
+        rotScript.addData(hexToBytes("01"));
+        rotScript.addData(hexToBytes("02"));
+        rotScript.addData(hexToBytes("03"));
+        rotScript.addOpCode(Script.OP_ROT);
+        executor = new ScriptExecutor();
+        executor.execute(rotScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_ROT测试 - 栈大小: {} | 预期: 3", stack.size(), 3);
+        if (stack.size() >= 3) {
+            log.info("OP_ROT栈内容 - {} {} {} | 预期: 03 01 02",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)), bytesToHex(stack.get(2)));
+        }
+    }
+
+    /**
+     * 数值操作指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testNumericOperations() throws IOException {
+        // 1. OP_1ADD 测试（5+1=6）
+        Script oneAddScript = new Script();
+        oneAddScript.addInteger(BigInteger.valueOf(5));
+        oneAddScript.addOpCode(Script.OP_1ADD);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(oneAddScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        BigInteger result = decodeNumber(stack.get(0));
+        log.info("OP_1ADD测试 - 结果: {} | 预期: 6", result, 6);
+
+        // 2. OP_ADD 测试（3+5=8）
+        Script addScript = new Script();
+        addScript.addInteger(BigInteger.valueOf(3));
+        addScript.addInteger(BigInteger.valueOf(5));
+        addScript.addOpCode(Script.OP_ADD);
+        executor = new ScriptExecutor();
+        executor.execute(addScript, null, 0);
+        stack = executor.getStack();
+        result = decodeNumber(stack.get(0));
+        log.info("OP_ADD测试 - 结果: {} | 预期: 8", result, 8);
+
+        // 3. OP_NUMEQUAL 测试（10==10 → true）
+        Script numEqualScript = new Script();
+        numEqualScript.addInteger(BigInteger.valueOf(10));
+        numEqualScript.addInteger(BigInteger.valueOf(10));
+        numEqualScript.addOpCode(Script.OP_NUMEQUAL);
+        executor = new ScriptExecutor();
+        executor.execute(numEqualScript, null, 0);
+        stack = executor.getStack();
+        boolean equalResult = castToBool(stack.get(0));
+        log.info("OP_NUMEQUAL测试 - 结果: {} | 预期: true", equalResult, true);
+
+        // 4. OP_LESSTHAN 测试（5<10 → true）
+        Script lessThanScript = new Script();
+        lessThanScript.addInteger(BigInteger.valueOf(5));
+        lessThanScript.addInteger(BigInteger.valueOf(10));
+        lessThanScript.addOpCode(Script.OP_LESSTHAN);
+        executor = new ScriptExecutor();
+        executor.execute(lessThanScript, null, 0);
+        stack = executor.getStack();
+        boolean lessResult = castToBool(stack.get(0));
+        log.info("OP_LESSTHAN测试 - 结果: {} | 预期: true", lessResult, true);
+    }
+
+    /**
+     * 逻辑操作指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testLogicalOperations() throws IOException {
+        // 1. OP_EQUAL 测试（相同数据）
+        Script equalScript = new Script();
+        equalScript.addData(hexToBytes("a1b2c3"));
+        equalScript.addData(hexToBytes("a1b2c3"));
+        equalScript.addOpCode(Script.OP_EQUAL);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(equalScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        boolean result = castToBool(stack.get(0));
+        log.info("OP_EQUAL测试（相同） - 结果: {} | 预期: true", result, true);
+
+        // 2. OP_EQUAL 测试（不同数据）
+        equalScript = new Script();
+        equalScript.addData(hexToBytes("a1b2c3"));
+        equalScript.addData(hexToBytes("d4e5f6"));
+        equalScript.addOpCode(Script.OP_EQUAL);
+        executor = new ScriptExecutor();
+        executor.execute(equalScript, null, 0);
+        stack = executor.getStack();
+        result = castToBool(stack.get(0));
+        log.info("OP_EQUAL测试（不同） - 结果: {} | 预期: false", result, false);
+
+        // 3. OP_BOOLAND 测试（true && true → true）
+        Script boolAndScript = new Script();
+        boolAndScript.addInteger(BigInteger.ONE);
+        boolAndScript.addInteger(BigInteger.ONE);
+        boolAndScript.addOpCode(Script.OP_BOOLAND);
+        executor = new ScriptExecutor();
+        executor.execute(boolAndScript, null, 0);
+        stack = executor.getStack();
+        result = castToBool(stack.get(0));
+        log.info("OP_BOOLAND测试 - 结果: {} | 预期: true", result, true);
+
+        // 4. OP_BOOLOR 测试（true || false → true）
+        Script boolOrScript = new Script();
+        boolOrScript.addInteger(BigInteger.ONE);
+        boolOrScript.addInteger(BigInteger.ZERO);
+        boolOrScript.addOpCode(Script.OP_BOOLOR);
+        executor = new ScriptExecutor();
+        executor.execute(boolOrScript, null, 0);
+        stack = executor.getStack();
+        result = castToBool(stack.get(0));
+        log.info("OP_BOOLOR测试 - 结果: {} | 预期: true", result, true);
+    }
+
+    /**
+     * 加密哈希操作指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testCryptoOperations() throws IOException {
+        byte[] testData = hexToBytes("hello world");
+
+        // 1. OP_SHA256 测试
+        Script sha256Script = new Script();
+        sha256Script.addData(testData);
+        sha256Script.addOpCode(Script.OP_SHA256);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(sha256Script, null, 0);
+        List<byte[]> stack = executor.getStack();
+        String sha256Result = bytesToHex(stack.get(0));
+        log.info("OP_SHA256测试 - 结果: {} | 预期长度: 64", sha256Result, 64);
+
+        // 2. OP_HASH160 测试
+        Script hash160Script = new Script();
+        hash160Script.addData(testData);
+        hash160Script.addOpCode(Script.OP_HASH160);
+        executor = new ScriptExecutor();
+        executor.execute(hash160Script, null, 0);
+        stack = executor.getStack();
+        String hash160Result = bytesToHex(stack.get(0));
+        log.info("OP_HASH160测试 - 结果: {} | 预期长度: 40", hash160Result, 40);
+
+        // 3. OP_RIPEMD160 测试
+        Script ripemd160Script = new Script();
+        ripemd160Script.addData(testData);
+        ripemd160Script.addOpCode(Script.OP_RIPEMD160);
+        executor = new ScriptExecutor();
+        executor.execute(ripemd160Script, null, 0);
+        stack = executor.getStack();
+        String ripemd160Result = bytesToHex(stack.get(0));
+        log.info("OP_RIPEMD160测试 - 结果: {} | 预期长度: 40", ripemd160Result, 40);
+    }
+
+    /**
+     * 条件控制指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testConditionalOperations() throws IOException {
+        // 1. OP_IF 真分支测试
+        Script ifTrueScript = new Script();
+        ifTrueScript.addInteger(BigInteger.ONE);  // 条件为true
+        ifTrueScript.addOpCode(Script.OP_IF);
+        ifTrueScript.addInteger(BigInteger.valueOf(100));  // 执行真分支
+        ifTrueScript.addOpCode(Script.OP_ENDIF);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(ifTrueScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        BigInteger result = decodeNumber(stack.get(0));
+        log.info("OP_IF真分支测试 - 结果: {} | 预期: 100", result, 100);
+
+        // 2. OP_IF+OP_ELSE 假分支测试
+        Script ifFalseScript = new Script();
+        ifFalseScript.addInteger(BigInteger.ZERO);  // 条件为false
+        ifFalseScript.addOpCode(Script.OP_IF);
+        ifFalseScript.addInteger(BigInteger.valueOf(100));  // 不执行
+        ifFalseScript.addOpCode(Script.OP_ELSE);
+        ifFalseScript.addInteger(BigInteger.valueOf(200));  // 执行假分支
+        ifFalseScript.addOpCode(Script.OP_ENDIF);
+        executor = new ScriptExecutor();
+        executor.execute(ifFalseScript, null, 0);
+        stack = executor.getStack();
+        result = decodeNumber(stack.get(0));
+        log.info("OP_IF假分支测试 - 结果: {} | 预期: 200", result, 200);
+    }
+
+    /**
+     * 特殊指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testSpecialOperations() throws IOException {
+        byte[] testData = hexToBytes("a1b2c3d4");
+
+        // 1. OP_SIZE 测试（数据长度4）
+        Script sizeScript = new Script();
+        sizeScript.addData(testData);
+        sizeScript.addOpCode(Script.OP_SIZE);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(sizeScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        BigInteger result = decodeNumber(stack.get(0));
+        log.info("OP_SIZE测试 - 结果: {} | 预期: 4", result, 4);
+
+        // 2. OP_NOT 测试（非0 → 0）
+        Script notScript = new Script();
+        notScript.addInteger(BigInteger.valueOf(5));
+        notScript.addOpCode(Script.OP_NOT);
+        executor = new ScriptExecutor();
+        executor.execute(notScript, null, 0);
+        stack = executor.getStack();
+        result = decodeNumber(stack.get(0));
+        log.info("OP_NOT测试（非0） - 结果: {} | 预期: 0", result, 0);
+
+        // 3. OP_0NOTEQUAL 测试（0 → false）
+        Script zeroNotEqualScript = new Script();
+        zeroNotEqualScript.addInteger(BigInteger.ZERO);
+        zeroNotEqualScript.addOpCode(Script.OP_0NOTEQUAL);
+        executor = new ScriptExecutor();
+        executor.execute(zeroNotEqualScript, null, 0);
+        stack = executor.getStack();
+        boolean boolResult = castToBool(stack.get(0));
+        log.info("OP_0NOTEQUAL测试（0） - 结果: {} | 预期: false", boolResult, false);
+    }
+
+
+    /**
+     * 边界情况测试（无越界问题，保留原逻辑）
+     */
+    private static void testEdgeCases() throws IOException {
+        // 1. OP_DUP 栈下溢测试（预期失败）
+        Script dupUnderflowScript = new Script();
+        dupUnderflowScript.addOpCode(Script.OP_DUP);  // 空栈执行DUP
+        ScriptExecutor executor = new ScriptExecutor();
+        boolean result = executor.execute(dupUnderflowScript, null, 0);
+        log.info("OP_DUP栈下溢测试 - 结果: {} | 预期: false", result, false);
+
+        // 2. 无效操作码测试（预期失败）
+        Script invalidOpScript = new Script();
+        invalidOpScript.addOpCode(0xFF);  // 无效操作码
+        executor = new ScriptExecutor();
+        result = executor.execute(invalidOpScript, null, 0);
+        log.info("无效操作码测试 - 结果: {} | 预期: false", result, false);
+
+        // 3. OP_RETURN 测试（立即失败）
+        Script returnScript = new Script();
+        returnScript.addOpCode(Script.OP_RETURN);
+        executor = new ScriptExecutor();
+        result = executor.execute(returnScript, null, 0);
+        log.info("OP_RETURN测试 - 结果: {} | 预期: false", result, false);
+    }
+
+
+
+    private static void testStackOperations() throws IOException {
+        // 1. OP_DUP 测试（增加容错，先判断栈大小）
+        Script dupScript = new Script();
+        dupScript.addData(hexToBytes("010203"));  // 压入数据
+        dupScript.addOpCode(Script.OP_DUP);       // 复制栈顶
+        ScriptExecutor executor = new ScriptExecutor();
+        boolean result = executor.execute(dupScript, null, 0);
+        List<byte[]> stack = executor.getStack();
+        log.info("OP_DUP测试 - 执行结果: {} | 栈大小: {} | 预期栈大小: 2",
+                result, stack.size(), 2);
+
+        // 修复：先判断栈大小，再访问元素，避免越界
+        if (stack.size() >= 2) {
+            log.info("OP_DUP栈内容 - 栈顶1: {} | 栈顶2: {}",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)));
+        } else {
+            log.warn("OP_DUP栈大小异常，实际: {}，预期: 2", stack.size());
+            // 打印现有栈内容（便于调试）
+            for (int i = 0; i < stack.size(); i++) {
+                log.info("异常栈内容[{}]: {}", i, bytesToHex(stack.get(i)));
+            }
+        }
+
+        // 2. OP_SWAP 测试（增加容错）
+        Script swapScript = new Script();
+        swapScript.addData(hexToBytes("01"));
+        swapScript.addData(hexToBytes("02"));
+        swapScript.addOpCode(Script.OP_SWAP);
+        executor = new ScriptExecutor();
+        executor.execute(swapScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_SWAP测试 - 栈大小: {} | 预期: 2", stack.size(), 2);
+        if (stack.size() >= 2) {
+            log.info("OP_SWAP栈内容 - 栈顶1: {} | 栈顶2: {} | 预期: 01 02",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)));
+        } else {
+            log.warn("OP_SWAP栈大小异常，实际: {}", stack.size());
+        }
+
+        // 3. OP_2DUP 测试（增加容错）
+        Script twoDupScript = new Script();
+        twoDupScript.addData(hexToBytes("01"));
+        twoDupScript.addData(hexToBytes("02"));
+        twoDupScript.addOpCode(Script.OP_2DUP);
+        executor = new ScriptExecutor();
+        executor.execute(twoDupScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_2DUP测试 - 栈大小: {} | 预期: 4", stack.size(), 4);
+        if (stack.size() >= 4) {
+            log.info("OP_2DUP栈内容 - {} {} {} {}",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)),
+                    bytesToHex(stack.get(2)), bytesToHex(stack.get(3)));
+        }
+
+        // 4. OP_ROT 测试（增加容错）
+        Script rotScript = new Script();
+        rotScript.addData(hexToBytes("01"));
+        rotScript.addData(hexToBytes("02"));
+        rotScript.addData(hexToBytes("03"));
+        rotScript.addOpCode(Script.OP_ROT);
+        executor = new ScriptExecutor();
+        executor.execute(rotScript, null, 0);
+        stack = executor.getStack();
+        log.info("OP_ROT测试 - 栈大小: {} | 预期: 3", stack.size(), 3);
+        if (stack.size() >= 3) {
+            log.info("OP_ROT栈内容 - {} {} {} | 预期: 02 03 01",
+                    bytesToHex(stack.get(0)), bytesToHex(stack.get(1)), bytesToHex(stack.get(2)));
+        }
+    }
+
+        /**
+         * 数值操作指令测试（增加鲁棒性，修复越界问题）
+         */
+        private static void testNumericOperations() throws IOException {
+            // 1. OP_1ADD 测试（5+1=6）
+            Script oneAddScript = new Script();
+            oneAddScript.addInteger(BigInteger.valueOf(5));
+            oneAddScript.addOpCode(Script.OP_1ADD);
+            ScriptExecutor executor = new ScriptExecutor();
+            boolean executeResult = executor.execute(oneAddScript, null, 0);
+            List<byte[]> stack = executor.getStack();
+
+            // 增加判空逻辑
+            if (!executeResult || stack.isEmpty()) {
+                log.error("OP_1ADD测试执行失败，栈为空");
+            } else {
+                BigInteger result = decodeNumber(stack.get(0));
+                log.info("OP_1ADD测试 - 结果: {} | 预期: 6", result, 6);
+            }
+
+            // 2. OP_ADD 测试（3+5=8）
+            Script addScript = new Script();
+            addScript.addInteger(BigInteger.valueOf(3));
+            addScript.addInteger(BigInteger.valueOf(5));
+            addScript.addOpCode(Script.OP_ADD);
+            executor = new ScriptExecutor();
+            executeResult = executor.execute(addScript, null, 0);
+            stack = executor.getStack();
+            if (!executeResult || stack.isEmpty()) {
+                log.error("OP_ADD测试执行失败，栈为空");
+            } else {
+                BigInteger result = decodeNumber(stack.get(0));
+                log.info("OP_ADD测试 - 结果: {} | 预期: 8", result, 8);
+            }
+
+            // 3. OP_NUMEQUAL 测试（10==10 → true）
+            Script numEqualScript = new Script();
+            numEqualScript.addInteger(BigInteger.valueOf(10));
+            numEqualScript.addInteger(BigInteger.valueOf(10));
+            numEqualScript.addOpCode(Script.OP_NUMEQUAL);
+            executor = new ScriptExecutor();
+            executeResult = executor.execute(numEqualScript, null, 0);
+            stack = executor.getStack();
+            if (!executeResult || stack.isEmpty()) {
+                log.error("OP_NUMEQUAL测试执行失败，栈为空");
+            } else {
+                boolean equalResult = castToBool(stack.get(0));
+                log.info("OP_NUMEQUAL测试 - 结果: {} | 预期: true", equalResult, true);
+            }
+
+            // 4. OP_LESSTHAN 测试（5<10 → true）
+            Script lessThanScript = new Script();
+            lessThanScript.addInteger(BigInteger.valueOf(5));
+            lessThanScript.addInteger(BigInteger.valueOf(10));
+            lessThanScript.addOpCode(Script.OP_LESSTHAN);
+            executor = new ScriptExecutor();
+            executeResult = executor.execute(lessThanScript, null, 0);
+            stack = executor.getStack();
+            if (!executeResult || stack.isEmpty()) {
+                log.error("OP_LESSTHAN测试执行失败，栈为空");
+            } else {
+                boolean lessResult = castToBool(stack.get(0));
+                log.info("OP_LESSTHAN测试 - 结果: {} | 预期: true", lessResult, true);
+            }
+        }
+
+    /**
+     * 加密哈希操作指令测试（无越界问题，保留原逻辑）
+     */
+    private static void testCryptoOperations() throws IOException {
+        String hexStr = bytesToHex("hello world".getBytes(StandardCharsets.UTF_8));
+        byte[] testData = hexToBytes(hexStr); // 此时 hexStr 是偶数长度的十六进制字符串
+
+        // 1. OP_SHA256 测试
+        Script sha256Script = new Script();
+        sha256Script.addData(testData);
+        sha256Script.addOpCode(Script.OP_SHA256);
+        ScriptExecutor executor = new ScriptExecutor();
+        executor.execute(sha256Script, null, 0);
+        List<byte[]> stack = executor.getStack();
+        String sha256Result = bytesToHex(stack.get(0));
+        log.info("OP_SHA256测试 - 结果: {} | 预期长度: 64", sha256Result, 64);
+
+        // 2. OP_HASH160 测试
+        Script hash160Script = new Script();
+        hash160Script.addData(testData);
+        hash160Script.addOpCode(Script.OP_HASH160);
+        executor = new ScriptExecutor();
+        executor.execute(hash160Script, null, 0);
+        stack = executor.getStack();
+        String hash160Result = bytesToHex(stack.get(0));
+        log.info("OP_HASH160测试 - 结果: {} | 预期长度: 40", hash160Result, 40);
+
+        // 3. OP_RIPEMD160 测试
+        Script ripemd160Script = new Script();
+        ripemd160Script.addData(testData);
+        ripemd160Script.addOpCode(Script.OP_RIPEMD160);
+        executor = new ScriptExecutor();
+        executor.execute(ripemd160Script, null, 0);
+        stack = executor.getStack();
+        String ripemd160Result = bytesToHex(stack.get(0));
+        log.info("OP_RIPEMD160测试 - 结果: {} | 预期长度: 40", ripemd160Result, 40);
+    }
+
+}
+

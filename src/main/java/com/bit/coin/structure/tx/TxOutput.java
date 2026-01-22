@@ -2,6 +2,7 @@ package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 import tools.jackson.databind.annotation.JsonSerialize;
@@ -29,6 +30,8 @@ public class TxOutput {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] scriptPubKey;
+
+    @JsonIgnore
     private WeakReference<Script> scriptPubKeyWk;
 
 
