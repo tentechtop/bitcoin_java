@@ -6,6 +6,7 @@ import com.google.protobuf.ByteString;
 import lombok.Data;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 
 @Data
 public class NetworkHandshake {
@@ -26,7 +27,7 @@ public class NetworkHandshake {
      */
 
 
-    //节点ID
+    //节点ID 32字节公钥
     private byte[] nodeId;
 
     // 随机数 UUID v7
@@ -39,14 +40,15 @@ public class NetworkHandshake {
     private String nodeVersion;
 
 
-    //协商加密信息 SecretKey 承载协商公钥
+    //协商加密信息 SecretKey 承载协商公钥  //不在网络中传输
     private byte[] sharedSecret;
 
     //签名
     private byte[] signature;
 
 
-
+    // 衍生字段（无需序列化，通过address+port动态构建）
+    private InetSocketAddress inetSocketAddress;
 
     //创世区块Hash
     //节点信息

@@ -5,7 +5,11 @@ import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
+import com.bit.coin.p2p.protocol.P2PMessage;
+import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.quic.control.FlowController;
 
 import com.bit.coin.utils.MultiAddress;
@@ -28,10 +32,13 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.bit.coin.config.CommonConfig.*;
+import static com.bit.coin.config.SystemConfig.SelfKey;
+import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.utils.ECCWithAESGCM.generateCurve25519KeyPair;
 import static com.bit.coin.utils.ECCWithAESGCM.generateSharedSecret;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 /**
@@ -41,44 +48,29 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @Component
 public class QuicConnectionManager {
 
-    public static final byte[] PEER_SECURITY_KEY = "peer_security_key".getBytes();
 
 
-    public static byte[][] SelfKey = null;
+    //节点ID - > 连接ID 公钥的hex是节点ID
+    public static final Map<String, Long> PeerConnect = new HashMap<>();
+    public static DatagramChannel Global_Channel = null;// UDP通道
+    private static final Map<Long, QuicConnection> CONNECTION_MAP  = new HashMap<>();
+
 
     @Autowired
-    private SystemConfig config;
+    private SystemConfig systemConfig;
 
     @Autowired
     private CommonConfig commonConfig;
 
+    @Autowired
+    private RoutingTable routingTable;
+
     @PostConstruct
     private void init(){
-        DataBase dataBase = config.getDataBase();
-        byte[] key = dataBase.get(TableEnum.PEER, PEER_SECURITY_KEY);
-        if (key==null){
-            log.info("key是空的");
-            byte[][] bytes = generateCurve25519KeyPair();
-            byte[] privateKey = bytes[0];
-            byte[] publicKey = bytes[1];
-            //拼接成一个 byte[]
-            byte[] saveBytes = new byte[64];
-            System.arraycopy(privateKey, 0, saveBytes, 0, 32);
-            System.arraycopy(publicKey, 0, saveBytes, 32, 32);
-            SelfKey=bytes;
-            //保存
-            dataBase.insert(TableEnum.PEER, PEER_SECURITY_KEY, saveBytes);
-        }else {
-            log.info("key不为空");
-            //切割 32|32
-            //取前32字节
-            byte[] privateKey = Arrays.copyOfRange(key, 0, 32);
-            //取后32字节
-            byte[] publicKey = Arrays.copyOfRange(key, 32, 64);
-            //组合成byte[][]
-            SelfKey = new byte[][]{privateKey, publicKey};
-        }
+        DataBase dataBase = systemConfig.getDataBase();
     }
+
+
 
 
     //mian函数
@@ -89,10 +81,6 @@ public class QuicConnectionManager {
     }
 
 
-    //节点ID - > 连接ID 公钥的hex是节点ID
-    public static final Map<String, Long> PeerConnect = new HashMap<>();
-    public static DatagramChannel Global_Channel = null;// UDP通道
-    private static final Map<Long, QuicConnection> CONNECTION_MAP  = new HashMap<>();
 
 
     //获取节点的连接
@@ -315,14 +303,19 @@ public class QuicConnectionManager {
             addPeerConnect(peerId,conId);
             resQuicFrame.release();
 
+            //通知路由表添加节点
+            Peer peer = new Peer();
+            peer.setInetSocketAddress(resQuicFrame.getRemoteAddress());
+            peer.setId(nodeId);
+            peer.setSharedSecret(sharedSecret);
 
-            //保存或者更新节点 到Kadmlia DHT中
-
-
-
-
-
-
+            P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
+            byte[] serialize1 = p2PMessage.serialize();
+            QuicMsg quicMsg = new QuicMsg();
+            quicMsg.setConnectionId(conId);
+            quicMsg.setDataId(dataId);
+            quicMsg.setData(serialize1);
+            pushCompleteMsg(quicMsg);
 
             return connection;
         }

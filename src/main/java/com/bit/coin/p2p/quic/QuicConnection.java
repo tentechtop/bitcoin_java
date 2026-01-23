@@ -1,7 +1,11 @@
 package com.bit.coin.p2p.quic;
 
 
+import com.bit.coin.config.CommonConfig;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
+import com.bit.coin.p2p.protocol.P2PMessage;
+import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.quic.control.FlowController;
 
 import com.bit.coin.utils.ECCWithAESGCM;
@@ -14,12 +18,15 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 
+
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static com.bit.coin.config.CommonConfig.self;
+import static com.bit.coin.config.SystemConfig.SelfKey;
+import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.p2p.quic.SendQuicData.buildFromFullData;
@@ -364,6 +371,7 @@ public class QuicConnection {
             byte[] nodeId = deserialize.getNodeId();
             String peerId = bytesToHex(nodeId);
             byte[] aPublicKey = deserialize.getSharedSecret();
+            //校验握手数据 检查网络和软件 如果一致就返回协商后的信息 并上线节点
 
             byte[][] BKeys = SelfKey;
             byte[] bPrivateKey = BKeys[0];
@@ -394,14 +402,22 @@ public class QuicConnection {
                     log.info("[连接响应发送成功] 节点ID:{}", conId);
                     //将该节点上线
                     addPeerConnect(peerId,conId);
-                    //通知业务层有节点上线了 现在需要完成业务握手
-                    //保存或者更新节点
+                    //添加一个消息让系统 将节点加入到路由表
+                    //添加或者更新路由表中的节点
+                    //完整的节点消息 交给路由表处理
+                    Peer peer = new Peer();
+                    InetSocketAddress remoteAddress = quicFrame.getRemoteAddress();
+                    peer.setInetSocketAddress(remoteAddress);
+                    peer.setId(nodeId);
+                    peer.setSharedSecret(sharedSecret);
 
-
-
-
-
-
+                    P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
+                    byte[] serialize1 = p2PMessage.serialize();
+                    QuicMsg quicMsg = new QuicMsg();
+                    quicMsg.setConnectionId(getConnectionId());
+                    quicMsg.setDataId(dataId);
+                    quicMsg.setData(serialize1);
+                    pushCompleteMsg(quicMsg);
                 }
             });
         }catch (Exception e){

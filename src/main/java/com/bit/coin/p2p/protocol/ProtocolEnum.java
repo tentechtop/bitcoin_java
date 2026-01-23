@@ -21,8 +21,19 @@ public enum ProtocolEnum {
 
     Network_handshake_V1(4, "/networkHandshake/1.0.0",true),
 
-
     TEXT_V1(5, "/text/1.0.0",true),
+
+    Handshake_Success_V1(6, "/handshakeSuccess/1.0.0",false),
+
+
+    //收到FinNode请求 回复FindNode结果  负载是需要查询的节点ID 32位
+    P2P_Find_Node_Req(7, "/P2P_Find_Node_Req/1.0.0",true),
+    //返回List<Peer>
+    P2P_Find_Node_Res(8, "/P2P_Find_Node/1.0.0",false),
+
+
+
+
 
     ;
 

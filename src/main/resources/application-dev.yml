@@ -22,7 +22,6 @@ system:
   server-pubkey:
     - '101.35.87.31:3479'
   bootstrap:
-    - ''
 
 logging:
   level:

@@ -118,12 +118,6 @@ public class Peer {
     private InetSocketAddress inetSocketAddress;
 
 
-    public InetSocketAddress getInetSocketAddress() {
-        if (inetSocketAddress == null){
-            inetSocketAddress = new InetSocketAddress(address, port);
-        }
-        return inetSocketAddress;
-    }
 
 
 

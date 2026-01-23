@@ -6,9 +6,8 @@ import com.bit.coin.p2p.PeerService;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
-import com.bit.coin.p2p.protocol.impl.NetworkHandshakeHandler;
-import com.bit.coin.p2p.protocol.impl.PingHandler;
-import com.bit.coin.p2p.protocol.impl.TextHandler;
+import com.bit.coin.p2p.protocol.impl.*;
+import com.bit.coin.p2p.quic.QuicConnection;
 import com.bit.coin.p2p.quic.QuicServiceHandler;
 
 import com.bit.coin.utils.MultiAddress;
@@ -31,9 +30,11 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.security.cert.CertificateException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 @Slf4j
@@ -42,7 +43,7 @@ import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 @Order(1) // 确保服务端优先于客户端初始化
 public class PeerServiceImpl implements PeerService {
     @Autowired
-    private SystemConfig config;
+    private SystemConfig systemConfig;
     @Autowired
     private CommonConfig commonConfig;
     @Autowired
@@ -65,6 +66,10 @@ public class PeerServiceImpl implements PeerService {
     @Autowired
     private NetworkHandshakeHandler networkHandshakeHandler;
     @Autowired
+    private HandshakeSuccessHandle handshakeSuccessHandle;
+    @Autowired
+    private P2PFindNodeReqHandle p2PFindNodeReqHandle;
+    @Autowired
     private PingHandler pingHandler;
     @Autowired
     private TextHandler textHandler;
@@ -74,9 +79,6 @@ public class PeerServiceImpl implements PeerService {
     @PostConstruct
     public void init() throws IOException, CertificateException, InterruptedException {
         //在项目启动前 用socket 且用8333端口去访问STUN服务器 或者中转服务器 让他们返回 你的公网IP和映射地址 然后再去连接 并主动上报
-
-
-
 
         startQuicServer();
 
@@ -90,11 +92,34 @@ public class PeerServiceImpl implements PeerService {
         //若A2秒内未收到则降级为中继 A标记B 为需要中继才能通信  A每次发送B的消息都通过X B收到后知道这条消息来自于A且通过X转发 B回复A 也通过X转发
 
 
-
         //注册协议
         protocolRegistry.registerResultHandler(ProtocolEnum.Network_handshake_V1,  networkHandshakeHandler);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.Handshake_Success_V1,  handshakeSuccessHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Find_Node_Req, p2PFindNodeReqHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.PING_V1,  pingHandler);
         protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V1,  textHandler);
+
+
+        //连接引导节点并将引导节点加入到路由表
+        connectBootstrapNodes();
+    }
+
+
+    //连接引导节点方法
+    public void connectBootstrapNodes() {
+        try {
+            List<String> bootstrap = systemConfig.getBootstrap();
+            for (String bootstrapNode : bootstrap){
+                QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
+                String peerId = quicConnection.getPeerId();
+                new Thread(()->{
+                    routingTable.sendFindNode(hexToBytes(peerId));
+                }).start();
+            }
+            //连接完成后对引导节点进行节点查询
+        }catch (Exception e){
+            log.error("连接引导节点失败{}",e.getMessage());
+        }
     }
 
 

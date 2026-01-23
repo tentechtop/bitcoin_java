@@ -1,6 +1,7 @@
 package com.bit.coin.p2p.impl;
 
 import com.bit.coin.config.CommonConfig;
+import com.bit.coin.exception.SendDataEx;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
@@ -33,12 +34,6 @@ public class PeerClient {
 
     @Autowired
     private CommonConfig commonConfig;
-
-    @Autowired
-    private RoutingTable routingTable;
-    @Autowired
-    private PeerServiceImpl peerService;
-
 
     // 全局锁（避免重复连接）
     private final ReentrantLock connectLock = new ReentrantLock();
@@ -80,19 +75,23 @@ public class PeerClient {
 
 
     //32字节hex
-    public byte[] sendData(String peerId, ProtocolEnum protocol, byte[] request, int time)
-            throws IOException, InterruptedException, ExecutionException, TimeoutException {
-        P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), protocol, request);
-        byte[] serialize = p2PMessage.serialize();
-        CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
-        RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
-        QuicConnection peerConnection = getPeerConnection(peerId);
-        log.info("节点ID{}",peerId);
-        assert peerConnection != null;
-        if (peerConnection.sendData(serialize)){
-            return responseFuture.get(time, TimeUnit.SECONDS).getData();
-        }else {
-            return null;
+    public byte[] sendData(String peerId, ProtocolEnum protocol, byte[] request, int time)  {
+        try {
+            P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), protocol, request);
+            byte[] serialize = p2PMessage.serialize();
+            CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
+            RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
+            QuicConnection peerConnection = getPeerConnection(peerId);
+            log.info("节点ID{}",peerId);
+            assert peerConnection != null;
+            if (peerConnection.sendData(serialize)){
+                return responseFuture.get(time, TimeUnit.SECONDS).getData();
+            }else {
+                return null;
+            }
+        }catch (Exception e){
+            log.error("发送数据失败",e);
+            throw new SendDataEx(e.getMessage(),500);
         }
     }
 

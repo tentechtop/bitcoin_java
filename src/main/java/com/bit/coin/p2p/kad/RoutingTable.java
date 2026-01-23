@@ -4,7 +4,10 @@ import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.peer.Peer;
+import com.bit.coin.p2p.protocol.P2PMessage;
+import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.MultiAddress;
@@ -16,15 +19,21 @@ import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import static com.bit.coin.config.CommonConfig.PEER_KEY;
 import static com.bit.coin.config.CommonConfig.self;
+import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
 @NoArgsConstructor
@@ -32,10 +41,24 @@ import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 @Data
 public class RoutingTable {
 
+    private int bucketSize=20;
+    private int findNodeSize=20;
+    private int identifierSize = 256;//256位 256个桶 32*8
+
+    // 增量触发阈值：累计新增/删除节点数达到50，触发一次持久化
+    private int persistThreshold = 50;
+    // 节点变动计数器（原子类保证线程安全）
+    private AtomicInteger nodeChangeCount = new AtomicInteger(0);
+    // 定时任务线程池（单线程即可，避免并发冲突）
+    private ScheduledExecutorService persistScheduler;
+
     @Autowired
     private SystemConfig config;
 
-    /* 路由表所有者的ID（节点ID） */
+    @Autowired
+    private PeerClient peerClient;
+
+    /* 路由表所有者的ID（节点ID）32字节公钥 */
     private byte[] localNodeId;
 
     /* 存储桶列表 */
@@ -94,7 +117,7 @@ public class RoutingTable {
 
         localNodeId = selfNodeId;
         buckets = new CopyOnWriteArrayList<>();
-        for (int i = 0; i < localNodeId.length + 1; i++) {
+        for (int i = 0; i < identifierSize + 1; i++) {
             buckets.add(createBucketOfId(i));
         }
     }
@@ -103,22 +126,291 @@ public class RoutingTable {
         return new Bucket(id);
     }
 
+    /**
+     * 计算两个节点ID的异或距离（Kad协议核心）
+     * @param nodeId1 节点1 ID（32字节）
+     * @param nodeId2 节点2 ID（32字节）
+     * @return 异或结果（32字节），距离越大表示节点越远
+     */
+    public byte[] calculateDistance(byte[] nodeId1, byte[] nodeId2) {
+        if (nodeId1 == null || nodeId2 == null || nodeId1.length != 32 || nodeId2.length != 32) {
+            throw new IllegalArgumentException("节点ID必须是32字节的非空数组");
+        }
+        byte[] distance = new byte[32];
+        for (int i = 0; i < 32; i++) {
+            distance[i] = (byte) (nodeId1[i] ^ nodeId2[i]);
+        }
+        return distance;
+    }
 
     /**
-     * 添加一个节点到路由表  如果满了就删除一个最后访问的
+     * 计算目标节点ID对应的K桶索引
+     * @param targetNodeId 目标节点ID（32字节）
+     * @return 桶索引（0-255），索引越大表示距离越近
      */
+    public int getBucketIndex(byte[] targetNodeId) {
+        byte[] distance = calculateDistance(localNodeId, targetNodeId);
+        // 找到异或结果中最高有效位的位置
+        for (int i = 0; i < 32; i++) {
+            byte b = distance[i];
+            if (b == 0) continue;
+            // 计算当前字节内的最高位
+            for (int j = 7; j >= 0; j--) {
+                if ((b & (1 << j)) != 0) {
+                    return 255 - (i * 8 + j); // 转换为0-255的桶索引
+                }
+            }
+        }
+        // 异或结果为0（目标节点是本地节点），返回0号桶
+        return 0;
+    }
 
     /**
-     * 找到与这个ID最近的一个节点 根据节点类型
+     * 添加一个节点到路由表（遵循Kad协议规则）
+     * 规则：
+     * 1. 若节点是本地节点，忽略
+     * 2. 若桶中已存在该节点，移到桶头部（更新活跃度）
+     * 3. 若桶未满，添加到桶头部
+     * 4. 若桶已满，移除桶尾部最不活跃节点，添加新节点到头部
+     * @param peer 要添加的节点
      */
+    public void addPeer(Peer peer) {
+        if (peer == null) {
+            log.warn("尝试添加空节点，忽略");
+            return;
+        }
+        byte[] peerId = peer.getId();
+        // 跳过本地节点
+        if (Arrays.equals(peerId, localNodeId)) {
+            return;
+        }
+        try {
+            int bucketIndex = getBucketIndex(peerId);
+            Bucket bucket = buckets.get(bucketIndex);
+            String peerIdHex = bytesToHex(peerId);
+
+            // 更新桶最后访问时间
+            lastBucketAccessTime.put(bucketIndex, System.currentTimeMillis());
+
+            synchronized (bucket) { // 桶级别加锁，保证操作原子性
+                if (bucket.contains(peerIdHex)) {
+                    // 节点已存在，移到头部（更新活跃度）
+                    bucket.pushToFront(peer);
+                    log.info("节点{}已存在，更新活跃度并移到桶{}头部", peerIdHex, bucketIndex);
+                } else {
+                    if (bucket.size() < bucketSize) {
+                        // 桶未满，直接添加到头部
+                        bucket.add(peer);
+                        log.info("桶{}未满，添加节点{}到头部", bucketIndex, peerIdHex);
+                    } else {
+                        //TODO
+                        // 桶已满，移除尾部节点，添加新节点到头部（Kad协议简化实现，可扩展为检查尾节点存活状态）
+                        String lastPeerId = bucket.getNodeIds().iterator().hasNext() ?
+                                bucket.getNodeIds().iterator().next() : null; // 尾节点ID
+                        if (lastPeerId != null) {
+                            Peer lastPeer = bucket.getNode(lastPeerId);
+                            bucket.remove(lastPeer);
+                            log.debug("桶{}已满，移除最不活跃节点{}", bucketIndex, lastPeerId);
+                        }
+                        bucket.add(peer);
+                        log.debug("桶{}已满，添加新节点{}到头部", bucketIndex, peerIdHex);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("添加节点{}失败", bytesToHex(peerId), e);
+        }
+    }
 
     /**
-     * 找到与这个ID最近的20个节点 根据节点类型
+     * 找到与目标ID最近的一个节点
+     * @param targetId 目标节点ID（32字节）
+     * @return 最近的节点，无则返回null
      */
+    public Peer findClosestPeer(byte[] targetId) {
+        List<Peer> closestPeers = findClosestPeers(targetId, 1);
+        return closestPeers.isEmpty() ? null : closestPeers.get(0);
+    }
+
 
     /**
-     * 计算两个节点之间的距离
+     * 找到与目标ID最近的N个节点（Kad协议find_node）
+     * @param targetId 目标节点ID（32字节）
+     * @param count 要查找的节点数量（最大为findNodeSize=20）
+     * @return 按距离升序排列的节点列表
      */
+    public List<Peer> findClosestPeers(byte[] targetId, int count) {
+        if (targetId == null || targetId.length != 32) {
+            log.warn("目标ID格式错误，返回空列表");
+            return Collections.emptyList();
+        }
+        int maxCount = Math.min(count, findNodeSize);
+
+        // 收集所有桶中的节点，并计算与目标ID的距离
+        Map<Peer, byte[]> peerDistanceMap = new HashMap<>();
+        for (Bucket bucket : buckets) {
+            for (Peer peer : bucket.getNodesArrayList()) {
+                if (peer != null) {
+                    peerDistanceMap.put(peer, calculateDistance(peer.getId(), targetId));
+                }
+            }
+        }
+
+        // 按距离升序排序（异或结果越小，距离越近）
+        return peerDistanceMap.entrySet().stream()
+                .sorted((e1, e2) -> compareDistance(e1.getValue(), e2.getValue()))
+                .map(Map.Entry::getKey)
+                .limit(maxCount)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 比较两个异或距离的大小（用于排序）
+     * @param d1 距离1
+     * @param d2 距离2
+     * @return d1 < d2 返回-1，d1 > d2 返回1，相等返回0
+     */
+    private int compareDistance(byte[] d1, byte[] d2) {
+        for (int i = 0; i < 32; i++) {
+            int b1 = d1[i] & 0xFF;
+            int b2 = d2[i] & 0xFF;
+            if (b1 != b2) {
+                return Integer.compare(b1, b2);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 根据节点ID（Base58格式）获取节点
+     * @param nodeId Base58编码的节点ID
+     * @return 节点信息，无则返回null
+     */
+    public Peer getNode(String nodeId) {
+        if (nodeId == null || nodeId.isEmpty()) {
+            return null;
+        }
+        try {
+            byte[] nodeIdBytes = Base58.decode(nodeId);
+            return getNode(nodeIdBytes);
+        } catch (Exception e) {
+            log.error("解码Base58节点ID{}失败", nodeId, e);
+            return null;
+        }
+    }
+
+    /**
+     * 根据节点ID（字节数组）获取节点
+     * @param nodeId 32字节的节点ID
+     * @return 节点信息，无则返回null
+     */
+    public Peer getNode(byte[] nodeId) {
+        if (nodeId == null || nodeId.length != 32) {
+            return null;
+        }
+        try {
+            int bucketIndex = getBucketIndex(nodeId);
+            Bucket bucket = buckets.get(bucketIndex);
+            String nodeIdHex = bytesToHex(nodeId);
+            return bucket.getNode(nodeIdHex);
+        } catch (Exception e) {
+            log.error("获取节点{}失败", bytesToHex(nodeId), e);
+            return null;
+        }
+    }
+
+    /**
+     * 检查是否包含指定节点
+     * @param nodeId 32字节的节点ID
+     * @return 包含返回true，否则false
+     */
+    public boolean contains(byte[] nodeId) {
+        if (nodeId == null || nodeId.length != 32) {
+            return false;
+        }
+        try {
+            int bucketIndex = getBucketIndex(nodeId);
+            Bucket bucket = buckets.get(bucketIndex);
+            String nodeIdHex = bytesToHex(nodeId);
+            return bucket.contains(nodeIdHex);
+        } catch (Exception e) {
+            log.error("检查节点{}是否存在失败", bytesToHex(nodeId), e);
+            return false;
+        }
+    }
+
+    /**
+     * 检查是否包含指定节点（Base58格式ID）
+     * @param nodeId Base58编码的节点ID
+     * @return 包含返回true，否则false
+     */
+    public boolean contains(String nodeId) {
+        if (nodeId == null || nodeId.isEmpty()) {
+            return false;
+        }
+        try {
+            byte[] nodeIdBytes = Base58.decode(nodeId);
+            return contains(nodeIdBytes);
+        } catch (Exception e) {
+            log.error("检查节点{}是否存在失败", nodeId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 从路由表中删除指定节点
+     * @param peer 要删除的节点
+     */
+    public void delete(Peer peer) {
+        if (peer == null) {
+            log.warn("尝试删除空节点，忽略");
+            return;
+        }
+        delete(peer.getId());
+    }
+
+    /**
+     * 从路由表中删除指定ID的节点
+     * @param nodeId 32字节的节点ID
+     */
+    public void delete(byte[] nodeId) {
+        if (nodeId == null || nodeId.length != 32) {
+            log.warn("节点ID格式错误，忽略删除操作");
+            return;
+        }
+        try {
+            int bucketIndex = getBucketIndex(nodeId);
+            Bucket bucket = buckets.get(bucketIndex);
+            String nodeIdHex = bytesToHex(nodeId);
+
+            synchronized (bucket) {
+                Peer peer = bucket.getNode(nodeIdHex);
+                if (peer != null) {
+                    bucket.remove(peer);
+                    log.debug("从桶{}中删除节点{}", bucketIndex, nodeIdHex);
+                }
+            }
+        } catch (Exception e) {
+            log.error("删除节点{}失败", bytesToHex(nodeId), e);
+        }
+    }
+
+    /**
+     * 从路由表中删除指定ID的节点（Base58格式）
+     * @param nodeId Base58编码的节点ID
+     */
+    public void delete(String nodeId) {
+        if (nodeId == null || nodeId.isEmpty()) {
+            return;
+        }
+        try {
+            byte[] nodeIdBytes = Base58.decode(nodeId);
+            delete(nodeIdBytes);
+        } catch (Exception e) {
+            log.error("删除节点{}失败", nodeId, e);
+        }
+    }
+
 
 
     /**
@@ -129,32 +421,497 @@ public class RoutingTable {
     }
 
 
-    /**
-     * 删除节点
-     */
-    public void delete(Peer peer) {
 
+
+
+
+    /**
+     * 持久化路由表中的所有节点到数据库
+     */
+    public void persistToDatabase() {
+        try {
+            // 收集所有节点
+            List<Peer> allPeers = new ArrayList<>();
+            for (Bucket bucket : buckets) {
+                allPeers.addAll(bucket.getNodesArrayList());
+            }
+            if (allPeers.isEmpty()) {
+                log.debug("路由表为空，无需持久化");
+                return;
+            }
+
+            // 序列化节点列表（这里假设Peer类支持列表序列化，或自定义序列化逻辑）
+            byte[] serializedPeers = serializePeers(allPeers);
+            dataBase.insert(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes(StandardCharsets.UTF_8), serializedPeers);
+            log.info("成功持久化{}个节点到路由表", allPeers.size());
+        } catch (Exception e) {
+            log.error("持久化路由表失败", e);
+        }
     }
 
-    public Peer getNode(String nodeId) {
-        //不为空 且解码正确
-        return getNode(Base58.decode(nodeId));
+
+    /**
+     * 从数据库恢复路由表节点
+     */
+    public void restoreFromDatabase() {
+        try {
+            byte[] serializedPeers = dataBase.get(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes());
+            if (serializedPeers == null || serializedPeers.length == 0) {
+                log.debug("无持久化的路由表节点数据");
+                return;
+            }
+
+            // 反序列化节点列表
+            List<Peer> peers = deserializePeers(serializedPeers);
+            log.info("从数据库恢复{}个节点", peers.size());
+
+            // 逐个添加到路由表
+            restoreFromPeerList(peers);
+        } catch (Exception e) {
+            log.error("恢复路由表失败", e);
+        }
     }
-    public Peer getNode(byte[] nodeId) {
-        //不为空
-        return null;
+
+
+    /**
+     * 从节点列表重新加载到路由表（恢复方法）
+     * @param peerList 待加载的节点列表
+     */
+    public void restoreFromPeerList(List<Peer> peerList) {
+        if (peerList == null || peerList.isEmpty()) {
+            return;
+        }
+        log.info("开始从节点列表恢复路由表，共{}个节点", peerList.size());
+        for (Peer peer : peerList) {
+            try {
+                addPeer(peer);
+            } catch (Exception e) {
+                log.error("恢复节点{}失败", bytesToHex(peer.getId()), e);
+            }
+        }
+        log.info("路由表恢复完成");
+    }
+
+    // ===================== 序列化/反序列化工具方法（需根据Peer类调整） =====================
+
+    /**
+     * 序列化节点列表（示例实现，需根据实际Peer序列化逻辑调整）
+     * @param peers 节点列表
+     * @return 序列化后的字节数组
+     */
+    public byte[] serializePeers(List<Peer> peers) throws Exception {
+        // 这里仅为示例，实际需根据Peer的serialize()方法实现列表序列化
+        // 例如：使用ByteBuffer拼接所有节点的序列化字节
+        List<Byte> byteList = new ArrayList<>();
+        for (Peer peer : peers) {
+            byte[] peerBytes = peer.serialize();
+            // 先写入长度，再写入数据
+            for (byte b : ByteBuffer.allocate(4).putInt(peerBytes.length).array()) {
+                byteList.add(b);
+            }
+            for (byte b : peerBytes) {
+                byteList.add(b);
+            }
+        }
+        byte[] result = new byte[byteList.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = byteList.get(i);
+        }
+        return result;
     }
 
     /**
-     * 是否包含节点 参数节点ID
+     * 反序列化节点列表（示例实现，需与serializePeers对应）
+     * @param bytes 序列化后的字节数组
+     * @return 节点列表
      */
+    public List<Peer> deserializePeers(byte[] bytes) throws Exception {
+        List<Peer> peers = new ArrayList<>();
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        while (buffer.remaining() >= 4) {
+            // 先读取长度
+            int len = buffer.getInt();
+            if (buffer.remaining() < len) {
+                break;
+            }
+            // 读取节点数据
+            byte[] peerBytes = new byte[len];
+            buffer.get(peerBytes);
+            Peer peer = Peer.deserialize(peerBytes);
+            peers.add(peer);
+        }
+        return peers;
+    }
+
+
+    //给节点发送查询节点的 [32字节查询节点][4字节数量]
+    public void sendFindNode(byte[] targetId)  {
+        try {
+            int count = 20;
+            byte[] data = new byte[36];
+            System.arraycopy(targetId, 0, data, 0, 32);
+            System.arraycopy(intToBytes(count), 0, data, 32, 4);
+            byte[] p2pRes = peerClient.sendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
+            P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
+            byte[] res = deserialize.getData();
+            if (res!=null){
+                List<Peer> peers = deserializePeers(res);
+                //通过返回的节点迭代查询
+                log.info("返回的数据长度{}",peers.size());
+                for (Peer peer : peers){
+                    log.info("返回的节点{}",peer.getAddress());
+                    byte[] id = peer.getId();
+                    log.info("节点ID{}",Base58.encode(id));
+                    log.info("Hex节点ID{}",bytesToHex(id));
+                    //如果不是本地节点就迭代查询
+
+
+                }
+            }
+        }catch (Exception e){
+            log.error("发送失败{}",e.getMessage());
+        }
+    }
+
+
+
+    // 在类变量区域添加
+    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    private final Map<String, Future<List<Peer>>> pendingQueries = new ConcurrentHashMap<>();
+    private final ReentrantLock queryLock = new ReentrantLock();
+    private final AtomicInteger queryIdGenerator = new AtomicInteger(0);
 
     /**
-     * 恢复方法  从节点列表一个一个重新加载到路由表
+     * 执行Kademlia迭代查询查找节点
+     * @param targetIdHex 目标节点ID的Hex字符串
+     * @return 查找到的最近节点列表
      */
+    public List<Peer> iterativeFindNode(String targetIdHex) {
+        return iterativeFindNode(hexToBytes(targetIdHex), 20, 3, 2000);
+    }
 
     /**
-     * 持久化
+     * 执行Kademlia迭代查询查找节点
+     * @param targetId 目标节点ID字节数组
+     * @param k 每次查询返回的节点数量
+     * @param parallelism 并发查询的节点数
+     * @param timeoutMillis 单次查询超时时间(毫秒)
+     * @return 查找到的最近节点列表
      */
+    public List<Peer> iterativeFindNode(byte[] targetId, int k, int parallelism, int timeoutMillis) {
+        if (targetId == null || targetId.length != 32) {
+            log.warn("目标节点ID格式错误");
+            return Collections.emptyList();
+        }
+
+        // 1. 初始化最近节点列表
+        List<Peer> closestPeers = new CopyOnWriteArrayList<>();
+        Set<String> queriedNodes = ConcurrentHashMap.newKeySet();
+        Set<String> contactedNodes = ConcurrentHashMap.newKeySet();
+        PriorityQueue<PeerDistance> alphaNodes = new PriorityQueue<>();
+
+        // 2. 从本地路由表中获取初始的α个最近节点
+        List<Peer> initialPeers = findClosestPeers(targetId, parallelism);
+        for (Peer peer : initialPeers) {
+            if (peer != null) {
+                byte[] distance = calculateDistance(peer.getId(), targetId);
+                alphaNodes.offer(new PeerDistance(peer, distance));
+            }
+        }
+
+        // 3. 迭代查询
+        int maxRounds = 10; // 最大迭代轮数
+        for (int round = 0; round < maxRounds; round++) {
+            if (alphaNodes.isEmpty()) {
+                break;
+            }
+
+            // 3.1 从α节点中选择parallelism个节点并发查询
+            List<CompletableFuture<List<Peer>>> futures = new ArrayList<>();
+            int queriesInRound = 0;
+
+            while (!alphaNodes.isEmpty() && queriesInRound < parallelism) {
+                PeerDistance peerDist = alphaNodes.poll();
+                Peer peer = peerDist.peer;
+                String peerIdHex = bytesToHex(peer.getId());
+
+                if (queriedNodes.contains(peerIdHex)) {
+                    continue;
+                }
+
+                queriedNodes.add(peerIdHex);
+                contactedNodes.add(peerIdHex);
+
+                // 异步发送查询请求
+                CompletableFuture<List<Peer>> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return sendFindNodeToPeer(peer, targetId, k, timeoutMillis);
+                    } catch (Exception e) {
+                        log.debug("查询节点{}失败: {}", peerIdHex, e.getMessage());
+                        return Collections.<Peer>emptyList();
+                    }
+                }, executor);
+
+                futures.add(future);
+                queriesInRound++;
+            }
+
+            // 3.2 等待所有查询完成
+            try {
+                CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+                        futures.toArray(new CompletableFuture[0])
+                );
+                allFutures.get(timeoutMillis + 1000, TimeUnit.MILLISECONDS);
+            } catch (Exception e) {
+                log.debug("等待查询结果超时: {}", e.getMessage());
+            }
+
+            // 3.3 收集查询结果
+            Set<Peer> discoveredPeers = new HashSet<>();
+            for (CompletableFuture<List<Peer>> future : futures) {
+                try {
+                    if (future.isDone() && !future.isCompletedExceptionally()) {
+                        List<Peer> result = future.get();
+                        discoveredPeers.addAll(result);
+                    }
+                } catch (Exception e) {
+                    // 忽略异常
+                }
+            }
+
+            // 3.4 更新最近节点列表
+            for (Peer peer : discoveredPeers) {
+                if (peer == null || Arrays.equals(peer.getId(), localNodeId)) {
+                    continue;
+                }
+
+                String peerIdHex = bytesToHex(peer.getId());
+                if (contactedNodes.contains(peerIdHex)) {
+                    continue;
+                }
+
+                byte[] distance = calculateDistance(peer.getId(), targetId);
+                contactedNodes.add(peerIdHex);
+
+                // 添加到最近节点列表
+                synchronized (closestPeers) {
+                    // 如果列表未满，直接添加
+                    if (closestPeers.size() < k) {
+                        closestPeers.add(peer);
+                        addToPriorityQueue(alphaNodes, new PeerDistance(peer, distance), k);
+                    } else {
+                        // 如果列表已满，比较距离
+                        Peer farthest = getFarthestPeer(closestPeers, targetId);
+                        byte[] farthestDist = calculateDistance(farthest.getId(), targetId);
+
+                        if (compareDistance(distance, farthestDist) < 0) {
+                            closestPeers.remove(farthest);
+                            closestPeers.add(peer);
+                            addToPriorityQueue(alphaNodes, new PeerDistance(peer, distance), k);
+                        }
+                    }
+                }
+            }
+
+            // 3.5 检查收敛条件
+            if (isConverged(alphaNodes, closestPeers, targetId)) {
+                log.debug("迭代查询在第{}轮收敛", round + 1);
+                break;
+            }
+
+            // 3.6 准备下一轮查询
+            List<PeerDistance> remainingNodes = new ArrayList<>();
+            while (!alphaNodes.isEmpty()) {
+                remainingNodes.add(alphaNodes.poll());
+            }
+
+            // 添加新发现的节点到优先级队列
+            synchronized (closestPeers) {
+                for (Peer peer : closestPeers) {
+                    String peerIdHex = bytesToHex(peer.getId());
+                    if (!queriedNodes.contains(peerIdHex)) {
+                        byte[] distance = calculateDistance(peer.getId(), targetId);
+                        remainingNodes.add(new PeerDistance(peer, distance));
+                    }
+                }
+            }
+
+            // 排序并重新填充alphaNodes
+            remainingNodes.sort(Comparator.comparing(pd -> pd.distanceHex));
+            for (int i = 0; i < Math.min(parallelism, remainingNodes.size()); i++) {
+                alphaNodes.offer(remainingNodes.get(i));
+            }
+
+            log.debug("第{}轮查询完成，发现{}个节点，最近节点列表: {}",
+                    round + 1, discoveredPeers.size(), closestPeers.size());
+        }
+
+        // 4. 对最终结果排序
+        closestPeers.sort((p1, p2) -> {
+            byte[] d1 = calculateDistance(p1.getId(), targetId);
+            byte[] d2 = calculateDistance(p2.getId(), targetId);
+            return compareDistance(d1, d2);
+        });
+
+        return closestPeers;
+    }
+
+    /**
+     * 向指定节点发送FindNode请求
+     */
+    private List<Peer> sendFindNodeToPeer(Peer peer, byte[] targetId, int count, int timeoutMillis) {
+        try {
+            String peerIdHex = bytesToHex(peer.getId());
+            int queryId = queryIdGenerator.incrementAndGet();
+            String queryKey = peerIdHex + "_" + queryId;
+
+            // 构造查询数据
+            byte[] data = new byte[36];
+            System.arraycopy(targetId, 0, data, 0, 32);
+            System.arraycopy(intToBytes(count), 0, data, 32, 4);
+
+            // 发送查询请求
+            byte[] p2pRes = peerClient.sendData(peerIdHex, ProtocolEnum.P2P_Find_Node_Req, data, timeoutMillis);
+            if (p2pRes == null) {
+                log.debug("节点{}无响应", peerIdHex);
+                return Collections.emptyList();
+            }
+
+            // 解析响应
+            P2PMessage response = P2PMessage.deserialize(p2pRes);
+            if (response == null || response.getData() == null) {
+                return Collections.emptyList();
+            }
+
+            List<Peer> peers = deserializePeers(response.getData());
+            if (peers == null) {
+                return Collections.emptyList();
+            }
+
+            // 添加新发现的节点到路由表
+            for (Peer discoveredPeer : peers) {
+                if (discoveredPeer != null && !Arrays.equals(discoveredPeer.getId(), localNodeId)) {
+                    addPeer(discoveredPeer);
+                }
+            }
+
+            log.debug("从节点{}获取到{}个节点", peerIdHex, peers.size());
+            return peers;
+
+        } catch (Exception e) {
+            log.debug("查询节点{}失败: {}", bytesToHex(peer.getId()), e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 检查迭代查询是否收敛
+     */
+    private boolean isConverged(PriorityQueue<PeerDistance> alphaNodes,
+                                List<Peer> closestPeers, byte[] targetId) {
+        if (alphaNodes.isEmpty()) {
+            return true;
+        }
+
+        // 如果最近节点列表已满，且alphaNodes中的节点都比列表中最远的节点远
+        if (closestPeers.size() >= 20) { // 使用Kademlia的k值
+            Peer farthest = getFarthestPeer(closestPeers, targetId);
+            byte[] farthestDist = calculateDistance(farthest.getId(), targetId);
+
+            for (PeerDistance pd : alphaNodes) {
+                if (compareDistance(pd.distance, farthestDist) < 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 获取最远的节点
+     */
+    private Peer getFarthestPeer(List<Peer> peers, byte[] targetId) {
+        Peer farthest = null;
+        byte[] maxDistance = null;
+
+        for (Peer peer : peers) {
+            byte[] dist = calculateDistance(peer.getId(), targetId);
+            if (maxDistance == null || compareDistance(dist, maxDistance) > 0) {
+                maxDistance = dist;
+                farthest = peer;
+            }
+        }
+
+        return farthest;
+    }
+
+    /**
+     * 添加节点到优先级队列
+     */
+    private void addToPriorityQueue(PriorityQueue<PeerDistance> queue,
+                                    PeerDistance peerDist, int maxSize) {
+        queue.offer(peerDist);
+        if (queue.size() > maxSize) {
+            // 移除最远的节点
+            queue.poll();
+        }
+    }
+
+    /**
+     * 辅助类：存储节点和距离
+     */
+    private static class PeerDistance implements Comparable<PeerDistance> {
+        final Peer peer;
+        final byte[] distance;
+        final String distanceHex; // 用于比较
+
+        PeerDistance(Peer peer, byte[] distance) {
+            this.peer = peer;
+            this.distance = distance;
+            this.distanceHex = bytesToHex(distance);
+        }
+
+        @Override
+        public int compareTo(PeerDistance other) {
+            // 距离越小，优先级越高
+            for (int i = 0; i < distance.length; i++) {
+                int cmp = (distance[i] & 0xFF) - (other.distance[i] & 0xFF);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        }
+    }
+
+
+    /**
+     * 启动Kademlia DHT迭代查询
+     * @param targetNodeIdHex 目标节点ID的Hex字符串
+     * @return 查询到的最近节点列表
+     */
+    public List<Peer> findNodeIterative(String targetNodeIdHex) {
+        log.info("开始迭代查询节点: {}", targetNodeIdHex);
+
+        try {
+            byte[] targetId = hexToBytes(targetNodeIdHex);
+            List<Peer> closestNodes = iterativeFindNode(targetId, 20, 3, 2000);
+
+            log.info("迭代查询完成，找到{}个最近节点", closestNodes.size());
+            for (Peer peer : closestNodes) {
+                log.info("节点: {}, 距离: {}",
+                        bytesToHex(peer.getId()).substring(0, 8) + "...",
+                        bytesToHex(calculateDistance(peer.getId(), targetId)).substring(0, 8) + "...");
+            }
+
+            return closestNodes;
+        } catch (Exception e) {
+            log.error("迭代查询失败", e);
+            return Collections.emptyList();
+        }
+    }
+
 
 }

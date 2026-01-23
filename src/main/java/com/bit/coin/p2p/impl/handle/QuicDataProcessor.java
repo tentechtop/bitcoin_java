@@ -128,7 +128,7 @@ public class QuicDataProcessor {
     private void processSingleMsg(QuicMsg msg, int index) {
         try {
             // 示例逻辑：打印消息长度（实际场景：解析Protobuf/JSON、写入DB、调用RPC等）
-            log.debug("处理第{}条消息，字节长度：{}", index, msg.getData().length);
+            log.info("处理第{}条消息，字节长度：{} 数据{}", index, msg.getData().length,bytesToHex(msg.getData()));
 
             // TODO 替换为真实业务逻辑：
             // 1. 解析二进制消息（如protobuf反序列化）
@@ -136,7 +136,6 @@ public class QuicDataProcessor {
             // 3. 数据入库/转发/计算等
 
             //回复节点  通过节点ID找到连接 并发送信息  将消息分发到对应的处理器处理即可 处理器如果有返回值 就调用协议返回即可
-
             P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
             if (deserialize.isRequest()) {
                 log.info("收到请求: {}", deserialize);

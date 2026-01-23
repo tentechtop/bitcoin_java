@@ -13,9 +13,6 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class Settings {
 
-    private int bucketSize=20;
-    private int findNodeSize=20;
-    private int identifierSize = 256;//256位 256个桶 32*8
 
 
 

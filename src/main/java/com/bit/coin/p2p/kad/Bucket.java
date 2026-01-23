@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+
 
 //节点ID是 32字节Hex
 @Data
@@ -45,7 +47,7 @@ public class Bucket {
      * 先移除旧节点，再添加到头部，保证顺序正确性
      */
     public void pushToFront(Peer peer) {
-        String peerId = Base58.encode(peer.getId());
+        String peerId = bytesToHex(peer.getId());
         // 1. 先移除（若存在）
         nodeIds.remove(peerId); // ConcurrentLinkedDeque的remove是线程安全的
         // 2. 添加到头部
@@ -66,7 +68,7 @@ public class Bucket {
      * 添加节点到头部（线程安全）
      */
     public void add(Peer peer) {
-        String peerId = Base58.encode(peer.getId());
+        String peerId = bytesToHex(peer.getId());
         // 避免重复添加
         if (!nodeIds.contains(peerId)) {
             nodeIds.addFirst(peerId);
@@ -102,7 +104,7 @@ public class Bucket {
      * @param peer 要操作的节点
      */
     public void pushToAfter(Peer peer) {
-        String peerId = Base58.encode(peer.getId());
+        String peerId = bytesToHex(peer.getId());
         nodeIds.remove(peerId);
         nodeIds.addLast(peerId); // 线程安全的尾部添加
         Peer existingPeer = nodeMap.get(peerId);

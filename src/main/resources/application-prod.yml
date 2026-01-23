@@ -21,6 +21,9 @@ system:
   #用户在启动时可以配置公钥 对于隐私接口必须签名才能访问 也就是节点所有者
   server-pubkey:
     - ''
+  #- '/ip4/101.35.87.31/quic/8333/p2p/9PRoc35gnFvJr1PHVQLWyzBM5K8EqTNhRMqVNDSYbPRZ'
+  bootstrap:
+    - '/ip4/127.0.0.1/quic/8334/p2p/7MqSV9R3Pf4ZHmupa17nmUNqVDGNogwgJAx9KBaGrVkL'
 
 logging:
   level:

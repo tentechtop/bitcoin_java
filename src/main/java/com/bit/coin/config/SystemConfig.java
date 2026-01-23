@@ -1,6 +1,7 @@
 package com.bit.coin.config;
 
 import com.bit.coin.database.DataBase;
+import com.bit.coin.database.rocksDb.TableEnum;
 import jakarta.annotation.PostConstruct;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -9,9 +10,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.bit.coin.utils.ECCWithAESGCM.generateCurve25519KeyPair;
 
 @Slf4j
 @Data
@@ -27,12 +31,16 @@ public class SystemConfig {
     private Boolean isStun;
     private Integer stunPort;
     private List<String> stunAddress;
+    //引导节点
+    private List<String> bootstrap;
+
 
     //网络参数 MainNetParams TestNet3Params RegressionNetParams
     private String netParams;
 
-    //矿工地址
 
+    public static final byte[] PEER_SECURITY_KEY = "peer_security_key".getBytes();
+    public static byte[][] SelfKey = null;
 
 
     //网络参数配置
@@ -63,6 +71,29 @@ public class SystemConfig {
         boolean database = dataBase.createDatabase(this);
         if (!database) {
             throw new RuntimeException("数据库创建失败");
+        }
+        byte[] key = dataBase.get(TableEnum.PEER, PEER_SECURITY_KEY);
+        if (key==null){
+            log.info("key是空的");
+            byte[][] bytes = generateCurve25519KeyPair();
+            byte[] privateKey = bytes[0];
+            byte[] publicKey = bytes[1];
+            //拼接成一个 byte[]
+            byte[] saveBytes = new byte[64];
+            System.arraycopy(privateKey, 0, saveBytes, 0, 32);
+            System.arraycopy(publicKey, 0, saveBytes, 32, 32);
+            SelfKey=bytes;
+            //保存
+            dataBase.insert(TableEnum.PEER, PEER_SECURITY_KEY, saveBytes);
+        }else {
+            log.info("key不为空");
+            //切割 32|32
+            //取前32字节
+            byte[] privateKey = Arrays.copyOfRange(key, 0, 32);
+            //取后32字节
+            byte[] publicKey = Arrays.copyOfRange(key, 32, 64);
+            //组合成byte[][]
+            SelfKey = new byte[][]{privateKey, publicKey};
         }
     }
 

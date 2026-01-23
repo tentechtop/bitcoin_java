@@ -1,5 +1,7 @@
 package com.bit.coin.p2p.protocol;
 
+import java.io.IOException;
+
 /**
  * 协议处理器函数式接口（适配P2P场景，入参/返回值均为字节数组）
  */
@@ -17,10 +19,10 @@ public interface ProtocolHandler {
      */
     @FunctionalInterface
     interface VoidProtocolHandler extends ProtocolHandler {
-        void handleVoid(P2PMessage requestParams);
+        void handleVoid(P2PMessage requestParams) throws IOException;
 
         @Override
-        default byte[] handle(P2PMessage requestParams) {
+        default byte[] handle(P2PMessage requestParams) throws IOException {
             handleVoid(requestParams);
             return null; // 强制返回null，符合无返回值语义
         }

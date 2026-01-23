@@ -39,7 +39,7 @@ public class NetworkHandshakeHandler implements ProtocolHandler.ResultProtocolHa
 
         //协商
         byte[] sharedSecret = ECCWithAESGCM.generateSharedSecret(bPrivateKey, aPublicKey);
-        log.info("共享加密密钥对sharedSecret: {}", bytesToHex(sharedSecret));
+        log.info("协议 共享加密密钥对sharedSecret: {}", bytesToHex(sharedSecret));
 
 
         NetworkHandshake networkHandshake = new NetworkHandshake();

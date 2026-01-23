@@ -34,7 +34,6 @@ public class CommonConfig {
     @Getter
     public static Peer self;//本地节点信息  最好通过注入的方法使用
 
-    public static byte[][] SelfKey = null;
 
     @Autowired
     private SystemConfig config;
