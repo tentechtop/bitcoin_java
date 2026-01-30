@@ -32,7 +32,6 @@ public class NetworkHandshakeHandler implements ProtocolHandler.ResultProtocolHa
         NetworkHandshake deserialize = NetworkHandshake.deserialize(data);
         byte[] aPublicKey = deserialize.getSharedSecret();
 
-
         byte[][] BKeys = generateCurve25519KeyPair();
         byte[] bPrivateKey = BKeys[0];
         byte[] bPublicKey = BKeys[1];
@@ -41,14 +40,13 @@ public class NetworkHandshakeHandler implements ProtocolHandler.ResultProtocolHa
         byte[] sharedSecret = ECCWithAESGCM.generateSharedSecret(bPrivateKey, aPublicKey);
         log.info("协议 共享加密密钥对sharedSecret: {}", bytesToHex(sharedSecret));
 
-
         NetworkHandshake networkHandshake = new NetworkHandshake();
-        networkHandshake.setNodeId(commonConfig.getSelf().getId());
+        networkHandshake.setNodeId(getSelf().getId());
         networkHandshake.setSharedSecret(bPublicKey);
 
         byte[] serialize = networkHandshake.serialize();
         //构建协议的响应
-        P2PMessage p2PMessage = newResponseMessage(commonConfig.getSelf().getId(), ProtocolEnum.Network_handshake_V1,requestParams.getRequestId(), serialize);
+        P2PMessage p2PMessage = newResponseMessage(getSelf().getId(), ProtocolEnum.Network_handshake_V1,requestParams.getRequestId(), serialize);
         return p2PMessage.serialize();
     }
 }

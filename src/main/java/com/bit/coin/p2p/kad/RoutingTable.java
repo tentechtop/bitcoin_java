@@ -12,6 +12,7 @@ import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.MultiAddress;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +52,8 @@ public class RoutingTable {
     private AtomicInteger nodeChangeCount = new AtomicInteger(0);
     // 定时任务线程池（单线程即可，避免并发冲突）
     private ScheduledExecutorService persistScheduler;
+    // 定时检查周期：1分钟（单位：毫秒）
+    private static final long PERSIST_CHECK_PERIOD = 1 * 60 * 1000L;
 
     @Autowired
     private SystemConfig config;
@@ -68,6 +71,12 @@ public class RoutingTable {
     private final Map<Integer, Long> lastBucketAccessTime = new ConcurrentHashMap<>();
 
     private DataBase dataBase;
+
+    // 在类变量区域添加
+    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    private final Map<String, Future<List<Peer>>> pendingQueries = new ConcurrentHashMap<>();
+    private final ReentrantLock queryLock = new ReentrantLock();
+
 
     /**
      * Spring初始化方法（替代构造方法）
@@ -120,7 +129,58 @@ public class RoutingTable {
         for (int i = 0; i < identifierSize + 1; i++) {
             buckets.add(createBucketOfId(i));
         }
+
+        // ========== 新增：初始化时恢复路由表节点 ==========
+        restoreFromDatabase();
+
+        // ========== 新增：启动定时持久化检查任务 ==========
+        initPersistScheduler();
+
     }
+
+    /**
+     * 初始化定时持久化任务：每10分钟检查一次，有变动则持久化
+     */
+    private void initPersistScheduler() {
+        // 单线程定时任务池，避免并发持久化冲突
+        persistScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "routing-table-persist-scheduler");
+            thread.setDaemon(true); // 守护线程，应用关闭时自动退出
+            return thread;
+        });
+
+        // 延迟10分钟后开始，每10分钟执行一次检查
+        persistScheduler.scheduleAtFixedRate(
+                this::checkAndPersist,
+                PERSIST_CHECK_PERIOD,
+                PERSIST_CHECK_PERIOD,
+                TimeUnit.MILLISECONDS
+        );
+        log.info("路由表定时持久化任务已启动，检查周期：{}分钟", PERSIST_CHECK_PERIOD / 60000);
+    }
+
+    /**
+     * 定时检查并执行持久化（有变动才执行）
+     */
+    private void checkAndPersist() {
+        try {
+            int changeCount = nodeChangeCount.get();
+            if (changeCount > 0) {
+                log.info("定时检查发现{}个节点变动，执行持久化", changeCount);
+                persistToDatabase();
+                // 持久化成功后重置计数器
+                nodeChangeCount.set(0);
+            } else {
+                log.debug("定时检查无节点变动，跳过持久化");
+            }
+        } catch (Exception e) {
+            log.error("定时持久化检查执行失败", e);
+        }
+    }
+
+
+
+
 
     private Bucket createBucketOfId(int id) {
         return new Bucket(id);
@@ -184,6 +244,7 @@ public class RoutingTable {
         if (Arrays.equals(peerId, localNodeId)) {
             return;
         }
+        boolean isNodeChanged = false; // 标记是否发生节点变动
         try {
             int bucketIndex = getBucketIndex(peerId);
             Bucket bucket = buckets.get(bucketIndex);
@@ -197,11 +258,13 @@ public class RoutingTable {
                     // 节点已存在，移到头部（更新活跃度）
                     bucket.pushToFront(peer);
                     log.info("节点{}已存在，更新活跃度并移到桶{}头部", peerIdHex, bucketIndex);
+                    isNodeChanged = true; // 新增节点，标记变动
                 } else {
                     if (bucket.size() < bucketSize) {
                         // 桶未满，直接添加到头部
                         bucket.add(peer);
                         log.info("桶{}未满，添加节点{}到头部", bucketIndex, peerIdHex);
+                        isNodeChanged = true; // 新增节点，标记变动
                     } else {
                         //TODO
                         // 桶已满，移除尾部节点，添加新节点到头部（Kad协议简化实现，可扩展为检查尾节点存活状态）
@@ -211,14 +274,28 @@ public class RoutingTable {
                             Peer lastPeer = bucket.getNode(lastPeerId);
                             bucket.remove(lastPeer);
                             log.debug("桶{}已满，移除最不活跃节点{}", bucketIndex, lastPeerId);
+                            isNodeChanged = true; // 移除旧节点+添加新节点，标记变动
                         }
                         bucket.add(peer);
                         log.debug("桶{}已满，添加新节点{}到头部", bucketIndex, peerIdHex);
+                        isNodeChanged = true; // 新增节点，标记变动
                     }
                 }
             }
         } catch (Exception e) {
             log.error("添加节点{}失败", bytesToHex(peerId), e);
+        }
+
+        // ========== 新增：节点变动时更新计数器，达到阈值则立即持久化 ==========
+        if (isNodeChanged) {
+            int currentCount = nodeChangeCount.incrementAndGet();
+            log.debug("节点变动计数：{}", currentCount);
+            // 累计达到50次变动，立即持久化
+            if (currentCount >= persistThreshold) {
+                log.info("累计节点变动达到{}次，触发立即持久化", persistThreshold);
+                persistToDatabase();
+                nodeChangeCount.set(0); // 重置计数器
+            }
         }
     }
 
@@ -378,6 +455,7 @@ public class RoutingTable {
             log.warn("节点ID格式错误，忽略删除操作");
             return;
         }
+        boolean isNodeChanged = false; // 标记是否发生节点变动
         try {
             int bucketIndex = getBucketIndex(nodeId);
             Bucket bucket = buckets.get(bucketIndex);
@@ -388,10 +466,23 @@ public class RoutingTable {
                 if (peer != null) {
                     bucket.remove(peer);
                     log.debug("从桶{}中删除节点{}", bucketIndex, nodeIdHex);
+                    isNodeChanged = true; // 删除节点，标记变动
                 }
             }
         } catch (Exception e) {
             log.error("删除节点{}失败", bytesToHex(nodeId), e);
+        }
+
+        // ========== 新增：节点变动时更新计数器，达到阈值则立即持久化 ==========
+        if (isNodeChanged) {
+            int currentCount = nodeChangeCount.incrementAndGet();
+            log.debug("节点变动计数：{}", currentCount);
+            // 累计达到50次变动，立即持久化
+            if (currentCount >= persistThreshold) {
+                log.info("累计节点变动达到{}次，触发立即持久化", persistThreshold);
+                persistToDatabase();
+                nodeChangeCount.set(0); // 重置计数器
+            }
         }
     }
 
@@ -419,10 +510,6 @@ public class RoutingTable {
     public List<Bucket> getBuckets() {
         return buckets;
     }
-
-
-
-
 
 
     /**
@@ -543,13 +630,70 @@ public class RoutingTable {
         return peers;
     }
 
+    /**
+     * 获取路由表中所有的有效 Peer 节点
+     * @return 包含所有有效节点的列表（过滤 null 和本地节点）
+     */
+    public List<Peer> getAll() {
+        // 初始化线程安全的列表
+        List<Peer> allValidPeers = new ArrayList<>();
+        // 遍历所有K桶
+        for (Bucket bucket : buckets) {
+            if (bucket == null) continue;
+            // 直接遍历nodeMap的values（ConcurrentHashMap的values是线程安全的）
+            for (Peer peer : bucket.getNodeMap().values()) {
+                if (peer == null || Arrays.equals(peer.getId(), localNodeId)) {
+                    continue;
+                }
+                // 基于equals判断（已实现），避免重复
+                if (!allValidPeers.contains(peer)) {
+                    allValidPeers.add(peer);
+                }
+            }
+        }
+        // 返回不可修改的列表，避免外部修改
+        return Collections.unmodifiableList(allValidPeers);
+    }
 
-    //给节点发送查询节点的 [32字节查询节点][4字节数量]
-    public void sendFindNode(byte[] targetId)  {
+    /**
+     * 辅助类：存储节点和距离
+     */
+    private static class PeerDistance implements Comparable<PeerDistance> {
+        final Peer peer;
+        final byte[] distance;
+        final String distanceHex; // 用于比较
+
+        PeerDistance(Peer peer, byte[] distance) {
+            this.peer = peer;
+            this.distance = distance;
+            this.distanceHex = bytesToHex(distance);
+        }
+
+        @Override
+        public int compareTo(PeerDistance other) {
+            // 距离越小，优先级越高
+            for (int i = 0; i < distance.length; i++) {
+                int cmp = (distance[i] & 0xFF) - (other.distance[i] & 0xFF);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        }
+    }
+
+
+    /**
+     * 向目标节点发起节点查询请求
+     * @param targetId
+     * @param searchId
+     */
+    public List<Peer> sendFindNode(byte[] targetId,byte[] searchId)  {
         try {
             int count = 20;
             byte[] data = new byte[36];
-            System.arraycopy(targetId, 0, data, 0, 32);
+            //[32字节查询节点][4字节数量]
+            System.arraycopy(searchId, 0, data, 0, 32);
             System.arraycopy(intToBytes(count), 0, data, 32, 4);
             byte[] p2pRes = peerClient.sendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
             P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
@@ -564,42 +708,37 @@ public class RoutingTable {
                     log.info("节点ID{}",Base58.encode(id));
                     log.info("Hex节点ID{}",bytesToHex(id));
                     //如果不是本地节点就迭代查询
-
-
+                    return peers;
                 }
             }
+            return null;
         }catch (Exception e){
             log.error("发送失败{}",e.getMessage());
+            return null;
         }
     }
 
 
 
-    // 在类变量区域添加
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
-    private final Map<String, Future<List<Peer>>> pendingQueries = new ConcurrentHashMap<>();
-    private final ReentrantLock queryLock = new ReentrantLock();
-    private final AtomicInteger queryIdGenerator = new AtomicInteger(0);
-
     /**
      * 执行Kademlia迭代查询查找节点
-     * @param targetIdHex 目标节点ID的Hex字符串
+     * @param searchIdHex 查找节点ID的Hex字符串
      * @return 查找到的最近节点列表
      */
-    public List<Peer> iterativeFindNode(String targetIdHex) {
-        return iterativeFindNode(hexToBytes(targetIdHex), 20, 3, 2000);
+    public List<Peer> iterativeFindNode(String searchIdHex) {
+        return iterativeFindNode(hexToBytes(searchIdHex), 20, 3, 2000);
     }
 
     /**
      * 执行Kademlia迭代查询查找节点
-     * @param targetId 目标节点ID字节数组
+     * @param searchId 查询节点ID字节数组
      * @param k 每次查询返回的节点数量
      * @param parallelism 并发查询的节点数
      * @param timeoutMillis 单次查询超时时间(毫秒)
      * @return 查找到的最近节点列表
      */
-    public List<Peer> iterativeFindNode(byte[] targetId, int k, int parallelism, int timeoutMillis) {
-        if (targetId == null || targetId.length != 32) {
+    public List<Peer> iterativeFindNode(byte[] searchId, int k, int parallelism, int timeoutMillis) {
+        if (searchId == null || searchId.length != 32) {
             log.warn("目标节点ID格式错误");
             return Collections.emptyList();
         }
@@ -611,10 +750,10 @@ public class RoutingTable {
         PriorityQueue<PeerDistance> alphaNodes = new PriorityQueue<>();
 
         // 2. 从本地路由表中获取初始的α个最近节点
-        List<Peer> initialPeers = findClosestPeers(targetId, parallelism);
+        List<Peer> initialPeers = findClosestPeers(searchId, parallelism);
         for (Peer peer : initialPeers) {
             if (peer != null) {
-                byte[] distance = calculateDistance(peer.getId(), targetId);
+                byte[] distance = calculateDistance(peer.getId(), searchId);
                 alphaNodes.offer(new PeerDistance(peer, distance));
             }
         }
@@ -645,7 +784,7 @@ public class RoutingTable {
                 // 异步发送查询请求
                 CompletableFuture<List<Peer>> future = CompletableFuture.supplyAsync(() -> {
                     try {
-                        return sendFindNodeToPeer(peer, targetId, k, timeoutMillis);
+                        return sendFindNodeToPeer(peer, searchId, k, timeoutMillis);
                     } catch (Exception e) {
                         log.debug("查询节点{}失败: {}", peerIdHex, e.getMessage());
                         return Collections.<Peer>emptyList();
@@ -690,7 +829,7 @@ public class RoutingTable {
                     continue;
                 }
 
-                byte[] distance = calculateDistance(peer.getId(), targetId);
+                byte[] distance = calculateDistance(peer.getId(), searchId);
                 contactedNodes.add(peerIdHex);
 
                 // 添加到最近节点列表
@@ -701,8 +840,8 @@ public class RoutingTable {
                         addToPriorityQueue(alphaNodes, new PeerDistance(peer, distance), k);
                     } else {
                         // 如果列表已满，比较距离
-                        Peer farthest = getFarthestPeer(closestPeers, targetId);
-                        byte[] farthestDist = calculateDistance(farthest.getId(), targetId);
+                        Peer farthest = getFarthestPeer(closestPeers, searchId);
+                        byte[] farthestDist = calculateDistance(farthest.getId(), searchId);
 
                         if (compareDistance(distance, farthestDist) < 0) {
                             closestPeers.remove(farthest);
@@ -714,7 +853,7 @@ public class RoutingTable {
             }
 
             // 3.5 检查收敛条件
-            if (isConverged(alphaNodes, closestPeers, targetId)) {
+            if (isConverged(alphaNodes, closestPeers, searchId)) {
                 log.debug("迭代查询在第{}轮收敛", round + 1);
                 break;
             }
@@ -730,7 +869,7 @@ public class RoutingTable {
                 for (Peer peer : closestPeers) {
                     String peerIdHex = bytesToHex(peer.getId());
                     if (!queriedNodes.contains(peerIdHex)) {
-                        byte[] distance = calculateDistance(peer.getId(), targetId);
+                        byte[] distance = calculateDistance(peer.getId(), searchId);
                         remainingNodes.add(new PeerDistance(peer, distance));
                     }
                 }
@@ -748,8 +887,8 @@ public class RoutingTable {
 
         // 4. 对最终结果排序
         closestPeers.sort((p1, p2) -> {
-            byte[] d1 = calculateDistance(p1.getId(), targetId);
-            byte[] d2 = calculateDistance(p2.getId(), targetId);
+            byte[] d1 = calculateDistance(p1.getId(), searchId);
+            byte[] d2 = calculateDistance(p2.getId(), searchId);
             return compareDistance(d1, d2);
         });
 
@@ -757,17 +896,126 @@ public class RoutingTable {
     }
 
     /**
+     * 向指定的targetId节点发起针对searchId的迭代查询（递归迭代直到无新节点返回）
+     * @param targetId 初始查询的目标节点ID（32字节）
+     * @param searchId 要查找的目标节点ID（32字节）
+     * @param k 每次查询返回的节点数量
+     * @param parallelism 并发查询数
+     * @param timeoutMillis 单次查询超时时间(毫秒)
+     * @return 所有找到的节点列表（按与searchId的距离升序排列）
+     */
+    public List<Peer> findNodeIterative(byte[] targetId, byte[] searchId, int k, int parallelism, int timeoutMillis) {
+        // 1. 参数校验
+        if (targetId == null || targetId.length != 32 || searchId == null || searchId.length != 32) {
+            log.warn("targetId或searchId格式错误（必须32字节）");
+            return Collections.emptyList();
+        }
+
+        // 2. 初始化核心容器（线程安全）
+        // 待查询的节点队列（初始放入指定的targetId节点）
+        ConcurrentLinkedQueue<Peer> toQueryQueue = new ConcurrentLinkedQueue<>();
+        // 已查询过的节点ID（去重，避免重复查询）
+        Set<String> queriedNodeIds = ConcurrentHashMap.newKeySet();
+        // 最终收集到的所有有效节点
+        Set<Peer> discoveredPeers = ConcurrentHashMap.newKeySet();
+
+        // 3. 初始化队列：获取初始targetId对应的节点并加入队列
+        Peer initialPeer = getNode(targetId);
+        if (initialPeer != null) {
+            String initialPeerIdHex = bytesToHex(initialPeer.getId());
+            queriedNodeIds.add(initialPeerIdHex);
+            toQueryQueue.offer(initialPeer);
+            log.info("初始查询节点加入队列: {}", initialPeerIdHex.substring(0, 8) + "...");
+        } else {
+            log.warn("初始目标节点{}不存在于路由表，无法发起迭代查询", bytesToHex(targetId).substring(0, 8) + "...");
+            return Collections.emptyList();
+        }
+
+        // 4. 核心迭代逻辑：直到队列为空（无新节点可查）
+        while (!toQueryQueue.isEmpty()) {
+            // 取出队列头部的节点进行查询
+            Peer currentPeer = toQueryQueue.poll();
+            if (currentPeer == null) {
+                continue;
+            }
+
+            String currentPeerIdHex = bytesToHex(currentPeer.getId());
+            log.debug("开始查询节点: {}", currentPeerIdHex.substring(0, 8) + "...");
+
+            try {
+                // 5. 向当前节点发送FindNode请求
+                List<Peer> responsePeers = sendFindNodeToPeer(currentPeer, searchId, k, timeoutMillis);
+
+                // 6. 处理返回结果：过滤+去重+加入队列
+                if (responsePeers != null && !responsePeers.isEmpty()) {
+                    log.debug("从节点{}获取到{}个新节点", currentPeerIdHex.substring(0, 8) + "...", responsePeers.size());
+
+                    for (Peer peer : responsePeers) {
+                        // 过滤无效节点、本地节点
+                        if (peer == null || Arrays.equals(peer.getId(), localNodeId)) {
+                            continue;
+                        }
+
+                        String peerIdHex = bytesToHex(peer.getId());
+                        // 过滤已查询/已发现的节点
+                        if (queriedNodeIds.contains(peerIdHex) || discoveredPeers.contains(peer)) {
+                            continue;
+                        }
+
+                        // 7. 新增节点处理：加入发现列表+待查询队列+路由表
+                        discoveredPeers.add(peer);
+                        addPeer(peer); // 加入本地路由表
+                        queriedNodeIds.add(peerIdHex); // 标记为待查询（避免重复加入队列）
+                        toQueryQueue.offer(peer); // 加入查询队列，继续迭代
+
+                        log.debug("新增节点{}加入迭代队列", peerIdHex.substring(0, 8) + "...");
+                    }
+                } else {
+                    log.debug("节点{}无有效返回，停止该分支迭代", currentPeerIdHex.substring(0, 8) + "...");
+                }
+            } catch (Exception e) {
+                log.error("查询节点{}失败: {}", currentPeerIdHex.substring(0, 8) + "...", e.getMessage());
+                // 单个节点查询失败不终止整体迭代，继续处理队列中下一个节点
+                continue;
+            }
+        }
+
+        // 8. 迭代结束：对结果按与searchId的距离升序排序
+        List<Peer> resultList = new ArrayList<>(discoveredPeers);
+        resultList.sort((p1, p2) -> {
+            byte[] d1 = calculateDistance(p1.getId(), searchId);
+            byte[] d2 = calculateDistance(p2.getId(), searchId);
+            return compareDistance(d1, d2);
+        });
+
+        log.info("迭代查询完成，共发现{}个有效节点（已按距离排序）", resultList.size());
+        return resultList;
+    }
+
+    // 重载方法：简化调用（使用默认参数）
+    public List<Peer> findNodeIterative(byte[] targetId, byte[] searchId) {
+        // 默认参数：k=20，并发数=3，超时=2000ms
+        return findNodeIterative(targetId, searchId, 20, 3, 2000);
+    }
+
+
+
+    /**
      * 向指定节点发送FindNode请求
      */
-    private List<Peer> sendFindNodeToPeer(Peer peer, byte[] targetId, int count, int timeoutMillis) {
-        try {
-            String peerIdHex = bytesToHex(peer.getId());
-            int queryId = queryIdGenerator.incrementAndGet();
-            String queryKey = peerIdHex + "_" + queryId;
+    private List<Peer> sendFindNodeToPeer(Peer peer, byte[] searchId, int count, int timeoutMillis) {
+        return sendFindNodeToPeer(bytesToHex(peer.getId()), searchId, count, timeoutMillis);
+    }
 
+
+    /**
+     * 向指定节点发送FindNode请求
+     */
+    public List<Peer> sendFindNodeToPeer(String peerIdHex, byte[] searchId, int count, int timeoutMillis) {
+        try {
             // 构造查询数据
             byte[] data = new byte[36];
-            System.arraycopy(targetId, 0, data, 0, 32);
+            System.arraycopy(searchId, 0, data, 0, 32);
             System.arraycopy(intToBytes(count), 0, data, 32, 4);
 
             // 发送查询请求
@@ -792,6 +1040,8 @@ public class RoutingTable {
             for (Peer discoveredPeer : peers) {
                 if (discoveredPeer != null && !Arrays.equals(discoveredPeer.getId(), localNodeId)) {
                     addPeer(discoveredPeer);
+                }else {
+                    log.info("节点是自己");
                 }
             }
 
@@ -799,16 +1049,16 @@ public class RoutingTable {
             return peers;
 
         } catch (Exception e) {
-            log.debug("查询节点{}失败: {}", bytesToHex(peer.getId()), e.getMessage());
+            log.debug("查询节点{}失败: {}", peerIdHex, e.getMessage());
             return Collections.emptyList();
         }
     }
 
+
     /**
      * 检查迭代查询是否收敛
      */
-    private boolean isConverged(PriorityQueue<PeerDistance> alphaNodes,
-                                List<Peer> closestPeers, byte[] targetId) {
+    private boolean isConverged(PriorityQueue<PeerDistance> alphaNodes, List<Peer> closestPeers, byte[] targetId) {
         if (alphaNodes.isEmpty()) {
             return true;
         }
@@ -859,44 +1109,18 @@ public class RoutingTable {
         }
     }
 
-    /**
-     * 辅助类：存储节点和距离
-     */
-    private static class PeerDistance implements Comparable<PeerDistance> {
-        final Peer peer;
-        final byte[] distance;
-        final String distanceHex; // 用于比较
-
-        PeerDistance(Peer peer, byte[] distance) {
-            this.peer = peer;
-            this.distance = distance;
-            this.distanceHex = bytesToHex(distance);
-        }
-
-        @Override
-        public int compareTo(PeerDistance other) {
-            // 距离越小，优先级越高
-            for (int i = 0; i < distance.length; i++) {
-                int cmp = (distance[i] & 0xFF) - (other.distance[i] & 0xFF);
-                if (cmp != 0) {
-                    return cmp;
-                }
-            }
-            return 0;
-        }
-    }
 
 
     /**
      * 启动Kademlia DHT迭代查询
-     * @param targetNodeIdHex 目标节点ID的Hex字符串
+     * @param searchNodeIdHex 目标节点ID的Hex字符串
      * @return 查询到的最近节点列表
      */
-    public List<Peer> findNodeIterative(String targetNodeIdHex) {
-        log.info("开始迭代查询节点: {}", targetNodeIdHex);
+    public List<Peer> findNodeIterative(String searchNodeIdHex) {
+        log.info("开始迭代查询节点: {}", searchNodeIdHex);
 
         try {
-            byte[] targetId = hexToBytes(targetNodeIdHex);
+            byte[] targetId = hexToBytes(searchNodeIdHex);
             List<Peer> closestNodes = iterativeFindNode(targetId, 20, 3, 2000);
 
             log.info("迭代查询完成，找到{}个最近节点", closestNodes.size());
@@ -914,4 +1138,34 @@ public class RoutingTable {
     }
 
 
+    // ========== 新增：应用关闭时销毁定时任务池，防止资源泄漏 ==========
+    @PreDestroy
+    public void destroy() {
+        // 关闭定时任务池
+        if (persistScheduler != null && !persistScheduler.isShutdown()) {
+            persistScheduler.shutdown();
+            try {
+                // 等待10秒，若仍未关闭则强制终止
+                if (!persistScheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                    persistScheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                persistScheduler.shutdownNow();
+            }
+            log.info("路由表定时持久化任务池已关闭");
+        }
+
+        // 关闭业务线程池
+        if (executor != null && !executor.isShutdown()) {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+            }
+            log.info("路由表业务线程池已关闭");
+        }
+    }
 }

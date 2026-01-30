@@ -4,6 +4,7 @@ import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.PeerService;
 import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
 import com.bit.coin.p2p.protocol.impl.*;
@@ -33,6 +34,7 @@ import java.security.cert.CertificateException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
@@ -113,7 +115,7 @@ public class PeerServiceImpl implements PeerService {
                 QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
                 String peerId = quicConnection.getPeerId();
                 new Thread(()->{
-                    routingTable.sendFindNode(hexToBytes(peerId));
+                    routingTable.findNodeIterative(hexToBytes(peerId),self.getId());
                 }).start();
             }
             //连接完成后对引导节点进行节点查询
@@ -173,12 +175,12 @@ public class PeerServiceImpl implements PeerService {
 
 
 
+
     /**
      * 关闭服务器
      */
     @PreDestroy
     public void shutdown() throws InterruptedException {
-
         // 6. 关闭QUIC服务器Channel
         if (quicServerChannel != null) {
             try {
@@ -198,7 +200,9 @@ public class PeerServiceImpl implements PeerService {
                     .addListener(future -> log.info("QUIC EventLoopGroup已关闭"));
             eventLoopGroup = null;
         }
+    }
 
-
+    public List<Peer> getAllNodes() {
+        return routingTable.getAll();
     }
 }

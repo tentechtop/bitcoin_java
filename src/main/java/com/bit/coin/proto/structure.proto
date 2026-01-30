@@ -55,6 +55,10 @@ message ProtoPeer {
   double stake_amount = 11;    // 验证者质押量（SOL）
   int32 software_version = 12; // 节点软件版本
   uint64 last_seen = 13;       // 最后访问时间（毫秒级时间戳）
+  bytes shared_secret = 14;
+
+
+
 }
 
 // Solana P2P 节点握手协议消息

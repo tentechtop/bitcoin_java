@@ -2,6 +2,7 @@ package com.bit.coin.p2p.kad;
 
 import com.bit.coin.p2p.peer.Peer;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 
 import java.util.ArrayList;
@@ -12,6 +13,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 
 //节点ID是 32字节Hex
+@Slf4j
 @Data
 public class Bucket {
     // 桶ID
@@ -47,21 +49,38 @@ public class Bucket {
      * 先移除旧节点，再添加到头部，保证顺序正确性
      */
     public void pushToFront(Peer peer) {
+        log.info("推送到头部{}", peer.toString());
         String peerId = bytesToHex(peer.getId());
-        // 1. 先移除（若存在）
-        nodeIds.remove(peerId); // ConcurrentLinkedDeque的remove是线程安全的
-        // 2. 添加到头部
-        nodeIds.addFirst(peerId); // 线程安全的头部添加
-        // 3. 更新映射中的节点信息（如最后活跃时间）
-        Peer existingPeer = nodeMap.get(peerId);
-        if (existingPeer != null) {
-            existingPeer.setLastSeen(peer.getLastSeen());
-        } else {
-            // 若映射中没有，补充添加（避免数据不一致）
-            nodeMap.put(peerId, peer);
+
+        // 加锁保证操作原子性（ConcurrentLinkedDeque本身线程安全，但组合操作需加锁）
+        synchronized (this) {
+            // 1. 先移除（若存在）
+            nodeIds.remove(peerId);
+            // 2. 添加到头部
+            nodeIds.addFirst(peerId);
+            // 3. 更新映射中的节点信息
+            Peer existingPeer = nodeMap.get(peerId);
+            if (existingPeer != null) {
+                log.info("映射中存在");
+                // 原子更新所有字段
+                existingPeer.setLastSeen(System.currentTimeMillis());
+                existingPeer.setAddress(peer.getAddress());
+                existingPeer.setPort(peer.getPort());
+                existingPeer.setSharedSecret(peer.getSharedSecret()); // 确保赋值
+                log.info("映射IP端口{} {} ", existingPeer.getAddress(), existingPeer.getPort());
+                log.info("协商密钥{} ", bytesToHex(existingPeer.getSharedSecret()));
+                nodeMap.put(peerId, existingPeer);
+
+            } else {
+                log.info("映射中不存在");
+                peer.setLastSeen(System.currentTimeMillis());
+                nodeMap.put(peerId, peer);
+            }
+            Peer existingPeer2 = nodeMap.get(peerId);
+            log.info("打印测试测试{}",existingPeer2.toString());
+
+            this.lastSeen = System.currentTimeMillis();
         }
-        // 更新最后访问时间
-        this.lastSeen = System.currentTimeMillis();
     }
 
     /**
@@ -109,8 +128,13 @@ public class Bucket {
         nodeIds.addLast(peerId); // 线程安全的尾部添加
         Peer existingPeer = nodeMap.get(peerId);
         if (existingPeer != null) {
-            existingPeer.setLastSeen(peer.getLastSeen());
+            existingPeer.setLastSeen(System.currentTimeMillis());
+            existingPeer.setAddress(peer.getAddress());
+            existingPeer.setPort(peer.getPort());
+            existingPeer.setSharedSecret(peer.getSharedSecret());
+            nodeMap.put(peerId, existingPeer);
         } else {
+            peer.setLastSeen(System.currentTimeMillis());
             nodeMap.put(peerId, peer);
         }
         this.lastSeen = System.currentTimeMillis();
@@ -142,4 +166,7 @@ public class Bucket {
         return nodesList;
     }
 
+    public ConcurrentHashMap<String, Peer> getNodeMap() {
+        return nodeMap;
+    }
 }

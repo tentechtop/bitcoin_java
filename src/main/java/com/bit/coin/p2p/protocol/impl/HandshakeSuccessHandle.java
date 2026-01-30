@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.util.List;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+
 @Slf4j
 @Component
 public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandler{
@@ -24,9 +26,9 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
         //握手成功后将节点加入到路由表
         log.info("将节点加入到路由表");
         byte[] data = requestParams.getData();
+        log.info("数据长度{}",data.length);
         Peer deserialize = Peer.deserialize(data);
+        log.info("反序列化后{}",deserialize.toString());
         routingTable.addPeer(deserialize);
-        List<Peer> closestPeers = routingTable.findClosestPeers(routingTable.getLocalNodeId(), 10);
-        log.info("最近的节点{}",closestPeers.size());
     }
 }

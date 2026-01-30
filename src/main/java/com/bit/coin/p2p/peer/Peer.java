@@ -2,8 +2,11 @@ package com.bit.coin.p2p.peer;
 
 
 import com.bit.coin.proto.Structure;
+import com.bit.coin.structure.block.HexByteArraySerializer;
 import com.google.protobuf.ByteString;
 import lombok.*;
+import lombok.extern.slf4j.Slf4j;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -12,6 +15,7 @@ import java.net.InetSocketAddress;
  * 节点信息  按 8 字节对齐：180 ÷ 8 = 22.5 → 补 2 字节，最终Peer 对象本身占 182 字节（对齐后 184 字节）。
  * 5120个节点大约占用 2-3M内存
  */
+@Slf4j
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
@@ -26,9 +30,11 @@ public class Peer {
      * 例："7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"
      * 节点的公钥 base58编码后的值  Base58.encode(publicKey) 衍生字段 不参与序列化 只在反序列化衍生
      */
+    @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] id;
 
     //只有自己才保存
+    @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] privateKey;
 
 
@@ -104,7 +110,8 @@ public class Peer {
     /**
      * 与节点协商的共享密钥对 不需要序列化反序列化
      */
-    private byte[] sharedSecret;
+    @JsonSerialize(using = HexByteArraySerializer.class)
+    private volatile  byte[] sharedSecret;
 
 
     //节点最新区块hash
@@ -117,6 +124,15 @@ public class Peer {
     // 衍生字段（无需序列化，通过address+port动态构建）
     private InetSocketAddress inetSocketAddress;
 
+    public void setInetSocketAddress(InetSocketAddress inetSocketAddress){
+        this.inetSocketAddress = inetSocketAddress;
+        if (inetSocketAddress != null){
+            this.address = inetSocketAddress.getAddress().getHostAddress();
+            log.info("网络地址{}",this.address);
+            this.port = inetSocketAddress.getPort();
+            log.info("网络端口{}",this.port);
+        }
+    }
 
 
 
@@ -127,7 +143,6 @@ public class Peer {
      * 序列化当前Peer对象为字节数组（基于Protobuf）
      */
     public byte[] serialize() throws IOException {
-
         return toProto().toByteArray();
     }
 
@@ -175,6 +190,11 @@ public class Peer {
         builder.setSoftwareVersion(softwareVersion);
         builder.setLastSeen(lastSeen);
 
+        if (sharedSecret != null) {
+            builder.setSharedSecret(ByteString.copyFrom(sharedSecret));
+        }
+
+
         return builder.build();
     }
 
@@ -208,6 +228,10 @@ public class Peer {
         peer.setStakeAmount(protoPeer.getStakeAmount());
         peer.setSoftwareVersion(protoPeer.getSoftwareVersion());
         peer.setLastSeen(protoPeer.getLastSeen());
+
+        if (!protoPeer.getSharedSecret().isEmpty()) {
+            peer.setSharedSecret(protoPeer.getSharedSecret().toByteArray());
+        }
 
         // 衍生字段inetSocketAddress不序列化，调用get时自动构建
         return peer;

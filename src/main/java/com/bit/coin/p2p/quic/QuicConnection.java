@@ -410,6 +410,7 @@ public class QuicConnection {
                     peer.setInetSocketAddress(remoteAddress);
                     peer.setId(nodeId);
                     peer.setSharedSecret(sharedSecret);
+                    log.info("打印节点信息{} 数据长度{}",peer.toString(),peer.serialize().length);
 
                     P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
                     byte[] serialize1 = p2PMessage.serialize();

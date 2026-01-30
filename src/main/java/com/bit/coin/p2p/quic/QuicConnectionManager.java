@@ -301,7 +301,8 @@ public class QuicConnectionManager {
             connection.startHeartbeat();
             addConnection(conId, connection);
             addPeerConnect(peerId,conId);
-            resQuicFrame.release();
+
+            log.info("释放帧");
 
             //通知路由表添加节点
             Peer peer = new Peer();
@@ -317,6 +318,7 @@ public class QuicConnectionManager {
             quicMsg.setData(serialize1);
             pushCompleteMsg(quicMsg);
 
+            resQuicFrame.release();
             return connection;
         }
         return null;
