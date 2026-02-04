@@ -84,7 +84,8 @@ public class PeerClient {
             QuicConnection peerConnection = getPeerConnection(peerId);
             log.info("节点ID{}",peerId);
             assert peerConnection != null;
-            if (peerConnection.sendData(serialize)){
+            //且协议有返回值
+            if (peerConnection.sendData(serialize) && protocol.isHasResponse()){
                 return responseFuture.get(time, TimeUnit.SECONDS).getData();
             }else {
                 return null;
@@ -94,6 +95,10 @@ public class PeerClient {
             throw new SendDataEx(e.getMessage(),500);
         }
     }
+
+
+
+
 
 
 

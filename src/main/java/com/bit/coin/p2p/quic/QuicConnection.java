@@ -24,6 +24,7 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.config.SystemConfig.SelfKey;
 import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
@@ -377,11 +378,20 @@ public class QuicConnection {
             byte[] bPrivateKey = BKeys[0];
             byte[] bPublicKey = BKeys[1];
             byte[] sharedSecret = ECCWithAESGCM.generateSharedSecret(bPrivateKey, aPublicKey);
+            //深度复制
+            byte[] sharedSecretCopy = new byte[sharedSecret.length];
+            System.arraycopy(sharedSecret, 0, sharedSecretCopy, 0, sharedSecret.length);
+            setSharedSecret(sharedSecretCopy);
+
             log.info("共享加密密钥对sharedSecret: {}", bytesToHex(sharedSecret));
 
             NetworkHandshake networkHandshake = new NetworkHandshake();
             networkHandshake.setNodeId(self.getId());
             networkHandshake.setSharedSecret(bPublicKey);
+            networkHandshake.setLatestHash(mainTipBlock.getHash());
+            networkHandshake.setLatestHeight(mainTipBlock.getHeight());
+            networkHandshake.setChainWork(mainTipBlock.getChainWork());
+
             byte[] serialize = networkHandshake.serialize();
             acquire.setConnectionId(conId);//生成连接ID
             acquire.setDataId(dataId);
@@ -409,8 +419,11 @@ public class QuicConnection {
                     InetSocketAddress remoteAddress = quicFrame.getRemoteAddress();
                     peer.setInetSocketAddress(remoteAddress);
                     peer.setId(nodeId);
-                    peer.setSharedSecret(sharedSecret);
-                    log.info("打印节点信息{} 数据长度{}",peer.toString(),peer.serialize().length);
+                    peer.setHeight(deserialize.getLatestHeight());
+                    peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
+                    peer.setChainWork(deserialize.getChainWork());
+                    log.info("测试工作总量{}",deserialize.getChainWork().toString());
+
 
                     P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
                     byte[] serialize1 = p2PMessage.serialize();

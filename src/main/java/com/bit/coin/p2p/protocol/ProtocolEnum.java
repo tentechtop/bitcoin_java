@@ -32,6 +32,20 @@ public enum ProtocolEnum {
     P2P_Find_Node_Res(8, "/P2P_Find_Node/1.0.0",false),
 
 
+    //广播简约资源消息 资源类型 区块 交易  无回复 [hash 32字节][type 1字节 0区块 1交易]
+    P2P_Broadcast_Simple_Resource(9, "/P2P_Broadcast_Simple_Resource/1.0.0",false),
+
+    //请求资源消息
+    P2P_Get_Resource_Req(10, "/P2P_Get_Resource_Req/1.0.0",false),
+
+
+
+    //接收区块消息 无回复
+    P2P_Receive_Block(11, "/P2P_Receive_Block/1.0.0",false),
+    //接收交易消息 无回复
+    P2P_Receive_Transaction(12, "/P2P_Receive_Transaction/1.0.0",false),
+
+
 
 
 

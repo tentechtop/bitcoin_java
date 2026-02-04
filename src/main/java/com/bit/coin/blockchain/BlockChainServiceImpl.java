@@ -8,6 +8,8 @@ import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
 
+import com.bit.coin.p2p.impl.PeerClient;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockBody;
 import com.bit.coin.structure.block.BlockHeader;
@@ -58,6 +60,12 @@ public class BlockChainServiceImpl implements BlockChainService{
 
     @Autowired
     private TxPool txPool;
+
+    @Autowired
+    private PeerClient peerClient;
+
+    @Autowired
+    private RoutingTable routingTable;
 
 
     public static volatile Block mainTipBlock = null;
@@ -687,7 +695,12 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
 
         // 5. 链接关系处理（主链延续、孤块、分叉）
-        return handleBlockConnection(block);
+        if (handleBlockConnection(block)){
+            routingTable.BroadcastResource(0,block.getHash());
+            return true;
+        }else {
+            return false;
+        }
     }
 
     /**
@@ -1005,6 +1018,9 @@ public class BlockChainServiceImpl implements BlockChainService{
                 removeConfirmedTxsFromPool(block);
                 // 尝试处理孤块
                 processOrphanBlocks();
+
+
+
                 return true;
             }
             // 计算当前主链的链工作量

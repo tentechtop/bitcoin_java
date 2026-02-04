@@ -33,8 +33,6 @@ public class P2PFindNodeReqHandle implements ProtocolHandler.ResultProtocolHandl
         int count = bytesToInt(new byte[]{data[32], data[33], data[34], data[35]});
         log.info("收到节点查询请求{} 查询数量{}",bytesToHex(data),count);
         List<Peer> closestPeers = routingTable.findClosestPeers(targetId, count);
-        //将Peer的加密都设置为空
-        closestPeers.forEach(peer -> peer.setSharedSecret(null));
         log.info("返回最近的节点信息{}",closestPeers.size());
         byte[] bytes = routingTable.serializePeers(closestPeers);
         P2PMessage p2PMessage = newResponseMessage(CommonConfig.getSelf().getId(), ProtocolEnum.P2P_Find_Node_Req,requestParams.getRequestId(), bytes);

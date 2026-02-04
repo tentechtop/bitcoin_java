@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.CommonConfig.*;
 import static com.bit.coin.config.SystemConfig.SelfKey;
 import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
@@ -199,7 +200,7 @@ public class QuicConnectionManager {
         String ipAddress = multiAddress.getIpAddress();
         int port = multiAddress.getPort();
         InetSocketAddress remoteAddress = new InetSocketAddress(ipAddress, port);
-        return connectRemote(peerIdHex, remoteAddress);
+        return connectRemote(remoteAddress);
     }
 
 
@@ -240,18 +241,14 @@ public class QuicConnectionManager {
      * 与指定的节点建立连接
      * 为该连接建立心跳任务
      */
-    public static QuicConnection connectRemote(String peerId,InetSocketAddress remoteAddress)
+    public static QuicConnection connectRemote(InetSocketAddress remoteAddress)
             throws ExecutionException, InterruptedException, TimeoutException, IOException {
         // 1. 参数校验
         if (remoteAddress == null) {
             log.error("远程地址不能为空");
             return null;
         }
-        //判断是否存在
-        if (QuicConnectionManager.getPeerConnection(peerId) != null) {
-            log.error("该节点已存在连接");
-            return QuicConnectionManager.getPeerConnection(peerId);
-        }
+
         long conId = generator.nextId();
         long dataId = generator.nextId();
         //给远程地址发送连接请求请求帧 等待回复 回复成功后建立连接
@@ -260,7 +257,6 @@ public class QuicConnectionManager {
         reqQuicFrame.setDataId(dataId);
         reqQuicFrame.setTotal(0);
         reqQuicFrame.setFrameType(QuicFrameEnum.CONNECT_REQUEST_FRAME.getCode());
-
         //连接包 包含节点ID 加密公钥
 
         NetworkHandshake networkHandshake = new NetworkHandshake();
@@ -270,6 +266,12 @@ public class QuicConnectionManager {
         byte[] aPublicKey = AKeys[1];
         //序列化耗时
         networkHandshake.setSharedSecret(aPublicKey);
+        networkHandshake.setLatestHash(mainTipBlock.getHash());
+        networkHandshake.setLatestHeight(mainTipBlock.getHeight());
+        networkHandshake.setChainWork(mainTipBlock.getChainWork());
+        log.info("测试工作总量{}",mainTipBlock.getChainWork().toString());
+
+
         byte[] serialize = networkHandshake.serialize();
         int length = serialize.length;
         log.info("握手长度！{}",length);
@@ -291,7 +293,7 @@ public class QuicConnectionManager {
             //协商
             byte[] sharedSecret = generateSharedSecret(aPrivateKey, bPublicKey);
             log.info("协商共享密钥是:{}", bytesToHex(sharedSecret));
-            connection.setPeerId(peerId);
+            connection.setPeerId(bytesToHex(nodeId));
             connection.stopHeartbeat();
             connection.setUDP(true);
             connection.setOutbound(true);
@@ -300,7 +302,7 @@ public class QuicConnectionManager {
             connection.setSharedSecret(sharedSecret);
             connection.startHeartbeat();
             addConnection(conId, connection);
-            addPeerConnect(peerId,conId);
+            addPeerConnect(bytesToHex(nodeId),conId);
 
             log.info("释放帧");
 
@@ -308,7 +310,12 @@ public class QuicConnectionManager {
             Peer peer = new Peer();
             peer.setInetSocketAddress(resQuicFrame.getRemoteAddress());
             peer.setId(nodeId);
-            peer.setSharedSecret(sharedSecret);
+            peer.setHeight(deserialize.getLatestHeight());
+            peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
+            peer.setChainWork(deserialize.getChainWork());
+            log.info("握手工作总量{}",deserialize.getChainWork().toString());
+
+
 
             P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
             byte[] serialize1 = p2PMessage.serialize();

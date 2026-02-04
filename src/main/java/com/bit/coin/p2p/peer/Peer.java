@@ -3,12 +3,17 @@ package com.bit.coin.p2p.peer;
 
 import com.bit.coin.proto.Structure;
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.MultiAddress;
+import com.bit.coin.utils.UInt256;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.protobuf.ByteString;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.bitcoinj.core.Base58;
 import tools.jackson.databind.annotation.JsonSerialize;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 
 /**
@@ -56,6 +61,16 @@ public class Peer {
      * 例："/ip4/192.168.1.100/tcp/8000/p2p/7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"
      */
     private String multiaddr;
+    //get
+    public String getMultiaddr() {
+        //如果地址端口和节点ID不为空
+        if (address != null && port != 0) {
+            return MultiAddress.build("ip4", address, MultiAddress.Protocol.QUIC, port, Base58.encode(id)).toRawAddress();
+        }
+        return null;
+    }
+
+
 
     /**
      * 节点支持的通信协议版本
@@ -107,17 +122,22 @@ public class Peer {
     private long lastSeen;
 
 
-    /**
-     * 与节点协商的共享密钥对 不需要序列化反序列化
-     */
-    @JsonSerialize(using = HexByteArraySerializer.class)
-    private volatile  byte[] sharedSecret;
-
 
     //节点最新区块hash
     private String hashHex;
     //节点区块链顶端高度
     private int height;
+    //顶端累计工作总量
+    @JsonIgnore
+    private UInt256 chainWork = UInt256.fromLong(0L);
+    public BigInteger getChainWorkDecimal(){
+        if (chainWork==null){
+            chainWork = UInt256.fromLong(0L);
+        }
+        return chainWork.toBigInteger();
+    }
+
+
 
 
 
@@ -190,11 +210,12 @@ public class Peer {
         builder.setSoftwareVersion(softwareVersion);
         builder.setLastSeen(lastSeen);
 
-        if (sharedSecret != null) {
-            builder.setSharedSecret(ByteString.copyFrom(sharedSecret));
+        if (hashHex!=null){
+            builder.setLatestHash(hashHex);
         }
 
-
+        builder.setHeight(height);
+        builder.setTotalWork(ByteString.copyFrom(chainWork.toBytes()));
         return builder.build();
     }
 
@@ -229,9 +250,12 @@ public class Peer {
         peer.setSoftwareVersion(protoPeer.getSoftwareVersion());
         peer.setLastSeen(protoPeer.getLastSeen());
 
-        if (!protoPeer.getSharedSecret().isEmpty()) {
-            peer.setSharedSecret(protoPeer.getSharedSecret().toByteArray());
-        }
+
+
+        //最新hash
+        peer.setHashHex(protoPeer.getLatestHash());
+        peer.setHeight(protoPeer.getHeight());
+        peer.setChainWork(UInt256.fromBytes(protoPeer.getTotalWork().toByteArray()));
 
         // 衍生字段inetSocketAddress不序列化，调用get时自动构建
         return peer;

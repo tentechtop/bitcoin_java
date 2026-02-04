@@ -2,6 +2,8 @@ package com.bit.coin.p2p.protocol;
 
 
 import com.bit.coin.proto.Structure;
+import com.bit.coin.utils.UInt256;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.protobuf.ByteString;
 import lombok.Data;
 
@@ -52,11 +54,17 @@ public class NetworkHandshake {
 
     //创世区块Hash
     //节点信息
+    //最新顶端区块hash
+    private byte[] latestHash;
+    //最新顶断区块高度
+    private int latestHeight;
+    //顶端累计工作总量
+    @JsonIgnore
+    private UInt256 chainWork = UInt256.fromLong(0L);
 
 
 
 
-    
 
     // ========================== 序列化/反序列化核心方法 ==========================
 
@@ -115,6 +123,16 @@ public class NetworkHandshake {
             builder.setSharedSecret(ByteString.copyFrom(sharedSecret));
         }
 
+        if (latestHash != null && latestHash.length > 0) {
+            builder.setLatestHash(ByteString.copyFrom(latestHash));
+        }
+        if (latestHeight != 0) {
+            builder.setLatestHeight(latestHeight);
+        }
+        if (chainWork != null) {
+            builder.setTotalWork(ByteString.copyFrom(chainWork.toBytes()));
+        }
+
         return builder.build();
     }
 
@@ -143,9 +161,10 @@ public class NetworkHandshake {
         // 处理字符串字段
         handshake.setHardwareInfo(proto.getHardwareInfo());
         handshake.setNodeVersion(proto.getNodeVersion());
-
         handshake.setSharedSecret(proto.getSharedSecret().toByteArray());
-
+        handshake.setLatestHash(proto.getLatestHash().toByteArray());
+        handshake.setLatestHeight(proto.getLatestHeight());
+        handshake.setChainWork(UInt256.fromBytes(proto.getTotalWork().toByteArray()));
         return handshake;
     }
 }

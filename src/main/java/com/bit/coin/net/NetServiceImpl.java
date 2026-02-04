@@ -1,7 +1,11 @@
 package com.bit.coin.net;
 
 
-public class NetServiceImpl {
+import org.springframework.stereotype.Service;
+
+@Service
+public class NetServiceImpl implements NetService{
+
 
 
 

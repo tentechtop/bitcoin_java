@@ -8,9 +8,11 @@ import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
+import com.bit.coin.p2p.protocol.dto.BroadcastResource;
 import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.MultiAddress;
+import com.bit.coin.utils.UInt256;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.Data;
@@ -31,6 +33,7 @@ import java.util.stream.Collectors;
 import static com.bit.coin.config.CommonConfig.PEER_KEY;
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
+import static com.bit.coin.p2p.quic.QuicConnectionManager.getOnlinePeerIds;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -363,7 +366,7 @@ public class RoutingTable {
      * @param nodeId Base58编码的节点ID
      * @return 节点信息，无则返回null
      */
-    public Peer getNode(String nodeId) {
+    public Peer getNodeByBase58Id(String nodeId) {
         if (nodeId == null || nodeId.isEmpty()) {
             return null;
         }
@@ -375,6 +378,7 @@ public class RoutingTable {
             return null;
         }
     }
+
 
     /**
      * 根据节点ID（字节数组）获取节点
@@ -394,6 +398,10 @@ public class RoutingTable {
             log.error("获取节点{}失败", bytesToHex(nodeId), e);
             return null;
         }
+    }
+
+    public Peer getNodeByHexId(String hexId) {
+        return getNode(hexToBytes(hexId));
     }
 
     /**
@@ -654,6 +662,85 @@ public class RoutingTable {
         // 返回不可修改的列表，避免外部修改
         return Collections.unmodifiableList(allValidPeers);
     }
+
+    public void BroadcastResource(int i, byte[] hash) {
+        BroadcastResource broadcastResource = new BroadcastResource();
+        broadcastResource.setHash(hash);
+        broadcastResource.setType(i);
+        //将这个消息广播给所有的在线节点
+        List<Peer> onlineNodes = getOnlineNodes();
+        log.info("广播消息{}",onlineNodes.size());
+        for (Peer peer : onlineNodes) {
+            log.info("发送消息给节点{}",bytesToHex(peer.getId()));
+            peerClient.sendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Broadcast_Simple_Resource, broadcastResource.toBytes(), 5000);
+        }
+        log.info("全部发送完毕");
+    }
+
+    public List<Peer> getOnlineNodes() {
+        List<Peer> all = getAll();
+        Set<String> onlinePeerIds = getOnlinePeerIds();//all的id一定要在onlinePeerIds中
+        List<Peer> onlineNodes = all.stream()
+                .filter(peer -> onlinePeerIds.contains(bytesToHex(peer.getId())))
+                .toList();
+        //onlineNodes中的online字段改成true
+        onlineNodes.forEach(peer -> peer.setOnline(true));
+        return onlineNodes;
+    }
+
+    //获取路由表 且按照桶排序 返回list<list<peer>>
+    /**
+     * 获取路由表 且按照桶排序 返回list<list<peer>>
+     * 外层List：按桶ID从小到大排序的所有K桶
+     * 内层List：对应K桶中的所有有效节点（过滤本地节点，保证线程安全）
+     * @return 按桶排序的节点列表，空桶对应空的内层List
+     */
+    public List<List<Peer>> getRoutingTable() {
+        // 1. 初始化结果列表，容量与桶数量一致，保证顺序
+        List<List<Peer>> routingTable = new ArrayList<>(buckets.size());
+
+        // 2. 遍历所有桶（CopyOnWriteArrayList遍历天然线程安全）
+        for (Bucket bucket : buckets) {
+            if (bucket == null) {
+                // 空桶添加空列表
+                routingTable.add(Collections.emptyList());
+                continue;
+            }
+
+            // 3. 线程安全地获取桶内节点，并过滤本地节点
+            List<Peer> bucketPeers = new ArrayList<>();
+            // 加锁保证桶内节点读取的原子性（与add/delete操作的锁对齐）
+            synchronized (bucket) {
+                for (Peer peer : bucket.getNodesArrayList()) {
+                    // 过滤null节点和本地节点，避免返回无效数据
+                    if (peer != null && !Arrays.equals(peer.getId(), localNodeId)) {
+                        bucketPeers.add(peer);
+                    }
+                }
+            }
+
+            // 4. 转为不可修改列表，防止外部修改内部数据
+            routingTable.add(Collections.unmodifiableList(bucketPeers));
+        }
+
+        // 5. 返回不可修改的外层列表，保证数据安全性
+        return Collections.unmodifiableList(routingTable);
+    }
+
+    public void updateLatest(String peerId, String hashHex, int height, UInt256 chainWork) {
+        //获取节点并更新
+        Peer peer = getNodeByHexId(peerId);
+        if (peer!=null){
+            //如果当前高度大于过去记录的高度就更新
+            if (height>peer.getHeight()){
+                peer.setHashHex(hashHex);
+                peer.setHeight(height);
+                peer.setChainWork(chainWork);
+            }
+            addPeer(peer);
+        }
+    }
+
 
     /**
      * 辅助类：存储节点和距离

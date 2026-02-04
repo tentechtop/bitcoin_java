@@ -23,7 +23,7 @@ system:
     - ''
   #- '/ip4/101.35.87.31/quic/8333/p2p/9PRoc35gnFvJr1PHVQLWyzBM5K8EqTNhRMqVNDSYbPRZ'
   bootstrap:
-    - '/ip4/127.0.0.1/quic/8334/p2p/7MqSV9R3Pf4ZHmupa17nmUNqVDGNogwgJAx9KBaGrVkL'
+    - '/ip4/127.0.0.1/quic/8334/p2p/GYB1mptUe7N3fYCUTBDMHdgQmLDn8YLCrS3mkBuLqdSy'
 
 logging:
   level:

@@ -48,7 +48,7 @@ public class Block {
     private int txCount;
 
     @JsonIgnore
-    private UInt256 chainWork = UInt256.fromLong(123L);
+    private UInt256 chainWork = UInt256.fromLong(0L);
 
     private List<Transaction> transactions;
 
@@ -141,6 +141,9 @@ public class Block {
             dos.writeInt(txCount);
             //读取32字节
 
+            //工作总量
+            dos.write(chainWork.toBytes());
+
             // 序列化 Transaction 列表
             dos.writeInt(transactions != null ? transactions.size() : 0);
             if (transactions != null && !transactions.isEmpty()) {
@@ -184,6 +187,9 @@ public class Block {
                 block.setHeight(dis.readInt());
                 //交易数量
                 block.setTxCount(dis.readInt());
+
+                //工作总量
+                block.setChainWork(UInt256.fromBytes(dis.readNBytes(32)));
 
                 // 反序列化 Transaction 列表
                 int txCount = dis.readInt();

@@ -49,7 +49,7 @@ public class P2PMessage {
     private byte reqResFlag;       // 请求/响应标识：0=请求，1=响应（仅requestId非全零时有效）
     private int type;              // 消息类型（转发至对应处理器）
     private int length;            // data字段长度（protobuf序列化后）
-    private short version = 1;     // 协议版本（默认1，防篡改）
+    private short version = 1;     // 协议版本（默认1，防篡改）  //从版本2开始都是密文传输 读取data前需要解密
     private byte[] data;           // 业务数据（protobuf序列化，JVM数组长度为int）
 
 

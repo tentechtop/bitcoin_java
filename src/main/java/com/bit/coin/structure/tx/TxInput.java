@@ -75,21 +75,6 @@ public class TxInput {
     public static final int SERIALIZED_LENGTH = 133; // 序列化总长度: 32+4+1+96=133字节
 
 
-    public Script getScriptSigWk() {
-        Script script = null;
-        if (scriptSigWk != null) {
-            script = scriptSigWk.get();
-        }
-        if (script == null) {
-            try {
-                script = Script.deserialize(scriptSig);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            scriptSigWk = new WeakReference<>(script);
-        }
-        return script;
-    }
 
 
     /**

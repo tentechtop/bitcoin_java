@@ -170,6 +170,7 @@ public final class Structure {
   }
   /**
    * <pre>
+   * protoc --proto_path=. --java_out=. structure.proto
    * cd F:&#92;workSpace2026&#92;blockchain&#92;solana_java&#92;src&#92;main&#92;java&#92;com&#92;bit&#92;solana&#92;proto  protoc --proto_path=. --java_out=. structure.proto
    * protoc --proto_path=. --java_out=. structure.proto
    * </pre>
@@ -736,6 +737,7 @@ public final class Structure {
     }
     /**
      * <pre>
+     * protoc --proto_path=. --java_out=. structure.proto
      * cd F:&#92;workSpace2026&#92;blockchain&#92;solana_java&#92;src&#92;main&#92;java&#92;com&#92;bit&#92;solana&#92;proto  protoc --proto_path=. --java_out=. structure.proto
      * protoc --proto_path=. --java_out=. structure.proto
      * </pre>
@@ -3535,10 +3537,44 @@ public final class Structure {
     long getLastSeen();
 
     /**
-     * <code>bytes shared_secret = 14;</code>
-     * @return The sharedSecret.
+     * <pre>
+     * 最新高度 无符号32
+     * </pre>
+     *
+     * <code>uint32 height = 14;</code>
+     * @return The height.
      */
-    com.google.protobuf.ByteString getSharedSecret();
+    int getHeight();
+
+    /**
+     * <pre>
+     * 最新hash 字符串
+     * </pre>
+     *
+     * <code>string latest_hash = 15;</code>
+     * @return The latestHash.
+     */
+    java.lang.String getLatestHash();
+    /**
+     * <pre>
+     * 最新hash 字符串
+     * </pre>
+     *
+     * <code>string latest_hash = 15;</code>
+     * @return The bytes for latestHash.
+     */
+    com.google.protobuf.ByteString
+        getLatestHashBytes();
+
+    /**
+     * <pre>
+     * 顶端累计工作总量
+     * </pre>
+     *
+     * <code>bytes total_work = 16;</code>
+     * @return The totalWork.
+     */
+    com.google.protobuf.ByteString getTotalWork();
   }
   /**
    * Protobuf type {@code ProtoPeer}
@@ -3567,7 +3603,8 @@ public final class Structure {
       address_ = "";
       multiaddr_ = "";
       protocolVersion_ = "";
-      sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+      latestHash_ = "";
+      totalWork_ = com.google.protobuf.ByteString.EMPTY;
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -3874,15 +3911,81 @@ public final class Structure {
       return lastSeen_;
     }
 
-    public static final int SHARED_SECRET_FIELD_NUMBER = 14;
-    private com.google.protobuf.ByteString sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+    public static final int HEIGHT_FIELD_NUMBER = 14;
+    private int height_ = 0;
     /**
-     * <code>bytes shared_secret = 14;</code>
-     * @return The sharedSecret.
+     * <pre>
+     * 最新高度 无符号32
+     * </pre>
+     *
+     * <code>uint32 height = 14;</code>
+     * @return The height.
      */
     @java.lang.Override
-    public com.google.protobuf.ByteString getSharedSecret() {
-      return sharedSecret_;
+    public int getHeight() {
+      return height_;
+    }
+
+    public static final int LATEST_HASH_FIELD_NUMBER = 15;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object latestHash_ = "";
+    /**
+     * <pre>
+     * 最新hash 字符串
+     * </pre>
+     *
+     * <code>string latest_hash = 15;</code>
+     * @return The latestHash.
+     */
+    @java.lang.Override
+    public java.lang.String getLatestHash() {
+      java.lang.Object ref = latestHash_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        latestHash_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * 最新hash 字符串
+     * </pre>
+     *
+     * <code>string latest_hash = 15;</code>
+     * @return The bytes for latestHash.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getLatestHashBytes() {
+      java.lang.Object ref = latestHash_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        latestHash_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int TOTAL_WORK_FIELD_NUMBER = 16;
+    private com.google.protobuf.ByteString totalWork_ = com.google.protobuf.ByteString.EMPTY;
+    /**
+     * <pre>
+     * 顶端累计工作总量
+     * </pre>
+     *
+     * <code>bytes total_work = 16;</code>
+     * @return The totalWork.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString getTotalWork() {
+      return totalWork_;
     }
 
     private byte memoizedIsInitialized = -1;
@@ -3938,8 +4041,14 @@ public final class Structure {
       if (lastSeen_ != 0L) {
         output.writeUInt64(13, lastSeen_);
       }
-      if (!sharedSecret_.isEmpty()) {
-        output.writeBytes(14, sharedSecret_);
+      if (height_ != 0) {
+        output.writeUInt32(14, height_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(latestHash_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 15, latestHash_);
+      }
+      if (!totalWork_.isEmpty()) {
+        output.writeBytes(16, totalWork_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -3999,9 +4108,16 @@ public final class Structure {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt64Size(13, lastSeen_);
       }
-      if (!sharedSecret_.isEmpty()) {
+      if (height_ != 0) {
         size += com.google.protobuf.CodedOutputStream
-          .computeBytesSize(14, sharedSecret_);
+          .computeUInt32Size(14, height_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(latestHash_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(15, latestHash_);
+      }
+      if (!totalWork_.isEmpty()) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(16, totalWork_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -4045,8 +4161,12 @@ public final class Structure {
           != other.getSoftwareVersion()) return false;
       if (getLastSeen()
           != other.getLastSeen()) return false;
-      if (!getSharedSecret()
-          .equals(other.getSharedSecret())) return false;
+      if (getHeight()
+          != other.getHeight()) return false;
+      if (!getLatestHash()
+          .equals(other.getLatestHash())) return false;
+      if (!getTotalWork()
+          .equals(other.getTotalWork())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -4089,8 +4209,12 @@ public final class Structure {
       hash = (37 * hash) + LAST_SEEN_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getLastSeen());
-      hash = (37 * hash) + SHARED_SECRET_FIELD_NUMBER;
-      hash = (53 * hash) + getSharedSecret().hashCode();
+      hash = (37 * hash) + HEIGHT_FIELD_NUMBER;
+      hash = (53 * hash) + getHeight();
+      hash = (37 * hash) + LATEST_HASH_FIELD_NUMBER;
+      hash = (53 * hash) + getLatestHash().hashCode();
+      hash = (37 * hash) + TOTAL_WORK_FIELD_NUMBER;
+      hash = (53 * hash) + getTotalWork().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -4235,7 +4359,9 @@ public final class Structure {
         stakeAmount_ = 0D;
         softwareVersion_ = 0;
         lastSeen_ = 0L;
-        sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+        height_ = 0;
+        latestHash_ = "";
+        totalWork_ = com.google.protobuf.ByteString.EMPTY;
         return this;
       }
 
@@ -4309,7 +4435,13 @@ public final class Structure {
           result.lastSeen_ = lastSeen_;
         }
         if (((from_bitField0_ & 0x00002000) != 0)) {
-          result.sharedSecret_ = sharedSecret_;
+          result.height_ = height_;
+        }
+        if (((from_bitField0_ & 0x00004000) != 0)) {
+          result.latestHash_ = latestHash_;
+        }
+        if (((from_bitField0_ & 0x00008000) != 0)) {
+          result.totalWork_ = totalWork_;
         }
       }
 
@@ -4370,8 +4502,16 @@ public final class Structure {
         if (other.getLastSeen() != 0L) {
           setLastSeen(other.getLastSeen());
         }
-        if (!other.getSharedSecret().isEmpty()) {
-          setSharedSecret(other.getSharedSecret());
+        if (other.getHeight() != 0) {
+          setHeight(other.getHeight());
+        }
+        if (!other.getLatestHash().isEmpty()) {
+          latestHash_ = other.latestHash_;
+          bitField0_ |= 0x00004000;
+          onChanged();
+        }
+        if (!other.getTotalWork().isEmpty()) {
+          setTotalWork(other.getTotalWork());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -4464,11 +4604,21 @@ public final class Structure {
                 bitField0_ |= 0x00001000;
                 break;
               } // case 104
-              case 114: {
-                sharedSecret_ = input.readBytes();
+              case 112: {
+                height_ = input.readUInt32();
                 bitField0_ |= 0x00002000;
                 break;
-              } // case 114
+              } // case 112
+              case 122: {
+                latestHash_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00004000;
+                break;
+              } // case 122
+              case 130: {
+                totalWork_ = input.readBytes();
+                bitField0_ |= 0x00008000;
+                break;
+              } // case 130
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -5202,34 +5352,182 @@ public final class Structure {
         return this;
       }
 
-      private com.google.protobuf.ByteString sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+      private int height_ ;
       /**
-       * <code>bytes shared_secret = 14;</code>
-       * @return The sharedSecret.
+       * <pre>
+       * 最新高度 无符号32
+       * </pre>
+       *
+       * <code>uint32 height = 14;</code>
+       * @return The height.
        */
       @java.lang.Override
-      public com.google.protobuf.ByteString getSharedSecret() {
-        return sharedSecret_;
+      public int getHeight() {
+        return height_;
       }
       /**
-       * <code>bytes shared_secret = 14;</code>
-       * @param value The sharedSecret to set.
+       * <pre>
+       * 最新高度 无符号32
+       * </pre>
+       *
+       * <code>uint32 height = 14;</code>
+       * @param value The height to set.
        * @return This builder for chaining.
        */
-      public Builder setSharedSecret(com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        sharedSecret_ = value;
+      public Builder setHeight(int value) {
+
+        height_ = value;
         bitField0_ |= 0x00002000;
         onChanged();
         return this;
       }
       /**
-       * <code>bytes shared_secret = 14;</code>
+       * <pre>
+       * 最新高度 无符号32
+       * </pre>
+       *
+       * <code>uint32 height = 14;</code>
        * @return This builder for chaining.
        */
-      public Builder clearSharedSecret() {
+      public Builder clearHeight() {
         bitField0_ = (bitField0_ & ~0x00002000);
-        sharedSecret_ = getDefaultInstance().getSharedSecret();
+        height_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object latestHash_ = "";
+      /**
+       * <pre>
+       * 最新hash 字符串
+       * </pre>
+       *
+       * <code>string latest_hash = 15;</code>
+       * @return The latestHash.
+       */
+      public java.lang.String getLatestHash() {
+        java.lang.Object ref = latestHash_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          latestHash_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * 最新hash 字符串
+       * </pre>
+       *
+       * <code>string latest_hash = 15;</code>
+       * @return The bytes for latestHash.
+       */
+      public com.google.protobuf.ByteString
+          getLatestHashBytes() {
+        java.lang.Object ref = latestHash_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          latestHash_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * 最新hash 字符串
+       * </pre>
+       *
+       * <code>string latest_hash = 15;</code>
+       * @param value The latestHash to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLatestHash(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        latestHash_ = value;
+        bitField0_ |= 0x00004000;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 最新hash 字符串
+       * </pre>
+       *
+       * <code>string latest_hash = 15;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLatestHash() {
+        latestHash_ = getDefaultInstance().getLatestHash();
+        bitField0_ = (bitField0_ & ~0x00004000);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 最新hash 字符串
+       * </pre>
+       *
+       * <code>string latest_hash = 15;</code>
+       * @param value The bytes for latestHash to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLatestHashBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        latestHash_ = value;
+        bitField0_ |= 0x00004000;
+        onChanged();
+        return this;
+      }
+
+      private com.google.protobuf.ByteString totalWork_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <pre>
+       * 顶端累计工作总量
+       * </pre>
+       *
+       * <code>bytes total_work = 16;</code>
+       * @return The totalWork.
+       */
+      @java.lang.Override
+      public com.google.protobuf.ByteString getTotalWork() {
+        return totalWork_;
+      }
+      /**
+       * <pre>
+       * 顶端累计工作总量
+       * </pre>
+       *
+       * <code>bytes total_work = 16;</code>
+       * @param value The totalWork to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTotalWork(com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        totalWork_ = value;
+        bitField0_ |= 0x00008000;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 顶端累计工作总量
+       * </pre>
+       *
+       * <code>bytes total_work = 16;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearTotalWork() {
+        bitField0_ = (bitField0_ & ~0x00008000);
+        totalWork_ = getDefaultInstance().getTotalWork();
         onChanged();
         return this;
       }
@@ -5378,6 +5676,36 @@ public final class Structure {
      * @return The sharedSecret.
      */
     com.google.protobuf.ByteString getSharedSecret();
+
+    /**
+     * <pre>
+     * 最新hash
+     * </pre>
+     *
+     * <code>bytes latest_hash = 8;</code>
+     * @return The latestHash.
+     */
+    com.google.protobuf.ByteString getLatestHash();
+
+    /**
+     * <pre>
+     * 最新高度
+     * </pre>
+     *
+     * <code>uint32 latest_height = 9;</code>
+     * @return The latestHeight.
+     */
+    int getLatestHeight();
+
+    /**
+     * <pre>
+     * 顶端累计工作总量 字节数组
+     * </pre>
+     *
+     * <code>bytes total_work = 10;</code>
+     * @return The totalWork.
+     */
+    com.google.protobuf.ByteString getTotalWork();
   }
   /**
    * <pre>
@@ -5412,6 +5740,8 @@ public final class Structure {
       nodeVersion_ = "";
       signature_ = com.google.protobuf.ByteString.EMPTY;
       sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+      latestHash_ = com.google.protobuf.ByteString.EMPTY;
+      totalWork_ = com.google.protobuf.ByteString.EMPTY;
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -5596,6 +5926,51 @@ public final class Structure {
       return sharedSecret_;
     }
 
+    public static final int LATEST_HASH_FIELD_NUMBER = 8;
+    private com.google.protobuf.ByteString latestHash_ = com.google.protobuf.ByteString.EMPTY;
+    /**
+     * <pre>
+     * 最新hash
+     * </pre>
+     *
+     * <code>bytes latest_hash = 8;</code>
+     * @return The latestHash.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString getLatestHash() {
+      return latestHash_;
+    }
+
+    public static final int LATEST_HEIGHT_FIELD_NUMBER = 9;
+    private int latestHeight_ = 0;
+    /**
+     * <pre>
+     * 最新高度
+     * </pre>
+     *
+     * <code>uint32 latest_height = 9;</code>
+     * @return The latestHeight.
+     */
+    @java.lang.Override
+    public int getLatestHeight() {
+      return latestHeight_;
+    }
+
+    public static final int TOTAL_WORK_FIELD_NUMBER = 10;
+    private com.google.protobuf.ByteString totalWork_ = com.google.protobuf.ByteString.EMPTY;
+    /**
+     * <pre>
+     * 顶端累计工作总量 字节数组
+     * </pre>
+     *
+     * <code>bytes total_work = 10;</code>
+     * @return The totalWork.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString getTotalWork() {
+      return totalWork_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -5630,6 +6005,15 @@ public final class Structure {
       }
       if (!sharedSecret_.isEmpty()) {
         output.writeBytes(7, sharedSecret_);
+      }
+      if (!latestHash_.isEmpty()) {
+        output.writeBytes(8, latestHash_);
+      }
+      if (latestHeight_ != 0) {
+        output.writeUInt32(9, latestHeight_);
+      }
+      if (!totalWork_.isEmpty()) {
+        output.writeBytes(10, totalWork_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -5666,6 +6050,18 @@ public final class Structure {
         size += com.google.protobuf.CodedOutputStream
           .computeBytesSize(7, sharedSecret_);
       }
+      if (!latestHash_.isEmpty()) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(8, latestHash_);
+      }
+      if (latestHeight_ != 0) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt32Size(9, latestHeight_);
+      }
+      if (!totalWork_.isEmpty()) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(10, totalWork_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -5695,6 +6091,12 @@ public final class Structure {
           .equals(other.getSignature())) return false;
       if (!getSharedSecret()
           .equals(other.getSharedSecret())) return false;
+      if (!getLatestHash()
+          .equals(other.getLatestHash())) return false;
+      if (getLatestHeight()
+          != other.getLatestHeight()) return false;
+      if (!getTotalWork()
+          .equals(other.getTotalWork())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -5720,6 +6122,12 @@ public final class Structure {
       hash = (53 * hash) + getSignature().hashCode();
       hash = (37 * hash) + SHARED_SECRET_FIELD_NUMBER;
       hash = (53 * hash) + getSharedSecret().hashCode();
+      hash = (37 * hash) + LATEST_HASH_FIELD_NUMBER;
+      hash = (53 * hash) + getLatestHash().hashCode();
+      hash = (37 * hash) + LATEST_HEIGHT_FIELD_NUMBER;
+      hash = (53 * hash) + getLatestHeight();
+      hash = (37 * hash) + TOTAL_WORK_FIELD_NUMBER;
+      hash = (53 * hash) + getTotalWork().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -5862,6 +6270,9 @@ public final class Structure {
         nodeVersion_ = "";
         signature_ = com.google.protobuf.ByteString.EMPTY;
         sharedSecret_ = com.google.protobuf.ByteString.EMPTY;
+        latestHash_ = com.google.protobuf.ByteString.EMPTY;
+        latestHeight_ = 0;
+        totalWork_ = com.google.protobuf.ByteString.EMPTY;
         return this;
       }
 
@@ -5916,6 +6327,15 @@ public final class Structure {
         if (((from_bitField0_ & 0x00000040) != 0)) {
           result.sharedSecret_ = sharedSecret_;
         }
+        if (((from_bitField0_ & 0x00000080) != 0)) {
+          result.latestHash_ = latestHash_;
+        }
+        if (((from_bitField0_ & 0x00000100) != 0)) {
+          result.latestHeight_ = latestHeight_;
+        }
+        if (((from_bitField0_ & 0x00000200) != 0)) {
+          result.totalWork_ = totalWork_;
+        }
       }
 
       @java.lang.Override
@@ -5954,6 +6374,15 @@ public final class Structure {
         }
         if (!other.getSharedSecret().isEmpty()) {
           setSharedSecret(other.getSharedSecret());
+        }
+        if (!other.getLatestHash().isEmpty()) {
+          setLatestHash(other.getLatestHash());
+        }
+        if (other.getLatestHeight() != 0) {
+          setLatestHeight(other.getLatestHeight());
+        }
+        if (!other.getTotalWork().isEmpty()) {
+          setTotalWork(other.getTotalWork());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -6016,6 +6445,21 @@ public final class Structure {
                 bitField0_ |= 0x00000040;
                 break;
               } // case 58
+              case 66: {
+                latestHash_ = input.readBytes();
+                bitField0_ |= 0x00000080;
+                break;
+              } // case 66
+              case 72: {
+                latestHeight_ = input.readUInt32();
+                bitField0_ |= 0x00000100;
+                break;
+              } // case 72
+              case 82: {
+                totalWork_ = input.readBytes();
+                bitField0_ |= 0x00000200;
+                break;
+              } // case 82
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -6437,6 +6881,138 @@ public final class Structure {
         return this;
       }
 
+      private com.google.protobuf.ByteString latestHash_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <pre>
+       * 最新hash
+       * </pre>
+       *
+       * <code>bytes latest_hash = 8;</code>
+       * @return The latestHash.
+       */
+      @java.lang.Override
+      public com.google.protobuf.ByteString getLatestHash() {
+        return latestHash_;
+      }
+      /**
+       * <pre>
+       * 最新hash
+       * </pre>
+       *
+       * <code>bytes latest_hash = 8;</code>
+       * @param value The latestHash to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLatestHash(com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        latestHash_ = value;
+        bitField0_ |= 0x00000080;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 最新hash
+       * </pre>
+       *
+       * <code>bytes latest_hash = 8;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLatestHash() {
+        bitField0_ = (bitField0_ & ~0x00000080);
+        latestHash_ = getDefaultInstance().getLatestHash();
+        onChanged();
+        return this;
+      }
+
+      private int latestHeight_ ;
+      /**
+       * <pre>
+       * 最新高度
+       * </pre>
+       *
+       * <code>uint32 latest_height = 9;</code>
+       * @return The latestHeight.
+       */
+      @java.lang.Override
+      public int getLatestHeight() {
+        return latestHeight_;
+      }
+      /**
+       * <pre>
+       * 最新高度
+       * </pre>
+       *
+       * <code>uint32 latest_height = 9;</code>
+       * @param value The latestHeight to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLatestHeight(int value) {
+
+        latestHeight_ = value;
+        bitField0_ |= 0x00000100;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 最新高度
+       * </pre>
+       *
+       * <code>uint32 latest_height = 9;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLatestHeight() {
+        bitField0_ = (bitField0_ & ~0x00000100);
+        latestHeight_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private com.google.protobuf.ByteString totalWork_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <pre>
+       * 顶端累计工作总量 字节数组
+       * </pre>
+       *
+       * <code>bytes total_work = 10;</code>
+       * @return The totalWork.
+       */
+      @java.lang.Override
+      public com.google.protobuf.ByteString getTotalWork() {
+        return totalWork_;
+      }
+      /**
+       * <pre>
+       * 顶端累计工作总量 字节数组
+       * </pre>
+       *
+       * <code>bytes total_work = 10;</code>
+       * @param value The totalWork to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTotalWork(com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        totalWork_ = value;
+        bitField0_ |= 0x00000200;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * 顶端累计工作总量 字节数组
+       * </pre>
+       *
+       * <code>bytes total_work = 10;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearTotalWork() {
+        bitField0_ = (bitField0_ & ~0x00000200);
+        totalWork_ = getDefaultInstance().getTotalWork();
+        onChanged();
+        return this;
+      }
+
       // @@protoc_insertion_point(builder_scope:ProtoNetworkHandshake)
     }
 
@@ -6536,19 +7112,21 @@ public final class Structure {
       "\tsender_id\030\001 \001(\014\022\022\n\nmessage_id\030\002 \001(\014\022\022\n\n" +
       "request_id\030\003 \001(\014\022\024\n\014req_res_flag\030\004 \001(\r\022\014" +
       "\n\004type\030\005 \001(\r\022\016\n\006length\030\006 \001(\r\022\017\n\007version\030" +
-      "\007 \001(\r\022\014\n\004data\030\010 \001(\014\"\243\002\n\tProtoPeer\022\n\n\002id\030" +
+      "\007 \001(\r\022\014\n\004data\030\010 \001(\014\"\305\002\n\tProtoPeer\022\n\n\002id\030" +
       "\001 \001(\014\022\023\n\013private_key\030\002 \001(\014\022\017\n\007address\030\003 " +
       "\001(\t\022\014\n\004port\030\004 \001(\005\022\021\n\tmultiaddr\030\005 \001(\t\022\030\n\020" +
       "protocol_version\030\006 \001(\t\022\021\n\tnode_type\030\007 \001(" +
       "\005\022\021\n\tis_online\030\010 \001(\010\022\023\n\013latest_slot\030\t \001(" +
       "\004\022\024\n\014is_validator\030\n \001(\010\022\024\n\014stake_amount\030" +
       "\013 \001(\001\022\030\n\020software_version\030\014 \001(\005\022\021\n\tlast_" +
-      "seen\030\r \001(\004\022\025\n\rshared_secret\030\016 \001(\014\"\250\001\n\025Pr" +
-      "otoNetworkHandshake\022\025\n\rnetwork_magic\030\001 \001" +
-      "(\014\022\025\n\rhardware_info\030\002 \001(\t\022\017\n\007node_id\030\003 \001" +
-      "(\014\022\020\n\010nonce_id\030\004 \001(\014\022\024\n\014node_version\030\005 \001" +
-      "(\t\022\021\n\tsignature\030\006 \001(\014\022\025\n\rshared_secret\030\007" +
-      " \001(\014b\006proto3"
+      "seen\030\r \001(\004\022\016\n\006height\030\016 \001(\r\022\023\n\013latest_has" +
+      "h\030\017 \001(\t\022\022\n\ntotal_work\030\020 \001(\014\"\350\001\n\025ProtoNet" +
+      "workHandshake\022\025\n\rnetwork_magic\030\001 \001(\014\022\025\n\r" +
+      "hardware_info\030\002 \001(\t\022\017\n\007node_id\030\003 \001(\014\022\020\n\010" +
+      "nonce_id\030\004 \001(\014\022\024\n\014node_version\030\005 \001(\t\022\021\n\t" +
+      "signature\030\006 \001(\014\022\025\n\rshared_secret\030\007 \001(\014\022\023" +
+      "\n\013latest_hash\030\010 \001(\014\022\025\n\rlatest_height\030\t \001" +
+      "(\r\022\022\n\ntotal_work\030\n \001(\014b\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -6577,13 +7155,13 @@ public final class Structure {
     internal_static_ProtoPeer_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoPeer_descriptor,
-        new java.lang.String[] { "Id", "PrivateKey", "Address", "Port", "Multiaddr", "ProtocolVersion", "NodeType", "IsOnline", "LatestSlot", "IsValidator", "StakeAmount", "SoftwareVersion", "LastSeen", "SharedSecret", });
+        new java.lang.String[] { "Id", "PrivateKey", "Address", "Port", "Multiaddr", "ProtocolVersion", "NodeType", "IsOnline", "LatestSlot", "IsValidator", "StakeAmount", "SoftwareVersion", "LastSeen", "Height", "LatestHash", "TotalWork", });
     internal_static_ProtoNetworkHandshake_descriptor =
       getDescriptor().getMessageTypes().get(4);
     internal_static_ProtoNetworkHandshake_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoNetworkHandshake_descriptor,
-        new java.lang.String[] { "NetworkMagic", "HardwareInfo", "NodeId", "NonceId", "NodeVersion", "Signature", "SharedSecret", });
+        new java.lang.String[] { "NetworkMagic", "HardwareInfo", "NodeId", "NonceId", "NodeVersion", "Signature", "SharedSecret", "LatestHash", "LatestHeight", "TotalWork", });
     descriptor.resolveAllFeaturesImmutable();
   }
 

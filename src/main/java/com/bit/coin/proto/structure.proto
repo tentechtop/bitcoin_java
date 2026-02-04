@@ -1,5 +1,5 @@
 syntax = "proto3";
-
+//protoc --proto_path=. --java_out=. structure.proto
 //cd F:\workSpace2026\blockchain\solana_java\src\main\java\com\bit\solana\proto  protoc --proto_path=. --java_out=. structure.proto
 //protoc --proto_path=. --java_out=. structure.proto
 message ProtoBlockHeader {
@@ -55,7 +55,16 @@ message ProtoPeer {
   double stake_amount = 11;    // 验证者质押量（SOL）
   int32 software_version = 12; // 节点软件版本
   uint64 last_seen = 13;       // 最后访问时间（毫秒级时间戳）
-  bytes shared_secret = 14;
+
+
+
+
+  //最新高度 无符号32
+  uint32 height = 14;
+  //最新hash 字符串
+  string latest_hash = 15;
+  //顶端累计工作总量
+  bytes total_work = 16;
 
 
 
@@ -77,4 +86,15 @@ message ProtoNetworkHandshake {
   bytes signature = 6;
   // 共享密钥对
   bytes shared_secret = 7;
+
+  //最新hash
+  bytes latest_hash = 8;
+
+  //最新高度
+  uint32 latest_height = 9;
+
+  //顶端累计工作总量 字节数组
+  bytes total_work = 10;
+
+
 }

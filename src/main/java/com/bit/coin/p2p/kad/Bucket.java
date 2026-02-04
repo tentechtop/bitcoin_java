@@ -58,27 +58,39 @@ public class Bucket {
             nodeIds.remove(peerId);
             // 2. 添加到头部
             nodeIds.addFirst(peerId);
-            // 3. 更新映射中的节点信息
-            Peer existingPeer = nodeMap.get(peerId);
-            if (existingPeer != null) {
-                log.info("映射中存在");
-                // 原子更新所有字段
-                existingPeer.setLastSeen(System.currentTimeMillis());
-                existingPeer.setAddress(peer.getAddress());
-                existingPeer.setPort(peer.getPort());
-                existingPeer.setSharedSecret(peer.getSharedSecret()); // 确保赋值
-                log.info("映射IP端口{} {} ", existingPeer.getAddress(), existingPeer.getPort());
-                log.info("协商密钥{} ", bytesToHex(existingPeer.getSharedSecret()));
-                nodeMap.put(peerId, existingPeer);
-
-            } else {
-                log.info("映射中不存在");
-                peer.setLastSeen(System.currentTimeMillis());
+            peer.setLastSeen(System.currentTimeMillis());
+            //判断是否存在
+            if (nodeMap.containsKey(peerId)) {
+                //存在就更新之前的即可
+                Peer exist = nodeMap.get(peerId);
+                exist.setAddress(peer.getAddress());
+                exist.setPort(peer.getPort());
+                //更新协议版本
+                exist.setProtocolVersion(peer.getProtocolVersion());
+                //更新节点类型
+                exist.setNodeType(peer.getNodeType());
+                //latestSlot
+                exist.setLatestSlot(peer.getLatestSlot());
+                //isValidator
+                exist.setValidator(peer.isValidator());
+                //stakeAmount
+                exist.setStakeAmount(peer.getStakeAmount());
+                //softwareVersion
+                exist.setSoftwareVersion(peer.getSoftwareVersion());
+                //lastSeen
+                exist.setLastSeen(peer.getLastSeen());
+                //hashHex
+                exist.setHashHex(peer.getHashHex());
+                log.info("路由表最新Hash: {}",peer.getHashHex());
+                //height
+                exist.setHeight(peer.getHeight());
+                log.info("路由表最新高度: {}",peer.getHeight());
+                //工作总量
+                exist.setChainWork(peer.getChainWork());
+                log.info("工作总量: {}",peer.getChainWork().toString());
+            }else {
                 nodeMap.put(peerId, peer);
             }
-            Peer existingPeer2 = nodeMap.get(peerId);
-            log.info("打印测试测试{}",existingPeer2.toString());
-
             this.lastSeen = System.currentTimeMillis();
         }
     }
@@ -113,8 +125,10 @@ public class Bucket {
 
 
     public void remove(byte[] peerId) {
-        nodeIds.remove(peerId);
-        nodeMap.remove(peerId);
+        // 先将byte[]转为Hex字符串，再删除
+        String peerIdHex = bytesToHex(peerId);
+        nodeIds.remove(peerIdHex); // 正确：删除String类型的ID
+        nodeMap.remove(peerIdHex); // 正确：删除String类型的key
         this.lastSeen = System.currentTimeMillis();
     }
 
@@ -126,15 +140,37 @@ public class Bucket {
         String peerId = bytesToHex(peer.getId());
         nodeIds.remove(peerId);
         nodeIds.addLast(peerId); // 线程安全的尾部添加
-        Peer existingPeer = nodeMap.get(peerId);
-        if (existingPeer != null) {
-            existingPeer.setLastSeen(System.currentTimeMillis());
-            existingPeer.setAddress(peer.getAddress());
-            existingPeer.setPort(peer.getPort());
-            existingPeer.setSharedSecret(peer.getSharedSecret());
-            nodeMap.put(peerId, existingPeer);
-        } else {
-            peer.setLastSeen(System.currentTimeMillis());
+        peer.setLastSeen(System.currentTimeMillis());
+        //判断是否存在
+        if (nodeMap.containsKey(peerId)) {
+            //存在就更新之前的即可
+            Peer exist = nodeMap.get(peerId);
+            exist.setAddress(peer.getAddress());
+            exist.setPort(peer.getPort());
+            //更新协议版本
+            exist.setProtocolVersion(peer.getProtocolVersion());
+            //更新节点类型
+            exist.setNodeType(peer.getNodeType());
+            //latestSlot
+            exist.setLatestSlot(peer.getLatestSlot());
+            //isValidator
+            exist.setValidator(peer.isValidator());
+            //stakeAmount
+            exist.setStakeAmount(peer.getStakeAmount());
+            //softwareVersion
+            exist.setSoftwareVersion(peer.getSoftwareVersion());
+            //lastSeen
+            exist.setLastSeen(peer.getLastSeen());
+            //hashHex
+            exist.setHashHex(peer.getHashHex());
+            log.info("路由表最新Hash: {}",peer.getHashHex());
+            //height
+            exist.setHeight(peer.getHeight());
+            log.info("路由表最新高度: {}",peer.getHeight());
+            //工作总量
+            exist.setChainWork(peer.getChainWork());
+
+        }else {
             nodeMap.put(peerId, peer);
         }
         this.lastSeen = System.currentTimeMillis();
