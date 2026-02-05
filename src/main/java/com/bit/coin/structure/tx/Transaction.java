@@ -109,6 +109,7 @@ public class Transaction {
 
 
     //验证交易合法性
+    //TODO 将固定的改成脚本验证即可
     public boolean validate(){
         // 1. 基础格式校验
         if (inputs == null || inputs.isEmpty() || outputs == null || outputs.isEmpty()) {
@@ -546,7 +547,7 @@ public class Transaction {
         try {
             // 1. 检查数据长度是否足够
             if (data.length < TX_ID_SIZE) {
-                throw new IOException("数据长度不足，无法反序列化交易。");
+                return null;
             }
 
             // 2. 读取txId

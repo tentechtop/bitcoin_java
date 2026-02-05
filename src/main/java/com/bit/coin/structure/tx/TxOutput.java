@@ -41,21 +41,6 @@ public class TxOutput {
 
 
 
-    public Script getScriptPubKeyWk() {
-        Script script = null;
-        if (scriptPubKeyWk != null) {
-            script = scriptPubKeyWk.get();
-        }
-        if (script == null) {
-            try {
-                script = Script.deserialize(scriptPubKey);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-            scriptPubKeyWk = new WeakReference<>(script);
-        }
-        return script;
-    }
 
     /**
      * 验证字段长度

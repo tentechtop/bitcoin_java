@@ -14,6 +14,7 @@ import com.bit.coin.utils.SerializeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -66,7 +67,7 @@ public class TxApi {
 
 
 
-    @RequestMapping("/transfer")
+    @PostMapping("/transfer")
     public Transaction transfer(@RequestBody TransferTestDTO transferDTO) throws Exception {
 
         // 1. 解析私钥

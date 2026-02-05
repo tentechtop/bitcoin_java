@@ -69,6 +69,13 @@ public class ScriptTest {
 
     public static void main(String[] args) throws IOException, ScriptExecutionException {
 
+        test1();
+        test2();
+
+        testStackOperations();
+
+        testNumericOperations();
+
         testTimeLockOperations();
     }
 

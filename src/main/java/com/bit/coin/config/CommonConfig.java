@@ -34,25 +34,16 @@ public class CommonConfig {
     @Getter
     public static Peer self;//本地节点信息  最好通过注入的方法使用
 
-
     @Autowired
     private SystemConfig config;
-
-
-
 
     @PostConstruct
     public void init() throws Exception {
         DataBase dataBase = config.getDataBase();
-
-
     }
-
-
 
     // 本地节点标识
     public static final byte[] PEER_KEY = "LOCAL_PEER".getBytes();
-
 
 
     /**
@@ -67,6 +58,13 @@ public class CommonConfig {
             .recordStats()
             .build();
 
+
+    //已经存在的资源 hashHex -> 资源类型
+    public static Cache<String, Integer> EXIST_RESOURCE_CACHE  = Caffeine.newBuilder()
+            .maximumSize(1000_000)
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .recordStats()
+            .build();
 
 
 

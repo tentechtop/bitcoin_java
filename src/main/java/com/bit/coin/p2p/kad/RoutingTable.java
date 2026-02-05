@@ -30,8 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
-import static com.bit.coin.config.CommonConfig.PEER_KEY;
-import static com.bit.coin.config.CommonConfig.self;
+import static com.bit.coin.config.CommonConfig.*;
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.getOnlinePeerIds;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
@@ -675,6 +674,8 @@ public class RoutingTable {
             peerClient.sendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Broadcast_Simple_Resource, broadcastResource.toBytes(), 5000);
         }
         log.info("全部发送完毕");
+        //将资源加入到已经存在的列表 保持
+        EXIST_RESOURCE_CACHE.put(bytesToHex(hash),i);
     }
 
     public List<Peer> getOnlineNodes() {

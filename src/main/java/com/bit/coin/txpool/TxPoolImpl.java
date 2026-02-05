@@ -2,6 +2,7 @@ package com.bit.coin.txpool;
 
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
@@ -26,6 +27,9 @@ public class TxPoolImpl implements TxPool{
 
     @Autowired
     private UTXOCache utxoCache;
+
+    @Autowired
+    private RoutingTable routingTable;
 
     // 内存池：hex txId -> Transaction
     private final Map<String, Transaction> mempool = new ConcurrentHashMap<>();
@@ -237,6 +241,7 @@ public class TxPoolImpl implements TxPool{
             spendingSet.addAll(utxoList);
             List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
             processingSet.addAll(pendingConfirmationOfReceipt);
+            routingTable.BroadcastResource(1,tx.getTxId());
             return true;
         } catch (Exception e) {
             log.error("添加交易异常", e);
