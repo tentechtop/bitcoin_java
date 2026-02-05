@@ -699,6 +699,8 @@ public class BlockChainServiceImpl implements BlockChainService{
             routingTable.BroadcastResource(0,block.getHash());
             return true;
         }else {
+            //打包失败将交易重新添加回交易池
+            txPool.onBlockFailed(block.getTransactions().toArray(new Transaction[0]));
             return false;
         }
     }
@@ -1018,9 +1020,6 @@ public class BlockChainServiceImpl implements BlockChainService{
                 removeConfirmedTxsFromPool(block);
                 // 尝试处理孤块
                 processOrphanBlocks();
-
-
-
                 return true;
             }
             // 计算当前主链的链工作量

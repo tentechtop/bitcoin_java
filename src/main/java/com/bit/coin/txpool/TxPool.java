@@ -4,6 +4,8 @@ import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
 
+import java.util.List;
+
 public interface TxPool {
 
     //提交一笔交易
@@ -18,6 +20,9 @@ public interface TxPool {
 
     //验证并加入到内存池
     boolean addTx(Transaction tx);
+
+    boolean addTx(List<Transaction> tx);
+
 
     Result<String> addTx(TransferDTO tx);
 

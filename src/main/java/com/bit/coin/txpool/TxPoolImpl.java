@@ -57,7 +57,7 @@ public class TxPoolImpl implements TxPool{
 
 
     @Override
-    public boolean verifyTx(Transaction tx) {
+    synchronized public boolean verifyTx(Transaction tx) {
         try {
             // 1. 基础格式校验
             if (tx == null || tx.getInputs() == null || tx.getInputs().isEmpty()
@@ -169,7 +169,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public boolean addTx(Transaction tx) {
+    synchronized public boolean addTx(Transaction tx) {
         if (tx == null) {
             log.warn("添加交易失败：交易为null");
             return false;
@@ -245,6 +245,151 @@ public class TxPoolImpl implements TxPool{
             return true;
         } catch (Exception e) {
             log.error("添加交易异常", e);
+            return false;
+        }
+    }
+
+    /**
+     * 要保持原子性 要么全部添加成功 要么全部失败
+     * @param txList
+     * @return
+     */
+    @Override
+    synchronized public boolean addTx(List<Transaction> txList) {
+        // 1. 参数基础校验
+        if (txList == null || txList.isEmpty()) {
+            log.warn("批量添加交易失败：交易列表为空或null");
+            return false;
+        }
+
+        // 用于暂存预检查通过的交易信息，避免重复计算
+        Map<String, Transaction> validTxMap = new HashMap<>();
+        Map<String, Long> validTxTimestamps = new HashMap<>();
+        Map<String, Long> validTxFees = new HashMap<>();
+        Map<String, Long> validTxStatuses = new HashMap<>();
+        // 用于记录需要回滚的操作
+        List<Runnable> rollbackActions = new ArrayList<>();
+
+        try {
+            // 2. 预检查阶段：验证所有交易的有效性（原子性关键：先检查，后执行）
+            for (Transaction tx : txList) {
+                if (tx == null) {
+                    log.warn("批量添加交易失败：包含null交易");
+                    return false;
+                }
+
+                String txIdStr = bytesToHex(tx.getTxId());
+
+                // 2.1 验证交易本身
+                if (!verifyTx(tx)) {
+                    log.warn("批量添加交易失败：交易验证不通过，txId={}", txIdStr);
+                    return false;
+                }
+
+                // 2.2 检查交易是否已在池中
+                if (mempool.containsKey(txIdStr)) {
+                    log.warn("批量添加交易失败：交易已存在于内存池，txId={}", txIdStr);
+                    return false;
+                }
+
+                // 2.3 预计算交易手续费和状态（避免添加时重复计算）
+                long fee = calculateFee(tx);
+                long status = 0L;
+                // 初始化状态（和单个addTx逻辑一致）
+                status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.PENDING);
+                status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.IN_POOL);
+                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.VERIFIED);
+                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.SIG_CHECKED);
+                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.SCRIPT_CHECKED);
+                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.INPUTS_VERIFIED);
+                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.OUTPUTS_VERIFIED);
+
+                // 高/低手续费标记
+                if (fee > 10000) {
+                    status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.HIGH_FEE);
+                    status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.PRIORITY_HIGH);
+                } else if (fee < 1000) {
+                    status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.PRIORITY_LOW);
+                }
+
+                // Coinbase交易标记
+                if (tx.isCoinbase()) {
+                    status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.COINBASE);
+                }
+
+                // 暂存验证通过的交易信息
+                validTxMap.put(txIdStr, tx);
+                validTxTimestamps.put(txIdStr, System.currentTimeMillis());
+                validTxFees.put(txIdStr, fee);
+                validTxStatuses.put(txIdStr, status);
+
+                // 2.4 检查内存池容量（批量添加后不超过最大值）
+                if (mempool.size() + validTxMap.size() > MAX_MEMPOOL_SIZE) {
+                    log.warn("批量添加交易失败：交易池容量不足，当前={}, 待添加={}, 最大={}",
+                            mempool.size(), validTxMap.size(), MAX_MEMPOOL_SIZE);
+                    return false;
+                }
+            }
+
+            // 3. 原子添加阶段：批量写入所有验证通过的交易
+            for (Map.Entry<String, Transaction> entry : validTxMap.entrySet()) {
+                String txIdStr = entry.getKey();
+                Transaction tx = entry.getValue();
+                Long fee = validTxFees.get(txIdStr);
+                Long status = validTxStatuses.get(txIdStr);
+                Long timestamp = validTxTimestamps.get(txIdStr);
+
+                // 3.1 设置交易属性
+                tx.setFee(fee);
+                tx.setStatus(status);
+
+                // 3.2 添加到内存池，并记录回滚操作
+                mempool.put(txIdStr, tx);
+                rollbackActions.add(() -> mempool.remove(txIdStr));
+
+                // 3.3 添加时间戳，并记录回滚操作
+                txTimestamps.put(txIdStr, timestamp);
+                rollbackActions.add(() -> txTimestamps.remove(txIdStr));
+
+                // 3.4 构建地址映射，并记录回滚操作
+                byte[] txId = tx.getTxId();
+                buildAddressMapping(tx, txId);
+                rollbackActions.add(() -> removeAddressMapping(tx));
+
+                // 3.5 更新UTXO缓存，并记录回滚操作
+                utxoCache.addPendingTx(tx);
+                rollbackActions.add(() -> utxoCache.revokePendingTx(tx));
+
+                // 3.6 更新spendingSet和processingSet，并记录回滚操作
+                List<String> utxoList = tx.getSpendingUTXOKeyList();
+                spendingSet.addAll(utxoList);
+                rollbackActions.add(() -> utxoList.forEach(spendingSet::remove));
+
+                List<String> pendingList = tx.getPendingConfirmationOfReceipt();
+                processingSet.addAll(pendingList);
+                rollbackActions.add(() -> pendingList.forEach(processingSet::remove));
+
+                // 3.7 广播交易
+                routingTable.BroadcastResource(1, txId);
+
+                log.info("批量添加交易成功（单条）：txId={}, fee={}, status={}",
+                        txIdStr, fee, TransactionStatusResolver.toString(status));
+            }
+
+            log.info("批量添加交易完成：共成功添加 {} 笔交易", txList.size());
+            return true;
+
+        } catch (Exception e) {
+            log.error("批量添加交易异常，执行回滚", e);
+            // 4. 回滚所有已执行的操作（逆序执行回滚动作，保证数据一致性）
+            Collections.reverse(rollbackActions);
+            for (Runnable rollback : rollbackActions) {
+                try {
+                    rollback.run();
+                } catch (Exception rollbackEx) {
+                    log.error("回滚操作异常", rollbackEx);
+                }
+            }
             return false;
         }
     }
@@ -600,7 +745,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public void onBlockConfirmed(Transaction[] confirmedTxs,int height) {
+    synchronized public void onBlockConfirmed(Transaction[] confirmedTxs,int height) {
         if (confirmedTxs == null || confirmedTxs.length == 0) {
             return;
         }
@@ -644,7 +789,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public void onBlockConfirmed(Transaction tx,int height) {
+    synchronized public void onBlockConfirmed(Transaction tx,int height) {
         if (tx == null) {
             return;
         }
@@ -687,7 +832,7 @@ public class TxPoolImpl implements TxPool{
 
 
     @Override
-    public void onBlockFailed(Transaction[] failedTxs) {
+    synchronized public void onBlockFailed(Transaction[] failedTxs) {
         if (failedTxs == null || failedTxs.length == 0) {
             return;
         }
