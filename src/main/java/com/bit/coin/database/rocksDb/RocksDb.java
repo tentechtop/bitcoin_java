@@ -30,17 +30,12 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 public class RocksDb implements DataBase {
 
     /**
-     * 增加布隆过滤器 快速准确判断 一个Key不存在  减少磁盘IO
-     */
-
-    /**
      * 高写入吞吐量（区块、交易等高频写入）；
      * 不可篡改性（数据一旦写入不轻易删除，仅追加）；
      * 范围查询高效（如按区块高度、时间范围查询）；
      * 数据一致性（尤其在节点同步场景）；
      * 持久化可靠性（避免数据丢失）。
      */
-
     // 类中添加缓存实例（全局唯一）加速高频访问的完整业务对象查询  按照表隔离
     private final Map<TableEnum, Cache<byte[], byte[]>> tableCaches = new ConcurrentHashMap<>();
 

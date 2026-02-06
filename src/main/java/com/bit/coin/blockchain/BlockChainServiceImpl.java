@@ -36,6 +36,7 @@ import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 
@@ -824,8 +825,9 @@ public class BlockChainServiceImpl implements BlockChainService{
         ParamsConfig.Params params = config.getParams();
         int coinbaseMaturity = params.getCoinbaseMaturity();
         List<Transaction> transactions = block.getTransactions();
-        long totalInputValue = 0;
-        long totalOutputValue = 0;
+        // 用于存储所有非Coinbase交易的总输入/输出（准确计算手续费）
+        long totalNormalTxInput = 0;
+        long totalNormalTxOutput = 0;
         int coinbaseCount = 0;
 
         // 用于检测交易重复
@@ -859,12 +861,6 @@ public class BlockChainServiceImpl implements BlockChainService{
                     return false;
                 }
 
-                // 3. 验证Coinbase输出金额不超过上限（包含手续费）
-                long coinbaseReward = calculateCoinbaseReward(block.getHeight());
-                long maxReward = coinbaseReward;
-                // 计算交易手续费（需要在验证普通交易后）
-                // 这里先不验证金额，等所有交易验证完后再验证总奖励
-
             } else {
                 // 普通交易验证
 
@@ -896,37 +892,47 @@ public class BlockChainServiceImpl implements BlockChainService{
                     }
                 }
 
-                // 累加输入和输出金额
+                // 4. 累加普通交易的输入/输出金额（用于计算总手续费）
+                long singleTxInput = 0;
+                long singleTxOutput = 0;
                 for (TxInput input : tx.getInputs()) {
                     UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
                     if (utxo != null) {
-                        //utxo是否成熟
-                        if (utxo.isCoinbase()){
-
+                        // 验证Coinbase UTXO是否成熟
+                        if (utxo.isCoinbase()) {
                             int height = utxo.getHeight();
                             int mainHeight = mainTipBlock.getHeight();
                             // 计算确认数：当前主链高度 - UTXO所在区块高度 + 1
                             int confirmations = mainHeight - height + 1;
-                            // 判断是否成熟：确认数必须大于Coinbase成熟度
                             boolean isMature = confirmations > coinbaseMaturity;
-                            if (!isMature){
-                                //使用了未成熟的UTXO
-                                log.info("使用了未成熟的UTXO");
+                            if (!isMature) {
+                                log.error("使用了未成熟的Coinbase UTXO，UTXO高度:{}，当前高度:{}，确认数:{}，要求成熟度:{}",
+                                        height, mainHeight, confirmations, coinbaseMaturity);
                                 return false;
                             }
                         }
-
-                        totalInputValue += utxo.getValue();
-                    }else {
-                        //输入引用的输出不存在
-                        log.info("输入引用的输出不存在");
+                        singleTxInput += utxo.getValue();
+                    } else {
+                        log.error("输入引用的UTXO不存在，txId:{}，index:{}",
+                                bytesToHex(input.getTxId()), input.getIndex());
                         return false;
                     }
                 }
 
                 for (TxOutput output : tx.getOutputs()) {
-                    totalOutputValue += output.getValue();
+                    singleTxOutput += output.getValue();
                 }
+
+                // 验证单笔交易金额平衡（输入 >= 输出，手续费不能为负）
+                if (singleTxInput < singleTxOutput) {
+                    log.error("普通交易金额不平衡，输入:{}，输出:{}，txId:{}",
+                            singleTxInput, singleTxOutput, txIdHex);
+                    return false;
+                }
+
+                // 累加到全局普通交易输入/输出
+                totalNormalTxInput += singleTxInput;
+                totalNormalTxOutput += singleTxOutput;
             }
         }
 
@@ -936,34 +942,44 @@ public class BlockChainServiceImpl implements BlockChainService{
             return false;
         }
 
-        // 验证Coinbase奖励金额（输入总金额 + 挖矿奖励 <= 输出总金额）
+        // 验证Coinbase交易位置（必须是第一个交易）
         Transaction coinbaseTx = transactions.getFirst();
-        long coinbaseOutputValue = coinbaseTx.getOutputs().stream()
-            .mapToLong(TxOutput::getValue)
-            .sum();
-
-        // Coinbase交易没有输入，所以手续费 = 所有非Coinbase交易的（输入 - 输出）
-        long totalFee = 0;
-        for (int i = 1; i < transactions.size(); i++) {
-            totalFee += transactions.get(i).getFee();
+        if (!coinbaseTx.isCoinbase()) {
+            log.error("Coinbase交易必须是区块中的第一笔交易");
+            return false;
         }
 
-        // 计算正确的Coinbase奖励
+        // 1. 重新计算总手续费：所有普通交易的（输入总和 - 输出总和）（核心修复点）
+        long totalFee = totalNormalTxInput - totalNormalTxOutput;
+        if (totalFee < 0) {
+            log.error("总手续费为负数，普通交易输入总和:{}，输出总和:{}", totalNormalTxInput, totalNormalTxOutput);
+            return false;
+        }
+
+        // 2. 计算基础挖矿奖励
         long coinbaseReward = calculateCoinbaseReward(block.getHeight());
+        // 3. 计算允许的Coinbase最大输出金额（基础奖励 + 总手续费）
         long expectedCoinbaseOutput = coinbaseReward + totalFee;
 
+        // 4. 计算Coinbase交易的实际输出金额
+        long coinbaseOutputValue = coinbaseTx.getOutputs().stream()
+                .mapToLong(TxOutput::getValue)
+                .sum();
+
+        // 5. 验证Coinbase输出金额（核心修复：使用准确的totalFee计算允许值）
         if (coinbaseOutputValue > expectedCoinbaseOutput) {
-            log.error("Coinbase输出金额过大，允许:{}, 实际:{}",
-                expectedCoinbaseOutput, coinbaseOutputValue);
+            log.error("Coinbase输出金额过大，允许值(基础奖励{} + 总手续费{})={}, 实际值:{}",
+                    coinbaseReward, totalFee, expectedCoinbaseOutput, coinbaseOutputValue);
             return false;
         }
 
         if (coinbaseOutputValue < expectedCoinbaseOutput) {
-            log.warn("Coinbase输出金额小于允许值，允许:{}, 实际:{} (矿工未完全收取手续费)",
-                expectedCoinbaseOutput, coinbaseOutputValue);
+            log.warn("Coinbase输出金额小于允许值，允许值:{}，实际值:{} (矿工未完全收取手续费)",
+                    expectedCoinbaseOutput, coinbaseOutputValue);
         }
 
-        log.info("区块交易验证通过，总手续费: {}", totalFee);
+        log.info("区块交易验证通过，基础挖矿奖励: {}，总手续费: {}，Coinbase实际输出: {}",
+                coinbaseReward, totalFee, coinbaseOutputValue);
         return true;
     }
 
@@ -1309,7 +1325,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         byte[] merkleRoot = calculateMerkleRoot(transactions);
         Block genesisBlock = new Block();
         genesisBlock.setHeight(0); // 创世区块高度为0
-        BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 45259);
+        BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 29196);
         genesisBlock.setBlockHeader(blockHeader);
         genesisBlock.setTxCount(1);
         genesisBlock.setTransactions(transactions);
@@ -1464,7 +1480,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         byte[] body_bytes = dataBase.get(TBLOCK_BODY,hash);
         byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
         UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
-
         if (header_bytes!=null && body_bytes!=null){
             BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
             BlockBody blockBody = BlockBody.deserialize(body_bytes);
@@ -1625,7 +1640,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
     public BlockHeader getBlockHeaderByHash(byte[] hash) {
-        byte[] bytes = dataBase.get(TableEnum.TBLOCK,hash);
+        byte[] bytes = dataBase.get(TBLOCK_HEADER,hash);
         if (bytes!=null){
             //获取前80字节
             byte[] headerBytes = Arrays.copyOfRange(bytes, 0, 80);
@@ -2267,6 +2282,187 @@ public class BlockChainServiceImpl implements BlockChainService{
         byte[] height = dataBase.get(HASH_TO_HEIGHT, blockHash);
         byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
         return Arrays.equals(blockHash, hash);
+    }
+
+
+
+    /**
+     * 生成区块链同步路标（基于Landmark类，帮助对方节点快速定位共同祖先）
+     * @param peerMaxHeight 对方节点的最大区块高度
+     * @return 路标列表（每个Landmark对应36字节：32字节hash + 4字节height）
+     */
+    public List<Landmark> generateSyncLandmarks(int peerMaxHeight) {
+        // 存储最终的路标列表
+        List<Landmark> landmarks = new ArrayList<>();
+        // 存储已处理的高度，避免重复生成路标
+        Set<Integer> processedHeights = new HashSet<>();
+
+        try {
+            // 1. 获取本地主链最大高度，计算有效基准高度（取本地和对方高度的较小值）
+            int localMaxHeight = getCurrentChainHeight();
+            int baseHeight = Math.min(localMaxHeight, peerMaxHeight);
+            log.info("开始生成同步路标 | 本地最大高度: {} | 对方最大高度: {} | 基准高度: {}",
+                    localMaxHeight, peerMaxHeight, baseHeight);
+
+            // 2. 强制添加核心检查点：创世区块（高度0）和基准高度区块
+            addLandmark(0, processedHeights, landmarks);
+            addLandmark(baseHeight, processedHeights, landmarks);
+
+            // 3. 指数级步进生成路标（1,2,4,8,16...倍步进，直到超过基准高度）
+            // 步进规则：从1开始，每次×2，覆盖不同层级的区块，兼顾效率和覆盖范围
+            int step = 1;
+            while (true) {
+                int targetHeight = baseHeight - step;
+                // 终止条件：高度小于0 或 步进超过基准高度
+                if (targetHeight <= 0 || step > baseHeight) {
+                    break;
+                }
+                addLandmark(targetHeight, processedHeights, landmarks);
+                // 步进翻倍（指数级增长）
+                step *= 2;
+            }
+
+            // 4. 对路标按高度降序排序（从新到旧，方便对方优先匹配最新共同祖先）
+            landmarks.sort((a, b) -> Integer.compare(b.getHeight(), a.getHeight()));
+
+            log.info("路标生成完成 | 总数: {} | 高度范围: {} ~ {}",
+                    landmarks.size(),
+                    landmarks.getLast().getHeight(),
+                    landmarks.getFirst().getHeight());
+
+        } catch (Exception e) {
+            log.error("生成同步路标失败", e);
+            // 异常时返回包含创世区块的保底路标
+            landmarks.clear();
+            addLandmark(0, new HashSet<>(), landmarks);
+        }
+
+        return landmarks;
+    }
+
+    /**
+     * 辅助方法：添加单个Landmark到列表（自动处理去重和合法性校验）
+     * @param height 区块高度
+     * @param processedHeights 已处理高度集合（去重）
+     * @param landmarks 路标列表
+     */
+    private void addLandmark(int height, Set<Integer> processedHeights, List<Landmark> landmarks) {
+        // 去重：已处理的高度跳过
+        if (processedHeights.contains(height)) {
+            return;
+        }
+
+        try {
+            // 1. 获取该高度的区块Hash（必须是32字节）
+            byte[] blockHash = getBlockHashByHeight(height);
+            if (blockHash == null || blockHash.length != 32) {
+                log.warn("跳过无效高度的路标生成 | 高度: {} | Hash为空或长度异常", height);
+                return;
+            }
+
+            // 2. 创建Landmark对象并添加到列表
+            Landmark landmark = new Landmark();
+            landmark.setHash(blockHash);
+            landmark.setHeight(height);
+
+            landmarks.add(landmark);
+            processedHeights.add(height);
+            log.debug("添加路标 | 高度: {} | Hash: {} | 序列化后36字节: {}",
+                    height, bytesToHex(blockHash), bytesToHex(landmark.serialize()));
+
+        } catch (Exception e) {
+            log.error("添加高度{}的路标失败", height, e);
+        }
+    }
+
+
+    // 固定小写十六进制字符集，避免硬编码出错
+    private static final Pattern HEX64 = Pattern.compile("[0-9a-fA-F]{64}");
+
+
+    /**
+     * 通过本地和远程的路标列表，找到双方的最新共同祖先区块的Landmark
+     * 核心逻辑：优先匹配高度最高的共同区块（降序遍历），无匹配则返回创世区块
+     * @param remote 远程节点发送的路标列表
+     * @return 共同祖先的Landmark（优先最高高度，无匹配则返回创世区块）
+     */
+    public  Landmark findCommonAncestorByLandmark(List<Landmark> remote) {
+        int maxHeight = remote.stream().mapToInt(Landmark::getHeight).max().getAsInt();
+        log.info("该路标最大高度{}",maxHeight);
+        List<Landmark> local = generateSyncLandmarks(maxHeight);
+
+        //如果远程的maxHeight 大于本地直接返回创世 因为无法比较
+        if (maxHeight > mainTipBlock.getHeight()) {
+            return createGenesisLandmark();
+        }
+
+        // 1. 严格参数校验与无效路标过滤
+        if (local == null || local.isEmpty()) {
+            log.warn("本地路标列表为null/空，返回创世区块");
+            return createGenesisLandmark();
+        }
+        if (remote.isEmpty()) {
+            log.warn("远程路标列表为null/空，返回创世区块");
+            return createGenesisLandmark();
+        }
+
+        // 2. 构建远程 hash -> Landmark 映射（保留每个 hash 的最高高度），忽略无法规范化和创世高度(0)
+        Map<String, Landmark> remoteByHash = new HashMap<>();
+        for (Landmark r : remote) {
+            String rh = bytesToHex(r.getHash());
+            if (r.getHeight() == 0) continue;       // 忽略创世（作为兜底返回）
+            Landmark exist = remoteByHash.get(rh);
+            if (exist == null || r.getHeight() > exist.getHeight()) {
+                remoteByHash.put(rh, r);
+            }
+        }
+        // 3. 收集本地有效路标（可规范化且非创世），按高度降序排序
+        List<Landmark> localValid = new ArrayList<>();
+        for (Landmark l : local) {
+            String lh = bytesToHex(l.getHash());
+            if (l.getHeight() == 0) continue;
+            localValid.add(l);
+        }
+        if (localValid.isEmpty() || remoteByHash.isEmpty()) {
+            log.warn("无有效非创世路标可比对，返回创世区块");
+            return createGenesisLandmark();
+        }
+        localValid.sort(Comparator.comparingInt(Landmark::getHeight).reversed());
+
+        // 4. 按本地高度从高到低查找第一个在远端存在的 hash（即最高共同祖先）
+        for (Landmark l : localValid) {
+            String lh = bytesToHex(l.getHash());
+            Landmark r = remoteByHash.get(lh);
+            log.info("本地高度{} 本地Hash{}", l.getHeight(), lh);
+            if (r != null) {
+                // 找到匹配：返回高度更高的那个 Landmark（通常两边高度相同）
+                Landmark chosen = (l.getHeight() >= r.getHeight()) ? l : r;
+                log.debug("找到共同祖先 | 高度: {} | Hash: {}", chosen.getHeight(), bytesToHex(chosen.getHash()));
+                return chosen;
+            }
+        }
+
+        // 5. 无任何匹配项，兜底返回创世区块
+        log.warn("全量对比所有有效路标后，未找到非创世区块的共同祖先，返回创世区块");
+        return createGenesisLandmark();
+    }
+
+
+
+
+    /**
+     * 辅助方法：创建创世区块（高度0）的默认Landmark
+     * 保证无共同祖先时，同步逻辑能从创世区块开始
+     */
+    private static Landmark createGenesisLandmark() {
+        Landmark genesisLandmark = new Landmark();
+        genesisLandmark.setHeight(0);
+        // 创世区块的hash需与项目中createGenesisBlock()生成的hash一致
+        // 这里复用原有创世区块创建逻辑的hash，保证准确性
+        Block genesisBlock = BlockChainServiceImpl.createGenesisBlock();
+        genesisLandmark.setHash(genesisBlock.getHash());
+        log.debug("创建创世区块路标 | 高度: 0 | Hash: {}", bytesToHex(genesisLandmark.getHash()));
+        return genesisLandmark;
     }
 
 }

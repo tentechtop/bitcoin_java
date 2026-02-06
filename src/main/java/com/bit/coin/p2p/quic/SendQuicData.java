@@ -145,7 +145,7 @@ public class SendQuicData extends QuicData {
             log.error("[发送失败] 帧数组为空，连接ID:{} 数据ID:{}", getConnectionId(), getDataId());
             return;
         }
-        log.info("[开始发送] 连接ID:{} 数据ID:{} 总帧数:{}", getConnectionId(), getDataId(), getTotal());
+        log.debug("[开始发送] 连接ID:{} 数据ID:{} 总帧数:{}", getConnectionId(), getDataId(), getTotal());
         startGlobalTimeoutTimer();
         for (int sequence = 0; sequence < getTotal(); sequence++) {
             QuicFrame frame = getFrameArray()[sequence];
@@ -229,7 +229,7 @@ public class SendQuicData extends QuicData {
         if (retransmitTimeout == null && !isCompleted() && !isFailed()) {
             // 修改点1：首次重传延迟使用FIRST_RETRANSMIT_DELAY_MS（30ms）
             retransmitTimeout = GLOBAL_TIMER.newTimeout(new RetransmitTask(), FIRST_RETRANSMIT_DELAY_MS, TimeUnit.MILLISECONDS);
-            log.info("[重传定时器启动] 连接ID:{} 数据ID:{} 首次重传延迟:{}ms 后续重传间隔:{}ms",
+            log.debug("[重传定时器启动] 连接ID:{} 数据ID:{} 首次重传延迟:{}ms 后续重传间隔:{}ms",
                     getConnectionId(), getDataId(), FIRST_RETRANSMIT_DELAY_MS, RETRANSMIT_INTERVAL_MS);
         }
     }
@@ -319,9 +319,6 @@ public class SendQuicData extends QuicData {
             }
         }
     }
-
-
-
 
 
 
@@ -464,7 +461,7 @@ public class SendQuicData extends QuicData {
 
             // 检查是否所有帧都已确认（触发完成逻辑）
             if (ackedSequences.size() == totalFrames) {
-                log.info("[所有帧通过批量ACK确认] 连接ID:{} 数据ID:{} 传输完成", getConnectionId(), getDataId());
+                log.debug("[所有帧通过批量ACK确认] 连接ID:{} 数据ID:{} 传输完成", getConnectionId(), getDataId());
                 handleSendSuccess();
             }
         }

@@ -2,6 +2,7 @@ package com.bit.coin.p2p.quic;
 
 
 import com.bit.coin.config.CommonConfig;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.protocol.P2PMessage;
@@ -17,6 +18,8 @@ import io.netty.util.TimerTask;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 
 import java.net.InetAddress;
@@ -37,7 +40,12 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
 @Data
+@Component
 public class QuicConnection {
+
+    @Autowired
+    private RoutingTable routingTable;
+
     private String peerId;// 节点ID
     private long connectionId;// 连接ID
     private Channel tcpChannel;// TCP通道
@@ -63,7 +71,6 @@ public class QuicConnection {
     private boolean isOutbound;
     //流控
     private FlowController flowController;
-
 
 
 
@@ -98,7 +105,6 @@ public class QuicConnection {
                     QuicFrame pingFrame = QuicFrame.acquire();
                     try {
                         // 主动发送PING帧
-
                         long dataId = generator.nextId();
                         pingFrame.setConnectionId(connectionId);
                         pingFrame.setDataId(dataId);
@@ -115,8 +121,10 @@ public class QuicConnection {
                             log.debug("出站连接PING帧发送成功，连接ID:{}，PONG帧:{}", connectionId, quicFrame);
                             updateLastSeen(); // 接收PONG更新活动时间
                             quicFrame.release();
-                        }
 
+                            //更新路由表中的节点
+
+                        }
                     } catch (Exception e) {
                         log.error("[出站心跳异常] 连接ID:{}", connectionId, e);
                     }finally {

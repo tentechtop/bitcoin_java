@@ -82,6 +82,10 @@ public class PeerServiceImpl implements PeerService {
     private P2PReceiveBlockHandle p2PReceiveBlockHandle;
     @Autowired
     private P2PReceiveTxHandle p2PReceiveTxHandle;
+    @Autowired
+    private P2PQueryBlockByHashHandle p2PQueryBlockByHashHandle;
+    @Autowired
+    private P2PQueryBlockByHeightHandle p2PQueryBlockByHeightHandle;
 
     @Autowired
     private PingHandler pingHandler;
@@ -116,6 +120,9 @@ public class PeerServiceImpl implements PeerService {
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Get_Resource_Req,  p2PGetResourceReqHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Block,  p2PReceiveBlockHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Transaction,  p2PReceiveTxHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash,  p2PQueryBlockByHashHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height,  p2PQueryBlockByHeightHandle);
+
 
         //连接引导节点并将引导节点加入到路由表
         connectBootstrapNodes();

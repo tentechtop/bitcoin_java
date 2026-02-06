@@ -147,9 +147,17 @@ public enum TableEnum {
             0, //内存缓存 MB
             0
     ),
+    CHECKPOINT(
+            (short) 15,
+            "CHECKPOINT",  // 列族实际存储名称
+            new ColumnFamilyOptions()  // 列族配置
+                    .setTableFormatConfig(new BlockBasedTableConfig()
+                            .setCacheIndexAndFilterBlocks(true)),
+            0, //内存缓存 MB
+            0
+    ),
 
 
-    
 
     TEST1(
             (short) 100,

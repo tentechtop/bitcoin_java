@@ -384,9 +384,13 @@ public class P2PMessage {
     /**
      * 从字节数组反序列化为P2PMessage（通过Protobuf）
      */
-    public static P2PMessage deserialize(byte[] data) throws IOException {
-        Structure.ProtoP2pMessage proto = Structure.ProtoP2pMessage.parseFrom(data);
-        return fromProto(proto);
+    public static P2PMessage deserialize(byte[] data)  {
+        try {
+            Structure.ProtoP2pMessage proto = Structure.ProtoP2pMessage.parseFrom(data);
+            return fromProto(proto);
+        }catch (Exception e){
+            return null;
+        }
     }
 
     /**

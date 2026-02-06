@@ -22,8 +22,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -195,6 +199,10 @@ public class QuicConnectionManager {
             return null;
         }
         String peerId = multiAddress.getPeerId();
+        QuicConnection peerConnection = getPeerConnection(peerId);
+        if (peerConnection != null){
+            return peerConnection;
+        }
         log.info("节点ID{}",peerId);
         String peerIdHex = multiAddress.getPeerIdHex();
         String ipAddress = multiAddress.getIpAddress();
@@ -248,9 +256,23 @@ public class QuicConnectionManager {
             log.error("远程地址不能为空");
             return null;
         }
-
-        long conId = generator.nextId();
+        long conId = generateConIdByRemoteAddress(remoteAddress);
         long dataId = generator.nextId();
+        QuicConnection existingConn = getConnection(conId);
+        if (existingConn != null) {
+            if (!existingConn.isExpired()) {
+                // 情况1：连接存在且有效（未过期），直接返回现有连接，终止后续握手
+                log.info("与远程地址{}的连接已存在且有效，连接ID：{}，无需重复建立", remoteAddress, conId);
+                return existingConn;
+            } else {
+                // 情况2：连接存在但已过期，先清理旧连接（停止心跳、移除缓存），再重新建立
+                log.warn("与远程地址{}的连接已过期，连接ID：{}，清理后重新建立", remoteAddress, conId);
+                existingConn.stopHeartbeat(); // 停止旧心跳
+                removeConnection(conId);      // 从连接缓存移除（需确保你有此移除方法，无则新增）
+                removePeerConnect(existingConn.getPeerId(), conId); // 从节点-连接映射移除
+            }
+        }
+
         //给远程地址发送连接请求请求帧 等待回复 回复成功后建立连接
         QuicFrame reqQuicFrame = QuicFrame.acquire();//已经释放
         reqQuicFrame.setConnectionId(conId);//生成连接ID
@@ -586,5 +608,37 @@ public class QuicConnectionManager {
     }
 
 
+    /**
+     * 根据远程地址(IP+端口)生成唯一的连接ID(long类型)
+     * 拼接IP字节(IPv4=4字节/IPv6=16字节) + 端口int字节(4字节)，MD5哈希后取前8字节转long
+     * 保证同一remoteAddress生成唯一conId，兼容IPv4/IPv6
+     * @param remoteAddress 远程地址
+     * @return 唯一的连接ID
+     */
+    private static long generateConIdByRemoteAddress(InetSocketAddress remoteAddress) {
+        if (remoteAddress == null || remoteAddress.getAddress() == null) {
+            throw new IllegalArgumentException("远程地址或IP不能为空");
+        }
+        try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            // 1. 写入IP字节数组（IPv4=4字节，IPv6=16字节，自动兼容）
+            bos.write(remoteAddress.getAddress().getAddress());
+            // 2. 写入端口字节（int=4字节，大端序，保证跨平台一致性）
+            bos.write(ByteBuffer.allocate(4).putInt(remoteAddress.getPort()).array());
+            byte[] ipPortBytes = bos.toByteArray();
+
+            // 3. MD5哈希：生成16字节唯一摘要，避免IP+端口直接转long的长度不足问题
+            MessageDigest md5 = MessageDigest.getInstance("MD5");
+            byte[] md5Bytes = md5.digest(ipPortBytes);
+
+            // 4. 取MD5前8字节转long（刚好匹配conId的long类型，8字节）
+            ByteBuffer buffer = ByteBuffer.wrap(md5Bytes, 0, 8);
+            return buffer.getLong();
+        } catch (IOException e) {
+            throw new RuntimeException("拼接IP+端口字节失败", e);
+        } catch (NoSuchAlgorithmException e) {
+            // MD5是JDK自带算法，不会抛出此异常，兜底处理
+            throw new RuntimeException("MD5哈希算法不存在", e);
+        }
+    }
 
 }

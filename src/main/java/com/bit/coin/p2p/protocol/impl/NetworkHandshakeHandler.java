@@ -46,7 +46,7 @@ public class NetworkHandshakeHandler implements ProtocolHandler.ResultProtocolHa
 
         byte[] serialize = networkHandshake.serialize();
         //构建协议的响应
-        P2PMessage p2PMessage = newResponseMessage(getSelf().getId(), ProtocolEnum.Network_handshake_V1,requestParams.getRequestId(), serialize);
+        P2PMessage p2PMessage = newResponseMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Network_handshake_V1,requestParams.getRequestId(), serialize);
         return p2PMessage.serialize();
     }
 }

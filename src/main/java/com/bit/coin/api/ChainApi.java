@@ -1,22 +1,27 @@
 package com.bit.coin.api;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.blockchain.Landmark;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.mining.MiningServiceImpl;
+import com.bit.coin.net.NetServiceImpl;
+import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.txpool.TxPool;
 import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
@@ -38,6 +43,11 @@ public class ChainApi {
     @Autowired
     private TxPool txPool;
 
+    @Autowired
+    private NetServiceImpl netService;
+
+    @Autowired
+    private RoutingTable routingTable;
 
     /**
      * 最新顶端区块
@@ -81,8 +91,7 @@ public class ChainApi {
 
     @GetMapping("/getBlockHeaderByHash")
     public BlockHeader getBlockHeaderByHash(String hash) {
-        BlockHeader block = blockChainService.getBlockHeaderByHash(hexToBytes(hash));
-        return block;
+        return blockChainService.getBlockHeaderByHash(hexToBytes(hash));
     }
 
     /**
@@ -161,6 +170,30 @@ public class ChainApi {
     }
 
 
+    //开始同步
+    @GetMapping("/startSync")
+    public void startSync() {
+        netService.startSyncBlock();
+    }
+
+    @GetMapping("/getLatestBlcok")
+    public Block getLatestBlcok() {
+        Block mainLatestBlock = blockChainService.getMainLatestBlock();
+        return mainLatestBlock;
+    }
+
+    //获取在线节点列表
+    @GetMapping("/getConnectedPeers")
+    public List<Peer> getConnectedPeers() {
+        return routingTable.getOnlineNodes();
+    }
+
+
+    //从在线节点获取最新的区块
+    @GetMapping("/getLatestBlockFromOnlinePeers")
+    public Block getLatestBlockFromOnlinePeers() {
+        return netService.getLatestBlockFromOnlinePeers();
+    }
 
 
     /**
@@ -184,6 +217,39 @@ public class ChainApi {
         miningService.initAllResources();
         Block block = miningService.mineOneBlock();
         return block;
+    }
+
+    @GetMapping("/mingOneBlockByCount")
+    public List<Block> mingOneBlock(int count) throws Exception {
+        ArrayList<Block> blocks = new ArrayList<>();
+        for (int i = 0; i < count; i++){
+            miningService.initAllResources();
+            Block block = miningService.mineOneBlock();
+            blocks.add(block);
+        }
+        return blocks;
+    }
+
+
+
+
+    @GetMapping("/getRoadMark")
+    public List<Landmark> getRoadMark(int height) {
+        List<Landmark> landmarks = blockChainService.generateSyncLandmarks(height);
+        return landmarks;
+    }
+
+    @GetMapping("/getLoclRoadMark")
+    public List<Landmark> getLoclRoadMark() {
+        List<Landmark> landmarksLocal = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
+        return landmarksLocal;
+    }
+
+
+    //用这个路标和本地做对比找到共同祖先
+    @PostMapping("/getCommonAncestor")
+    public Landmark getCommonAncestor(@RequestBody  List<Landmark> landmarks) {
+        return blockChainService.findCommonAncestorByLandmark(landmarks);
     }
 
 

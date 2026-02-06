@@ -301,6 +301,9 @@ public class RoutingTable {
         }
     }
 
+
+
+
     /**
      * 找到与目标ID最近的一个节点
      * @param targetId 目标节点ID（32字节）
@@ -1256,4 +1259,6 @@ public class RoutingTable {
             log.info("路由表业务线程池已关闭");
         }
     }
+
+
 }

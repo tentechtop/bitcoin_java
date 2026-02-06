@@ -46,6 +46,14 @@ public enum ProtocolEnum {
     P2P_Receive_Transaction(12, "/P2P_Receive_Transaction/1.0.0",false),
 
 
+    //向目标节点请求一个区块
+    P2P_Query_Block_By_Hash(13, "/P2P_Query_Block_By_Hash/1.0.0",true),
+
+    P2P_Query_Block_By_Height(14, "/P2P_Query_Block_By_Height/1.0.0",true),
+
+
+    //通过本地路标找到共同祖先 返回值是一个路标
+    P2P_Query_Common_Ancestor(15, "/P2P_Query_Common_Ancestor/1.0.0",true),
 
 
 

@@ -15,8 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
-import static com.bit.coin.config.CommonConfig.self;
-import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
+
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -33,8 +32,10 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
     @Override
     public void handleVoid(P2PMessage requestParams) throws IOException {
         byte[] data = requestParams.getData();
-        log.info("数据长度{}",data.length);
         byte[] senderId = requestParams.getSenderId();
+        log.info("发送者{}",bytesToHex(senderId));
+        log.info("本地 {}",bytesToHex(CommonConfig.getSelf().getId()));
+
         BroadcastResource broadcastResource = BroadcastResource.fromBytes(data);
         if (broadcastResource!=null){
             int type = broadcastResource.getType();

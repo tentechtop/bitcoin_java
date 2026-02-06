@@ -14,8 +14,6 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
-import static com.bit.coin.config.CommonConfig.self;
-import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j

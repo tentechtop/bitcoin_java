@@ -59,7 +59,7 @@ public class ReceiveQuicData extends QuicData {
             setTotal(total);
             setDataId(dataId);
             setConnectionId(connectionId);
-            log.info("[初始化数据] 连接ID:{} 数据ID:{} 总帧数:{}", connectionId, dataId, total);
+            log.debug("[初始化数据] 连接ID:{} 数据ID:{} 总帧数:{}", connectionId, dataId, total);
             // 启动全局超时定时器  动态全局超时 根据total动态计算
             startGlobalTimeoutTimer();
         }
