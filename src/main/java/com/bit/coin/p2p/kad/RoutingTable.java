@@ -22,6 +22,7 @@ import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -32,7 +33,7 @@ import java.util.stream.Collectors;
 
 import static com.bit.coin.config.CommonConfig.*;
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.getOnlinePeerIds;
+import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -55,7 +56,7 @@ public class RoutingTable {
     // 定时任务线程池（单线程即可，避免并发冲突）
     private ScheduledExecutorService persistScheduler;
     // 定时检查周期：1分钟（单位：毫秒）
-    private static final long PERSIST_CHECK_PERIOD = 1 * 60 * 1000L;
+    private static final long PERSIST_CHECK_PERIOD = 10 * 1000L;
 
     @Autowired
     private SystemConfig config;
@@ -137,7 +138,6 @@ public class RoutingTable {
 
         // ========== 新增：启动定时持久化检查任务 ==========
         initPersistScheduler();
-
     }
 
     /**
@@ -581,12 +581,35 @@ public class RoutingTable {
         log.info("开始从节点列表恢复路由表，共{}个节点", peerList.size());
         for (Peer peer : peerList) {
             try {
-                addPeer(peer);
+                //只添加3天内活跃的节点
+                if (peer.getLastSeen() > System.currentTimeMillis() - 3 * 24 * 60 * 60 * 1000) {
+                    addPeer(peer);
+                }
             } catch (Exception e) {
                 log.error("恢复节点{}失败", bytesToHex(peer.getId()), e);
             }
         }
         log.info("路由表恢复完成");
+
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                //连接路由表中的节点
+                for (Peer peer : getAll()) {
+                    try {
+                        connectRemoteByAddr(peer.getMultiaddr());
+                    } catch (ExecutionException e) {
+                        throw new RuntimeException(e);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    } catch (TimeoutException e) {
+                        throw new RuntimeException(e);
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            }
+        }, 5000);
     }
 
     // ===================== 序列化/反序列化工具方法（需根据Peer类调整） =====================

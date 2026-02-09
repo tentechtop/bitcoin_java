@@ -1,6 +1,7 @@
 package com.bit.coin.mining;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.structure.Result;
 import com.bit.coin.structure.block.Block;
@@ -39,9 +40,8 @@ public class MiningServiceImpl {
     @Autowired
     private TxPool txPool;
 
-    //矿工地址
-    private static volatile String MINER_ADDRESS = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
-
+    @Autowired
+    private SystemConfig systemConfig;
 
     volatile public static boolean isMining = false;
     private volatile boolean isResourcesInitialized = false;
@@ -198,7 +198,13 @@ public class MiningServiceImpl {
     private Block buildNewBlock(Block latestBlock, List<Transaction> selectedTxs, int newBlockHeight) {
         Block newBlock = new Block();
         BlockHeader blockHeader = new BlockHeader(1, latestBlock.getHash(), null, System.currentTimeMillis() / 1000, blockChainService.calculateNextBlockDifficulty(), 0);
-        Transaction coinBase = BlockChainServiceImpl.createCoinBaseTransaction(MINER_ADDRESS, newBlockHeight, blockChainService.calculateTransactionFee(selectedTxs));
+
+        String first = systemConfig.getMinerAddressList().getFirst();
+        if (first.isEmpty()){
+            log.info("未配置挖矿地址");
+            first = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
+        }
+        Transaction coinBase = BlockChainServiceImpl.createCoinBaseTransaction(systemConfig.getMinerAddressList().getFirst(), newBlockHeight, blockChainService.calculateTransactionFee(selectedTxs));
         List<Transaction> blockTxs = new ArrayList<>(selectedTxs);
         blockTxs.addFirst(coinBase); // CoinBase放在首位
         newBlock.setTransactions(blockTxs);

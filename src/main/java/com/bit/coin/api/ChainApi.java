@@ -22,8 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
-import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
-import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.*;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
@@ -128,11 +127,29 @@ public class ChainApi {
         return utxoCache.getAddressAllUTXO(address);
     }
 
+    /**
+     * 查询地址下所有的UTXO
+     */
+    @GetMapping("/getUTXOsByAddressAndCount")
+    public Map<String, Object> getUTXOsByAddressAndCount(String address) {
+        return utxoCache.getUTXOsByAddressAndCount(address);
+    }
+
+
+
+
     @GetMapping("/getUTXOsByAddres2")
     public Map<String, Object> getUTXOsByAddres2(String address) {
-        Map<String, Object> addressAllUTXOAndTotalByStatus = utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED);
-        return addressAllUTXOAndTotalByStatus;
+        return utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED | COINBASE_MATURING);
     }
+
+
+    //查询地址余额
+    @GetMapping("/getBalance")
+    public Map<String, Object> getBalance(String address) {
+        return utxoCache.getBalance(address);
+    }
+
 
 
     /**

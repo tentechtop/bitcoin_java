@@ -49,7 +49,7 @@ public class Bucket {
      * 先移除旧节点，再添加到头部，保证顺序正确性
      */
     public void pushToFront(Peer peer) {
-        log.info("推送到头部{}", peer.toString());
+        log.debug("推送到头部{}", peer.toString());
         String peerId = bytesToHex(peer.getId());
 
         // 加锁保证操作原子性（ConcurrentLinkedDeque本身线程安全，但组合操作需加锁）

@@ -33,6 +33,10 @@ public class SystemConfig {
     private List<String> stunAddress;
     //引导节点
     private List<String> bootstrap;
+    //矿工地址
+    private List<String> minerAddressList;
+
+
 
 
     //网络参数 MainNetParams TestNet3Params RegressionNetParams

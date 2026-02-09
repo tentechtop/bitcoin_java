@@ -23,9 +23,12 @@ public class QuicFrame {
     private int frameTotalLength;//载荷总长 4字节
     private byte[] payload; // 有效载荷
 
+
+
+
+
     //扩展字段 接收时写入
     private InetSocketAddress remoteAddress;
-
     //发送时间 不参与序列化反序列化
     private long time;
 

@@ -3,9 +3,8 @@ server:
   port: 18555
 
 system:
-  mining:
-    #挖矿奖励接收地址
-    miner-address: Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz
+  miner-address-list:
+    - 'Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz'
   net-params: 'MainNetParams'
   #数据存储路径 按照网络前缀分类
   path: "/bitcoin/localdb"

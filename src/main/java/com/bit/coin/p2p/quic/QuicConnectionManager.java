@@ -4,13 +4,11 @@ package com.bit.coin.p2p.quic;
 import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
-import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
-import com.bit.coin.p2p.quic.control.FlowController;
 
 import com.bit.coin.utils.MultiAddress;
 import io.netty.buffer.ByteBuf;
@@ -43,7 +41,6 @@ import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.utils.ECCWithAESGCM.generateCurve25519KeyPair;
 import static com.bit.coin.utils.ECCWithAESGCM.generateSharedSecret;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
-import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 /**
@@ -302,7 +299,6 @@ public class QuicConnectionManager {
         reqQuicFrame.setRemoteAddress(remoteAddress);
         QuicFrame resQuicFrame = sendFrame(reqQuicFrame);//这里会得到一个入站连接
         log.info("响应帧{}",resQuicFrame);
-
         reqQuicFrame.release();
         if (resQuicFrame != null){
             QuicConnection connection = getConnection(conId);

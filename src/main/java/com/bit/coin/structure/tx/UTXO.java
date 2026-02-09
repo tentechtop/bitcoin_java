@@ -151,7 +151,7 @@ public class UTXO {
             dis.close();
             return utxo;
         }catch (Exception e){
-            throw new IllegalArgumentException("UTXO序列化失败");
+            return null;
         }
     }
 

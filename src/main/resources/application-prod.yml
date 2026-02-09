@@ -3,9 +3,8 @@ server:
   port: 18333
 
 system:
-  mining:
-    #挖矿奖励接收地址
-    miner-address: Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz
+  miner-address-list:
+    - 'AYRNAzJs9qNpL2PRSKoteh2Mg1SQSmqoHzY1Siyd5Qcz'
   net-params: 'MainNetParams'
   #数据存储路径 按照网络前缀分类
   path: "/bitcoin/proddb"
@@ -21,8 +20,9 @@ system:
   #用户在启动时可以配置公钥 对于隐私接口必须签名才能访问 也就是节点所有者
   server-pubkey:
     - ''
+  #- '/ip4/127.0.0.1/quic/8334/p2p/7X62Mk8chTAinWiz8xgKbZSyX7UiAC8XZ1UMb3Z7kgar'
   bootstrap:
-    - '/ip4/127.0.0.1/quic/8334/p2p/8GCiB61Rtbk5x4HxAZRM4D2HuBhgeDSYCwmETdJF8R8r'
+
 
 logging:
   level:

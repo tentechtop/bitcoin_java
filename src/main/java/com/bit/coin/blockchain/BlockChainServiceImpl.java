@@ -461,11 +461,12 @@ public class BlockChainServiceImpl implements BlockChainService{
                                 null,
                                 RocksDb.DbOperation.OpType.DELETE
                         ));
-                        // 从ADDR_TO_UTXO表删除该UTXO的映射
+                        // 修复：ADDR_TO_UTXO的key = 地址前缀 + UTXO key
                         byte[] addrKey = output.getScriptPubKey();
+                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxoKey);
                         revertOps.add(new RocksDb.DbOperation(
                                 TableEnum.ADDR_TO_UTXO,
-                                addrKey,
+                                addrUtxoKey,
                                 null,
                                 RocksDb.DbOperation.OpType.DELETE
                         ));
@@ -493,10 +494,12 @@ public class BlockChainServiceImpl implements BlockChainService{
                                 utxo.serialize(),
                                 RocksDb.DbOperation.OpType.INSERT
                         ));
-                        // 恢复ADDR_TO_UTXO映射
+                        // 修复：ADDR_TO_UTXO的key = 地址前缀 + UTXO key，value = 小端序的金额
+                        byte[] addrKey = utxo.getAddressKey();
+                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxo.getKey());
                         revertOps.add(new RocksDb.DbOperation(
                                 TableEnum.ADDR_TO_UTXO,
-                                utxo.getAddressKey(),
+                                addrUtxoKey,
                                 longToLittleEndian(utxo.getValue()),
                                 RocksDb.DbOperation.OpType.INSERT
                         ));
@@ -514,9 +517,11 @@ public class BlockChainServiceImpl implements BlockChainService{
                         ));
                         // 删除ADDR_TO_UTXO映射
                         TxOutput output = outputs.get(outputIndex);
+                        byte[] addrKey = output.getScriptPubKey();
+                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxoKey);
                         revertOps.add(new RocksDb.DbOperation(
                                 TableEnum.ADDR_TO_UTXO,
-                                output.getScriptPubKey(),
+                                addrUtxoKey,
                                 null,
                                 RocksDb.DbOperation.OpType.DELETE
                         ));
@@ -688,6 +693,13 @@ public class BlockChainServiceImpl implements BlockChainService{
             log.error("工作量证明验证失败");
             return false;
         }
+
+        //验证是否已经存在
+        if (getBlockHeaderByHash(block.getHash()) != null) {
+            log.error("区块已经存在");
+            return true;
+        }
+
 
         // 4. 区块交易验证
         if (!validateBlockTransactions(block)) {
@@ -1662,46 +1674,77 @@ public class BlockChainServiceImpl implements BlockChainService{
     public Map<String, Object> getUTXOs(String address) {
         ParamsConfig.Params params = config.getParams();
         int coinbaseMaturity = params.getCoinbaseMaturity();
-        //key:total value:long
-        //key:utxoList: value:List<UTXO>
-        byte[] pubkey = Base58.decode(address);
-        byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
-        //总额
         AtomicLong total = new AtomicLong();
-        //UTXOLIST
-        log.info("前缀{}",bytesToHex(addr));
         ArrayList<UTXO> utxos = new ArrayList<>();
-        dataBase.iterateByPrefix(ADDR_TO_UTXO,addr, (key, value) -> {
-            // 在这里处理您找到的每一个键值对
-            //ADDR_TO_UTXO 表中 key是 [地址 20字节][交易ID 32字节][索引4字节] value是小端金额
-            //去除地址 获得UTXOkey
-            byte[] utxoKey = Arrays.copyOfRange((byte[]) key, 20, ((byte[]) key).length);
-            byte[] bytes = dataBase.get(TUTXO, utxoKey);
-            UTXO deserialize = com.bit.coin.structure.tx.UTXO.deserialize(bytes);
-            //设置UTXO的状态
-            long status = 0L;
-            status = setLifecycleStatus(status, CONFIRMED_UNSPENT);
-            if (deserialize.isCoinbase()){
-                //是否成熟
-                int height = deserialize.getHeight();
-                int mainHeight = mainTipBlock.getHeight();
-                int confirmations = mainHeight - height + 1;
-                boolean isMature = confirmations > coinbaseMaturity;
-                if (!isMature){
-                    //天机未成熟状态
-                    status = UTXOStatusResolver.setCoinbaseMaturing(status);
-                }else {
-                    status = UTXOStatusResolver.setCoinbaseMatured(status);
+
+        try {
+            byte[] pubkey = Base58.decode(address);
+            byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
+            log.info("前缀{}", bytesToHex(addr));
+
+            dataBase.iterateByPrefix(ADDR_TO_UTXO, addr, (key, value) -> {
+                try {
+                    // 1. 校验key的基本合法性
+                    byte[] keyBytes = (byte[]) key;
+                    if (keyBytes.length < 20) { // 至少包含20字节地址前缀
+                        log.warn("无效的ADDR_TO_UTXO key，长度不足：{}", keyBytes.length);
+                        return true; // 跳过该记录，继续遍历
+                    }
+
+                    // 2. 提取UTXO key并校验长度（32字节txId + 4字节index = 36字节）
+                    byte[] utxoKey = Arrays.copyOfRange(keyBytes, 20, keyBytes.length);
+                    if (utxoKey.length != 36) {
+                        log.warn("无效的UTXO key长度：{}，预期36字节", utxoKey.length);
+                        return true;
+                    }
+
+                    // 3. 查询TUTXO并校验是否为空
+                    byte[] utxoBytes = dataBase.get(TUTXO, utxoKey);
+                    if (utxoBytes == null) {
+                        log.warn("UTXO key {} 在TUTXO表中无数据，跳过", bytesToHex(utxoKey));
+                        return true;
+                    }
+
+                    // 4. 反序列化UTXO并捕获异常
+                    UTXO deserialize = UTXO.deserialize(utxoBytes);
+                    if (deserialize == null) {
+                        log.warn("UTXO反序列化为null，key：{}", bytesToHex(utxoKey));
+                        return true;
+                    }
+
+                    // 5. 设置UTXO状态（原有逻辑）
+                    long status = 0L;
+                    status = setLifecycleStatus(status, CONFIRMED_UNSPENT);
+                    if (deserialize.isCoinbase()) {
+                        int height = deserialize.getHeight();
+                        int mainHeight = mainTipBlock != null ? mainTipBlock.getHeight() : 0;
+                        int confirmations = mainHeight - height + 1;
+                        boolean isMature = confirmations > coinbaseMaturity;
+                        if (!isMature) {
+                            status = UTXOStatusResolver.setCoinbaseMaturing(status);
+                        } else {
+                            status = UTXOStatusResolver.setCoinbaseMatured(status);
+                        }
+                    }
+                    deserialize.setStatus(status);
+                    utxos.add(deserialize);
+
+                    // 6. 计算金额（原有逻辑）
+                    long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
+                    total.addAndGet(amount);
+
+                } catch (IllegalArgumentException e) {
+                    log.error("UTXO反序列化失败，key：{}，异常：{}", bytesToHex((byte[]) key), e.getMessage());
+                } catch (Exception e) {
+                    log.error("处理UTXO记录失败，key：{}", bytesToHex((byte[]) key), e);
                 }
-            }
-            deserialize.setStatus(status);
-            utxos.add(deserialize);
-            //金额
-            long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
-            total.addAndGet(amount);
-            return true;
-        });
-        return Map.of("total",total.get(),"utxos",utxos);
+                return true;
+            });
+        } catch (Exception e) {
+            log.error("查询地址{}的UTXO失败", address, e);
+        }
+
+        return Map.of("total", total.get(), "utxos", utxos);
     }
 
 

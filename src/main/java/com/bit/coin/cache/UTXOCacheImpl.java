@@ -7,10 +7,7 @@ import com.bit.coin.database.DataBase.KeyValue;
 import com.bit.coin.database.KeyValueHandler;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
-import com.bit.coin.structure.tx.Transaction;
-import com.bit.coin.structure.tx.TxInput;
-import com.bit.coin.structure.tx.TxOutput;
-import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.structure.tx.*;
 import com.bit.coin.utils.Sha;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -454,4 +451,98 @@ public class UTXOCacheImpl implements UTXOCache {
         }
         return Map.of("total",total.get(),"utxos",addressAllUTXOByStatus);
     }
+
+    @Override
+    public Map<String, Object> getBalance(String address) {
+        return getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED);
+    }
+
+    @Override
+    public Map<String, Object> getUTXOsByAddressAndCount(String address) {
+        // 1. 获取地址下所有UTXO
+        List<UTXO> allUtxos = getAddressAllUTXO(address);
+        if (allUtxos.isEmpty()) {
+            return Map.of(
+                    "totalBalance", 0L,        // 总余额（所有有效UTXO金额之和，扣除待支出）
+                    "availableBalance", 0L,    // 可用余额（可直接花费）
+                    "pendingReceive", 0L,      // 待到账（未确认输出）
+                    "pendingSpend", 0L,        // 待支出（花费中）
+                    "maturingBalance", 0L,     // 成熟中（coinbase未成熟）
+                    "spentBalance", 0L,        // 已花费
+                    "orphanedBalance", 0L      // 被孤立
+            );
+        }
+
+        // 2. 初始化线程安全的统计计数器
+        AtomicLong totalBalance = new AtomicLong(0);
+        AtomicLong availableBalance = new AtomicLong(0);
+        AtomicLong pendingReceive = new AtomicLong(0);
+        AtomicLong pendingSpend = new AtomicLong(0);
+        AtomicLong maturingBalance = new AtomicLong(0);
+        AtomicLong spentBalance = new AtomicLong(0);
+        AtomicLong orphanedBalance = new AtomicLong(0);
+
+        // 3. 遍历UTXO，修正状态判断和余额计算逻辑
+        allUtxos.forEach(utxo -> {
+            long value = utxo.getValue();
+            long status = utxo.getStatus();
+
+            // ========== 修正后的状态判断逻辑 ==========
+            // 1. 未确认输出 → 待到账（计入总余额，不计入可用余额）
+            if (UTXOStatusResolver.hasLifecycle(status, UNCONFIRMED_OUTPUT)) {
+                pendingReceive.addAndGet(value);
+                totalBalance.addAndGet(value); // 待到账计入总余额
+            }
+            // 2. 已确认未花费 → 区分coinbase是否成熟
+            else if (UTXOStatusResolver.hasLifecycle(status, CONFIRMED_UNSPENT)) {
+                totalBalance.addAndGet(value); // 计入总余额
+                if (UTXOStatusResolver.isCoinbaseMaturing(status)) {
+                    // coinbase成熟中 → 不计入可用余额
+                    maturingBalance.addAndGet(value);
+                } else if (UTXOStatusResolver.isCoinbaseMatured(status) || !utxo.isCoinbase()) {
+                    // coinbase已成熟 或 非coinbase UTXO → 计入可用余额
+                    availableBalance.addAndGet(value);
+                }
+            }
+            // 3. 花费中 → 待支出（不计入总余额和可用余额）
+            else if (UTXOStatusResolver.hasLifecycle(status, PENDING_SPENT)) {
+                pendingSpend.addAndGet(value);
+                // 关键修正：待支出的UTXO不计入总余额
+            }
+            // 4. 已花费 → 不计入总余额
+            else if (UTXOStatusResolver.hasLifecycle(status, SPENT)) {
+                spentBalance.addAndGet(value);
+            }
+            // 5. 被孤立 → 不计入总余额
+            else if (UTXOStatusResolver.hasLifecycle(status, ORPHANED)) {
+                orphanedBalance.addAndGet(value);
+            }
+            // 未知状态
+            else {
+                log.warn("未知的UTXO生命周期状态: {}, UTXOKey: {}",
+                        UTXOStatusResolver.getLifecycleStatus(status),
+                        bytesToHex(utxo.getKey()));
+            }
+        });
+
+        // 4. 封装统计结果（修正不可用余额计算逻辑）
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalBalance", totalBalance.get());
+        result.put("availableBalance", availableBalance.get());
+        result.put("pendingReceive", pendingReceive.get());
+        result.put("pendingSpend", pendingSpend.get());
+        result.put("maturingBalance", maturingBalance.get());
+        result.put("spentBalance", spentBalance.get());
+        result.put("orphanedBalance", orphanedBalance.get());
+        // 修正：不可用余额 = 总余额 - 可用余额（此时总余额已扣除待支出）
+        result.put("unavailableBalance", totalBalance.get() - availableBalance.get());
+
+        // 日志输出统计结果
+        log.info("地址[{}]余额统计 - 总余额: {}, 可用: {}, 待到账: {}, 待支出: {}, 成熟中: {}",
+                address, totalBalance.get(), availableBalance.get(),
+                pendingReceive.get(), pendingSpend.get(), maturingBalance.get());
+
+        return result;
+    }
+
 }

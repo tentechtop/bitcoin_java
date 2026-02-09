@@ -44,7 +44,7 @@ public class ChainResultApi {
      * 查询地址下所有的UTXO
      */
     @GetMapping("/getAddressAllUTXO")
-    public Result<List<UTXO>>  getAddressAllUTXOByStatus(String address, long status) {
+    public Result<List<UTXO>>  getAddressAllUTXOByStatus(String address) {
         ArrayList<UTXO> utxos = new ArrayList<>();
         List<UTXO> addressAllUTXOByStatus = utxoCache.getAddressAllUTXOByStatus(address, CONFIRMED_UNSPENT);
         List<UTXO> addressAllUTXOByStatus1 = utxoCache.getAddressAllUTXOByStatus(address, UNCONFIRMED_OUTPUT);

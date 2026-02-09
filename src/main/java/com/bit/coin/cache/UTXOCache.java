@@ -15,16 +15,6 @@ import java.util.Set;
  */
 public interface UTXOCache {
 
-
-
-    
-    
-    //根据List<String> 获取UTXO
-    
-
-
-
-
     /**
      * 从缓存或数据库获取 UTXO
      * @param txId 交易ID
@@ -72,4 +62,7 @@ public interface UTXOCache {
     Map<String, Object> getAddressAllUTXOAndTotalByStatus(String address, long status);
 
 
+    Map<String, Object> getBalance(String address);
+
+    Map<String, Object> getUTXOsByAddressAndCount(String address);
 }

@@ -1,0 +1,31 @@
+手续费估算
+动态手续费
+手续费替换
+脚本运算代替固定格式
+quic框架流量控制
+网络同步优化
+kademlia DHT协议优化 优化节点查找
+
+
+
+矿工A
+私钥(hex): 3f3d0ba50617aeda45d570a7b80102b972fecc048b99ce97ffd87d386e043561
+公钥(hex): a0e33084712eaee563df61b26dbcf1a2fcc066a78e4c3d1d4097e9e3bee6c1b9
+Solana地址: Bq3AEZxnryPvPzNQnCiocdfeNET2W29tVbFPViJkKPdS
+
+矿工B
+私钥(hex): 22d6b17e1cf13f54b68b57a34dc9f7815f14a8f0be0ee0a1f86025dc86453238
+公钥(hex): 8dc5bcafa0d1ae4b95ec6daf69db536f29bf5e06659ad6e5a7f903e67dcc2103
+Solana地址: AYRNAzJs9qNpL2PRSKoteh2Mg1SQSmqoHzY1Siyd5Qcz
+
+
+
+用户A
+私钥(hex): 441ecbcf8194a429b40a739e4dd5fcb1581ec90248feb2bd6e2f49c4d762596d
+公钥(hex): d76e59dc8726de518b2251f498745e93c6a83add6ee8ac7eaa733183fbc4da82
+Solana地址: FVxFW59dXVmeQxB61caA4vp7UZLfYxgYp2Fzg8e3vdWR
+
+用户B
+私钥(hex): 45cb93d791f27f9e34b15b7a8e1303b7e733086a18e7107a9e8167cc2cb0cff9
+公钥(hex): 0c60474ae17a517c897ed344a448023f9cce7fa1f9504eef61e33fd5d9d40005
+Solana地址: qK3QnndXWs41jDZzEUmHyNmE5iQPfD3dEXAU38Wmsz4
