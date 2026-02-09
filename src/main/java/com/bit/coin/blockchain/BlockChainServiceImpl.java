@@ -405,6 +405,7 @@ public class BlockChainServiceImpl implements BlockChainService{
             }
             // 8.3 处理交易池：移除新链确认的交易
             for (Transaction tx : txsToRemoveFromPool) {
+                //主链才有UTXO
                 txPool.onBlockConfirmed(new Transaction[]{tx}, newBlock.getHeight());
                 log.debug("从交易池移除已确认交易，TxId:{}", bytesToHex(tx.getTxId()));
             }

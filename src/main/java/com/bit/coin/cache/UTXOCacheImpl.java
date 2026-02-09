@@ -244,6 +244,7 @@ public class UTXOCacheImpl implements UTXOCache {
 
     @Override
     public void addConfirmedTx(Transaction transaction,int height) {
+        //主链才有UTXO 所以方法需要进行 非空判断
         boolean coinbase = transaction.isCoinbase();
         List<TxInput> inputs = transaction.getInputs();
         List<TxOutput> outputs = transaction.getOutputs();
