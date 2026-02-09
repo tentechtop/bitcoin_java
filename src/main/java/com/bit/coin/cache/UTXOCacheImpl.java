@@ -103,11 +103,13 @@ public class UTXOCacheImpl implements UTXOCache {
         byte[] data = dataBase.get(TableEnum.TUTXO, key);
         if (data != null) {
             UTXO utxo = UTXO.deserialize(data);
-            long status1 = 0L;
-            status1 = setLifecycleStatus(status1, CONFIRMED_UNSPENT);//新生成未确认
-            utxo.setStatus(status1);
-            addUTXO(utxo);
-            return utxo;
+            if (utxo!=null){
+                long status1 = 0L;
+                status1 = setLifecycleStatus(status1, CONFIRMED_UNSPENT);//新生成未确认
+                utxo.setStatus(status1);
+                addUTXO(utxo);
+                return utxo;
+            }
         }
         return null;
     }
@@ -245,26 +247,30 @@ public class UTXOCacheImpl implements UTXOCache {
         boolean coinbase = transaction.isCoinbase();
         List<TxInput> inputs = transaction.getInputs();
         List<TxOutput> outputs = transaction.getOutputs();
-        //将输入标记为 花费中待确认
+        //将输入标记为 已经花费
         for (TxInput txInput:inputs){
             byte[] txId = txInput.getTxId();
             int index = txInput.getIndex();
             byte[] key = UTXO.getKey(txId, index);
             UTXO utxo = getUTXO(key);
-            long status1 = 0L;
-            status1 = setLifecycleStatus(status1, SPENT);//已经花费
-            utxo.setStatus(status1);
+            if (utxo!=null){
+                long status1 = 0L;
+                status1 = setLifecycleStatus(status1, SPENT);//已经花费
+                utxo.setStatus(status1);
+            }
         }
-        //将输出标记为 到账中待确认
+        //将输出标记为 CONFIRMED_UNSPENT
         for (int i = 0; i < outputs.size(); i++) {
             TxOutput txOutput = outputs.get(i);
             byte[] key = UTXO.getKey(transaction.getTxId(), i);
             UTXO utxo = getUTXO(key);
-            utxo.setHeight(height);
-            long status1 = 0L;
-            status1 = setLifecycleStatus(status1, CONFIRMED_UNSPENT);//已经确认
-            utxo.setStatus(status1);
-            addUTXO(utxo);
+            if (utxo!=null){
+                utxo.setHeight(height);
+                long status1 = 0L;
+                status1 = setLifecycleStatus(status1, CONFIRMED_UNSPENT);
+                utxo.setStatus(status1);
+                addUTXO(utxo);
+            }
         }
     }
 

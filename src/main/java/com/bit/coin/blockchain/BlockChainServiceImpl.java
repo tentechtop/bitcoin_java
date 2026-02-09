@@ -415,7 +415,6 @@ public class BlockChainServiceImpl implements BlockChainService{
             log.info("链重组完成，新主链顶端高度:{} Hash:{}，全局事务执行成功",
                     newBlock.getHeight(), bytesToHex(newBlock.getHash()));
             return true;
-
         } catch (Exception e) {
             log.error("链重组异常，全局事务未提交，无数据变更", e);
             return false;
