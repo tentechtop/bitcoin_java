@@ -1043,14 +1043,15 @@ public class BlockChainServiceImpl implements BlockChainService{
             log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
             // 比较工作量，决定是否进行重组
             int i = newBlockChainWork.compareTo(mainChainWork);
+            addBlockToChain(block, false,false);
             if (i > 0) {
                 log.info("新链工作量更大，执行链重组");
+                // 将区块加入到侧链（不更新UTXO，但存储区块数据）
                 return performChainReorg(block);
             } else {
                 log.info("新链工作量较小，暂时作为侧链区块");
                 // 将区块加入到侧链（不更新UTXO，但存储区块数据）
-                addBlockToChain(block, false,false);
-                return false;
+                return true;
             }
         }
     }
@@ -1061,9 +1062,6 @@ public class BlockChainServiceImpl implements BlockChainService{
     public Transaction[] getRecentTxByAddress(String address) {
         Transaction[] txsByAddress = txPool.getTxsByAddress(address);
         //反向查询地址的交易
-
-
-
         return null;
     }
 
@@ -1187,6 +1185,16 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     private int getBlockHeightByHash(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            log.error("区块哈希无效：hash为null或长度不是32字节");
+            return -1;
+        }
+        byte[] heightBytes = dataBase.get(HASH_TO_HEIGHT, hash);
+        // 新增null校验
+        if (heightBytes == null) {
+            log.error("区块哈希在HASH_TO_HEIGHT表中无对应高度，hash={}", bytesToHex(hash));
+            return -1;
+        }
         return RocksDb.bytesToInt(dataBase.get(HASH_TO_HEIGHT, hash));
     }
 
@@ -2376,10 +2384,6 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
 
-    // 固定小写十六进制字符集，避免硬编码出错
-    private static final Pattern HEX64 = Pattern.compile("[0-9a-fA-F]{64}");
-
-
     /**
      * 通过本地和远程的路标列表，找到双方的最新共同祖先区块的Landmark
      * 核心逻辑：优先匹配高度最高的共同区块（降序遍历），无匹配则返回创世区块
@@ -2433,7 +2437,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         for (Landmark l : localValid) {
             String lh = bytesToHex(l.getHash());
             Landmark r = remoteByHash.get(lh);
-            log.info("本地高度{} 本地Hash{}", l.getHeight(), lh);
+            log.debug("本地高度{} 本地Hash{}", l.getHeight(), lh);
             if (r != null) {
                 // 找到匹配：返回高度更高的那个 Landmark（通常两边高度相同）
                 Landmark chosen = (l.getHeight() >= r.getHeight()) ? l : r;

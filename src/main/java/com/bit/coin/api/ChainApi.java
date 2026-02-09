@@ -172,7 +172,7 @@ public class ChainApi {
 
     //开始同步
     @GetMapping("/startSync")
-    public void startSync() {
+    public void startSync() throws InterruptedException {
         netService.startSyncBlock();
     }
 

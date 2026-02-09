@@ -7,7 +7,7 @@ import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
-import com.bit.coin.p2p.quic.control.FlowController;
+
 
 import com.bit.coin.utils.ECCWithAESGCM;
 import io.netty.buffer.ByteBuf;
@@ -15,6 +15,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.util.Timeout;
 import io.netty.util.TimerTask;
+import jakarta.annotation.PostConstruct;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
@@ -33,7 +34,6 @@ import static com.bit.coin.config.SystemConfig.SelfKey;
 import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
-import static com.bit.coin.p2p.quic.SendQuicData.buildFromFullData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
@@ -69,8 +69,10 @@ public class QuicConnection {
     private volatile long lastSeen = System.currentTimeMillis();
     //true 是出站连接 false是入站连接
     private boolean isOutbound;
-    //流控
-    private FlowController flowController;
+
+
+
+
 
 
 
@@ -213,6 +215,69 @@ public class QuicConnection {
         addSendDataToConnect(connectionId, sendQuicData);
         sendQuicData.sendAllFrames();
         return true;
+    }
+
+    public static SendQuicData buildFromFullData(long connectionId, long dataId,
+                                                 byte[] sendData,InetSocketAddress remoteAddress, int maxFrameSize) {
+        // 前置校验
+        if (sendData == null) {
+            throw new IllegalArgumentException("数据不能为空");
+        }
+        if (maxFrameSize <= 0) {
+            throw new IllegalArgumentException("单帧最大帧载荷长度必须大于0，当前值: " + maxFrameSize);
+        }
+        if (remoteAddress == null) {
+            throw new IllegalArgumentException("目标地址不能为空");
+        }
+
+        SendQuicData quicData = new SendQuicData();
+        quicData.setConnectionId(connectionId);
+        quicData.setDataId(dataId);
+
+        int fullDataLength = sendData.length;
+        int totalFrames = (fullDataLength + maxFrameSize - 1) / maxFrameSize;
+        //如果总帧数大于MAX_FRAME 直接报错
+        if (totalFrames > MAX_FRAME) {
+            log.info("当前帧数量{} ",totalFrames);
+            throw new IllegalArgumentException("帧数量超出最大限制");
+        }
+
+        // 计算分片总数：向上取整（避免因整数除法丢失最后一个不完整分片）
+        quicData.setTotal(totalFrames);//分片总数
+        quicData.setFrameArray(new QuicFrame[totalFrames]);
+        // 2. 分片构建QuicFrame
+        try {
+            for (int sequence = 0; sequence < totalFrames; sequence++) {
+                // 创建帧实例
+                QuicFrame frame =  QuicFrame.acquire();
+                frame.setConnectionId(connectionId);
+                frame.setDataId(dataId);
+                frame.setTotal(totalFrames);
+                frame.setFrameType(QuicFrameEnum.DATA_FRAME.getCode());
+                frame.setSequence(sequence);
+                frame.setRemoteAddress(remoteAddress);
+
+                int startIndex = sequence * maxFrameSize;
+                int endIndex = Math.min(startIndex + maxFrameSize, fullDataLength);
+                int currentPayloadLength = endIndex - startIndex;
+
+                // 截取载荷数据（从原始数据复制对应区间）
+                byte[] payload = new byte[currentPayloadLength];
+                System.arraycopy(sendData, startIndex, payload, 0, currentPayloadLength);
+                // 设置帧的总长度（固定头部 + 实际载荷长度）
+                frame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH + currentPayloadLength);
+                frame.setPayload(payload);
+                quicData.getFrameArray()[sequence] = frame;
+                log.debug("构建分片完成: connectionId={}, dataId={}, 序列号={}, 载荷长度={}, 总长度={}",
+                        connectionId, dataId, sequence, currentPayloadLength, frame.getFrameTotalLength());
+            }
+            quicData.setSize(sendData.length);
+        } catch (Exception e) {
+            log.error("构建QuicData失败 connectionId={}, dataId={}", connectionId, dataId, e);
+            // 异常时释放已创建的帧
+            throw new RuntimeException("构建QuicData失败", e);
+        }
+        return quicData;
     }
 
 

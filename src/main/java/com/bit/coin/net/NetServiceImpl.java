@@ -1,6 +1,7 @@
 package com.bit.coin.net;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.blockchain.Landmark;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.kad.RoutingTable;
@@ -76,7 +77,9 @@ public class NetServiceImpl implements NetService {
     private final AtomicInteger currentProcessHeight = new AtomicInteger(0);
 
 
-    public void startSyncBlock() {
+
+
+    public void startSyncBlock() throws InterruptedException {
         int localHeight = getCurrentLocalHeight();
         int networkHeight = getBestNetworkHeight();
 
@@ -90,147 +93,42 @@ public class NetServiceImpl implements NetService {
             log.warn("无可用节点，同步终止");
             return;
         }
-
-        //同步时要先确定共同祖先节点
-
-
-
         // 初始化待处理高度
-        currentProcessHeight.set(localHeight + 1);
+
         // 筛选最优节点（高度足够、响应稳定）
         List<Peer> optimalPeers = selectOptimalPeers(peers, networkHeight);
         log.info("开始区块同步：本地高度={}, 网络高度={}, 待同步区块数={}, 可用节点数={}",
                 localHeight, networkHeight, (networkHeight - localHeight), optimalPeers.size());
-
-        // 分片并分发同步任务
-        syncBlocksFast(localHeight, networkHeight, optimalPeers);
-    }
-
-    /**
-     * 优化后的快速同步：节点选择 + 任务分片 + 并发控制 + 有序处理
-     */
-    public void syncBlocksFast(int localHeight, int networkHeight, List<Peer> connectedPeers) {
-        if (connectedPeers == null || connectedPeers.isEmpty()) {
-            log.warn("没有可连接的节点");
+        if (optimalPeers.isEmpty()){
+            log.warn("无可用节点，同步终止");
             return;
         }
+        //本地路标
+        List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
+        //远程节点
+        Peer bestPeer = optimalPeers.getFirst();
+        //找到共同祖先节点
+        byte[] bytes = peerClient.sendData(bytesToHex(bestPeer.getId()),
+                ProtocolEnum.P2P_Query_Common_Ancestor,
+                Landmark.serializeList(localLandmarks), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
+        P2PMessage deserialize = P2PMessage.deserialize(bytes);
+        if (deserialize!=null){
+            byte[] data = deserialize.getData();
+            Landmark deserialize1 = Landmark.deserialize(data);
+            log.info("共同祖先hash{} 共同祖先高度{}",bytesToHex(deserialize1.getHash()),deserialize1.getHeight());
+            currentProcessHeight.set(deserialize1.getHeight() + 1);
 
-        int totalBlocks = networkHeight - localHeight;
-        int totalBatches = (totalBlocks + BATCH_SIZE - 1) / BATCH_SIZE; // 向上取整
-        log.info("同步任务分片：总区块数={}, 每批{}个, 总批次数={}", totalBlocks, BATCH_SIZE, totalBatches);
-
-        // 1. 分片任务并分配给不同节点
-        AtomicInteger batchIndex = new AtomicInteger(0);
-        for (int start = localHeight + 1; start <= networkHeight; start += BATCH_SIZE) {
-            int batchId = batchIndex.getAndIncrement();
-            int end = Math.min(start + BATCH_SIZE - 1, networkHeight);
-            // 轮询分配节点（负载均衡）
-            Peer assignPeer = connectedPeers.get(batchId % connectedPeers.size());
-            String peerId = bytesToHex(assignPeer.getId());
-
-            // 提交批次同步任务
-            int finalStart = start;
-            SYNC_EXECUTOR.submit(() -> {
-                downloadBlocksRange(peerId, finalStart, end, String.valueOf(batchId));
-            });
-        }
-
-        // 2. 启动有序处理线程（单独线程处理已下载的区块，保证顺序）
-        SYNC_EXECUTOR.submit(this::processDownloadedBlocks);
-
-        // 3. 等待所有任务完成
-        try {
-            // 等待所有批次任务完成（可根据实际情况调整超时）
-            while (currentProcessHeight.get() <= networkHeight) {
-                Thread.sleep(1000);
-                // 打印同步进度
-                int processed = currentProcessHeight.get() - (localHeight + 1);
-                log.info("同步进度：已处理{}/{}区块 ({}%)",
-                        processed, totalBlocks, totalBlocks > 0 ? (processed * 100 / totalBlocks) : 100);
-            }
-            log.info("区块同步完成！最终高度={}", networkHeight);
-        } catch (InterruptedException e) {
-            log.error("同步等待被中断", e);
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    /**
-     * 筛选最优节点：高度足够、在线状态稳定
-     */
-    private List<Peer> selectOptimalPeers(List<Peer> peers, int networkHeight) {
-        return peers.stream()
-                // 过滤：节点高度≥网络最高高度（保证有完整数据）
-                .filter(peer -> peer.getHeight() >= networkHeight)
-                // 过滤：节点ID有效、连接状态正常（可扩展响应速度筛选）
-                .filter(peer -> peer.getId() != null && peer.isOnline())
-                // 按节点高度降序、响应时间升序排序（优先选数据完整、响应快的节点）
-                .sorted((p1, p2) -> {
-                    if (p1.getHeight() != p2.getHeight()) {
-                        return Integer.compare(p2.getHeight(), p1.getHeight());
-                    }
-                    // 可扩展：根据历史响应时间排序
-                    return 0;
-                })
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * 下载指定高度范围的区块（批次下载，带并发控制和重试）
-     */
-    private void downloadBlocksRange(String peerId, int startHeight, int endHeight, String batchId) {
-        long startTime = System.currentTimeMillis();
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failCount = new AtomicInteger(0);
-        log.info("批次{}：节点 {} 开始下载区块范围 [{} - {}]", batchId, peerId, startHeight, endHeight);
-
-        // 获取当前节点的并发控制信号量
-        Semaphore semaphore = peerSemaphores.computeIfAbsent(peerId,
-                k -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
-
-        // 逐个下载批次内的区块（可根据需要改为更细粒度的并发）
-        for (int height = startHeight; height <= endHeight; height++) {
-            try {
-                // 申请信号量（控制节点并发）
-                semaphore.acquire();
-                try {
-                    Block block = fetchBlockFromPeerWithRetry(peerId, height);
-                    if (block != null) {
-                        // 验证区块高度一致性（防止节点返回错误数据）
-                        if (block.getHeight() != height) {
-                            log.error("批次{}：节点{}返回区块高度不匹配，期望{}，实际{}",
-                                    batchId, peerId, height, block.getHeight());
-                            failCount.incrementAndGet();
-                            continue;
-                        }
-                        // 将区块加入缓存（按高度有序存储）
-                        addBlockToCache(block);
-                        successCount.incrementAndGet();
-                    } else {
-                        log.warn("批次{}：节点{}下载区块{}失败（重试后仍失败）", batchId, peerId, height);
-                        failCount.incrementAndGet();
-                    }
-                } finally {
-                    // 释放信号量
-                    semaphore.release();
-                }
-            } catch (InterruptedException e) {
-                log.error("批次{}：节点{}下载区块{}被中断", batchId, peerId, height, e);
-                failCount.incrementAndGet();
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                log.error("批次{}：节点{}下载区块{}异常", batchId, peerId, height, e);
-                failCount.incrementAndGet();
+            //先简单实现 就用第一个节点作为同步节点循环获取区块
+            for (int i = currentProcessHeight.get(); i <= networkHeight; i++){
+                //休眠0.5秒
+                Thread.sleep(500);
+                Block block = fetchBlockFromPeerWithRetry(bytesToHex(bestPeer.getId()), i);
+                blockChainService.verifyBlock(block);
             }
         }
-
-        // 批次下载完成日志
-        long costTime = System.currentTimeMillis() - startTime;
-        log.info("批次{}：节点{}下载完成 [{} - {}]，成功{}个，失败{}个，耗时{}ms，平均{}ms/个",
-                batchId, peerId, startHeight, endHeight,
-                successCount.get(), failCount.get(), costTime,
-                successCount.get() > 0 ? (costTime / successCount.get()) : 0);
     }
+
+
 
     /**
      * 带重试的区块下载
@@ -245,7 +143,7 @@ public class NetServiceImpl implements NetService {
                 }
                 retry++;
                 log.warn("下载区块{}失败，重试第{}次（节点{}）", height, retry, peerId);
-                Thread.sleep(500 * retry); // 指数退避重试
+                Thread.sleep(500L * retry); // 指数退避重试
             } catch (InterruptedException e) {
                 log.error("下载区块{}被中断（节点{}）", height, peerId, e);
                 Thread.currentThread().interrupt();
@@ -254,7 +152,7 @@ public class NetServiceImpl implements NetService {
                 retry++;
                 log.error("下载区块{}异常，重试第{}次（节点{}）", height, retry, peerId, e);
                 try {
-                    Thread.sleep(500 * retry);
+                    Thread.sleep(500L * retry);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return null;
@@ -285,82 +183,8 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
-    /**
-     * 将区块加入缓存（控制内存占用，按高度有序存储）
-     */
-    private void addBlockToCache(Block block) {
-        // 估算区块大小（简单处理，可根据实际序列化后的字节数计算）
-        long blockSize = block.toString().getBytes().length;
 
-        // 内存超限则等待（直到有区块被处理释放）
-        while (cachedBlocksSize.get() + blockSize > MAX_CACHE_SIZE) {
-            try {
-                log.warn("区块缓存内存超限（当前{}MB/上限{}MB），等待处理完成...",
-                        cachedBlocksSize.get() / 1024 / 1024, MAX_CACHE_SIZE / 1024 / 1024);
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
 
-        // 加入有序缓存
-        downloadedBlocks.put(block.getHeight(), block);
-        cachedBlocksSize.addAndGet(blockSize);
-        log.debug("区块{}已加入缓存，当前缓存数={}，缓存大小={}MB",
-                block.getHeight(), downloadedBlocks.size(), cachedBlocksSize.get() / 1024 / 1024);
-    }
-
-    /**
-     * 有序处理已下载的区块（单独线程执行，保证按高度递增处理）
-     */
-    private void processDownloadedBlocks() {
-        log.info("启动区块有序处理线程，起始处理高度={}", currentProcessHeight.get());
-
-        while (!Thread.currentThread().isInterrupted()) {
-            try {
-                int targetHeight = currentProcessHeight.get();
-                // 检查是否有当前待处理高度的区块
-                if (downloadedBlocks.containsKey(targetHeight)) {
-                    Block block = downloadedBlocks.remove(targetHeight);
-                    if (block != null) {
-                        // 释放内存
-                        long blockSize = block.toString().getBytes().length;
-                        cachedBlocksSize.addAndGet(-blockSize);
-
-                        // 验证并入库（区块链必须按顺序处理）
-                        boolean verifySuccess = blockChainService.verifyBlock(block);
-                        if (verifySuccess) {
-                            log.info("成功处理区块{}，当前最新高度={}", block.getHeight(), block.getHeight());
-                            currentProcessHeight.incrementAndGet();
-                        } else {
-                            log.error("区块{}验证失败，同步终止", block.getHeight());
-                            break;
-                        }
-                    }
-                } else {
-                    // 没有待处理区块，短暂休眠
-                    Thread.sleep(100);
-                }
-            } catch (InterruptedException e) {
-                log.error("区块处理线程被中断", e);
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                log.error("处理区块{}异常", currentProcessHeight.get(), e);
-                // 处理异常时暂停，避免无限循环
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-        log.info("区块有序处理线程退出");
-    }
-
-    // ========== 原有方法保留（补充实现） ==========
 
     public int getCurrentLocalHeight() {
         return mainTipBlock != null ? mainTipBlock.getHeight() : 0;
@@ -373,6 +197,31 @@ public class NetServiceImpl implements NetService {
                 .max()
                 .orElse(getCurrentLocalHeight());
     }
+
+
+    public Peer getBestPeer() {
+        List<Peer> onlineNodes = routingTable.getOnlineNodes();
+
+        if (onlineNodes == null || onlineNodes.isEmpty()) {
+            return null;
+        }
+
+        // 第一步：找到最高高度值
+        long maxHeight = onlineNodes.stream()
+                .mapToLong(Peer::getHeight)
+                .max()
+                .orElse(0);
+
+        // 第二步：收集所有高度等于maxHeight的节点
+        List<Peer> maxHeightPeers = onlineNodes.stream()
+                .filter(peer -> peer.getHeight() == maxHeight)
+                .toList();
+
+        // 第三步：随机返回一个最高高度节点（也可返回第一个）
+        Random random = new Random();
+        return maxHeightPeers.get(random.nextInt(maxHeightPeers.size()));
+    }
+
 
 
     public List<Peer> getConnectedPeers() {
@@ -439,6 +288,26 @@ public class NetServiceImpl implements NetService {
         currentProcessHeight.set(0);
 
         log.info("区块同步服务资源清理完成，shutdown执行完毕");
+    }
+
+    /**
+     * 筛选最优节点：高度足够、在线状态稳定
+     */
+    private List<Peer> selectOptimalPeers(List<Peer> peers, int networkHeight) {
+        return peers.stream()
+                // 过滤：节点高度≥网络最高高度（保证有完整数据）
+                .filter(peer -> peer.getHeight() >= networkHeight)
+                // 过滤：节点ID有效、连接状态正常（可扩展响应速度筛选）
+                .filter(peer -> peer.getId() != null && peer.isOnline())
+                // 按节点高度降序、响应时间升序排序（优先选数据完整、响应快的节点）
+                .sorted((p1, p2) -> {
+                    if (p1.getHeight() != p2.getHeight()) {
+                        return Integer.compare(p2.getHeight(), p1.getHeight());
+                    }
+                    // 可扩展：根据历史响应时间排序
+                    return 0;
+                })
+                .collect(Collectors.toList());
     }
 
 }

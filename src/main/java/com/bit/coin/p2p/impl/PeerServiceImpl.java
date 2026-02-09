@@ -11,7 +11,6 @@ import com.bit.coin.p2p.protocol.impl.*;
 import com.bit.coin.p2p.quic.QuicConnection;
 import com.bit.coin.p2p.quic.QuicServiceHandler;
 
-import com.bit.coin.utils.MultiAddress;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.*;
@@ -24,7 +23,6 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -34,7 +32,6 @@ import java.security.cert.CertificateException;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
@@ -86,6 +83,8 @@ public class PeerServiceImpl implements PeerService {
     private P2PQueryBlockByHashHandle p2PQueryBlockByHashHandle;
     @Autowired
     private P2PQueryBlockByHeightHandle p2PQueryBlockByHeightHandle;
+    @Autowired
+    private P2PQueryCommonAncestorHandle p2PQueryCommonAncestorHandle;
 
     @Autowired
     private PingHandler pingHandler;
@@ -122,7 +121,7 @@ public class PeerServiceImpl implements PeerService {
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Transaction,  p2PReceiveTxHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash,  p2PQueryBlockByHashHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height,  p2PQueryBlockByHeightHandle);
-
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Common_Ancestor,  p2PQueryCommonAncestorHandle);
 
         //连接引导节点并将引导节点加入到路由表
         connectBootstrapNodes();

@@ -16,7 +16,7 @@ import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
 
 @Slf4j
 @Component
-public class P2PQueryCommonAncestorImpl implements ProtocolHandler.ResultProtocolHandler{
+public class P2PQueryCommonAncestorHandle implements ProtocolHandler.ResultProtocolHandler{
 
     @Autowired
     private BlockChainServiceImpl blockChainService;

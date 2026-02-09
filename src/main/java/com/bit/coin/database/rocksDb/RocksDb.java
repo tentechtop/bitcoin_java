@@ -1350,6 +1350,11 @@ public class RocksDb implements DataBase {
 
     // byte[] 转 int
     public static int bytesToInt(byte[] bytes) {
+        // 新增null校验和空数组校验
+        if (bytes == null || bytes.length != 4) {
+            log.error("bytesToInt参数无效：array为null或长度不是4字节，array={}", bytes);
+            return -1; // 返回无效高度标记
+        }
         return ByteBuffer.wrap(bytes).getInt();
     }
 
