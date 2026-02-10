@@ -55,6 +55,9 @@ public class Transaction {
     private List<TxOutput> outputs = new ArrayList<>();
 
 
+    //当交易版本大于100时 TxInput和TxOutput 是用的脚本
+    //交易版本是0和1时 是固定为P2PKH
+    //当交易版本大于10000时 支持执行虚拟机
 
 
 

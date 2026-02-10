@@ -3,6 +3,7 @@ server:
   port: 18555
 
 system:
+  mining-type: 2 # 1CPU 2GPU
   miner-address-list:
     - 'Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz'
   net-params: 'MainNetParams'

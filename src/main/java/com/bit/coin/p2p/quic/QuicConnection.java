@@ -68,12 +68,11 @@ public class QuicConnection {
     //true 是出站连接 false是入站连接
     private boolean isOutbound;
 
-    //local 本地接收窗口
+    //local 本地接收窗口 本地通过接收窗口控制发送速度
     private ReceiveWindow localReceiveWindow;
-    //远程接收窗口
+
+    //远程接收窗口  接收方通过这个来控制发送方的发送速度
     private ReceiveWindow remoteReceiveWindow;
-
-
 
 
 

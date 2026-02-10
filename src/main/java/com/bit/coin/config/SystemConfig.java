@@ -35,6 +35,8 @@ public class SystemConfig {
     private List<String> bootstrap;
     //矿工地址
     private List<String> minerAddressList;
+    //挖矿方式
+    private Integer miningType;
 
 
 

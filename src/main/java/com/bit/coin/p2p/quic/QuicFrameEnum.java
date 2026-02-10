@@ -17,9 +17,10 @@ public enum QuicFrameEnum {
     CONNECT_REQUEST_FRAME((byte)7, "连接请求帧"),
     CONNECT_RESPONSE_FRAME((byte)8, "连接响应帧"),
 
-
-
     OFF_FRAME((byte)9, "下线帧"),//通知类帧 无回复
+
+
+
 
 
 

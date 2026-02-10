@@ -75,7 +75,8 @@ public class NetServiceImpl implements NetService {
     private final AtomicLong cachedBlocksSize = new AtomicLong(0);
     // 当前待处理的最小高度（保证有序处理）
     private final AtomicInteger currentProcessHeight = new AtomicInteger(0);
-
+    // 节点切换休眠时间（毫秒）- 降低网络压力
+    private static final int PEER_SWITCH_SLEEP_MS = 100;
 
 
 
@@ -93,41 +94,124 @@ public class NetServiceImpl implements NetService {
             log.warn("无可用节点，同步终止");
             return;
         }
-        // 初始化待处理高度
 
         // 筛选最优节点（高度足够、响应稳定）
         List<Peer> optimalPeers = selectOptimalPeers(peers, networkHeight);
         log.info("开始区块同步：本地高度={}, 网络高度={}, 待同步区块数={}, 可用节点数={}",
                 localHeight, networkHeight, (networkHeight - localHeight), optimalPeers.size());
-        if (optimalPeers.isEmpty()){
+
+        if (optimalPeers.isEmpty()) {
             log.warn("无可用节点，同步终止");
             return;
         }
-        //本地路标
+
+        // 本地路标
         List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
-        //远程节点
-        Peer bestPeer = optimalPeers.getFirst();
-        //找到共同祖先节点
-        byte[] bytes = peerClient.sendData(bytesToHex(bestPeer.getId()),
+        // 找到共同祖先节点（使用第一个最优节点）
+        Peer firstPeer = optimalPeers.getFirst();
+        byte[] bytes = peerClient.sendData(bytesToHex(firstPeer.getId()),
                 ProtocolEnum.P2P_Query_Common_Ancestor,
                 Landmark.serializeList(localLandmarks), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
+
         P2PMessage deserialize = P2PMessage.deserialize(bytes);
-        if (deserialize!=null){
-            byte[] data = deserialize.getData();
-            Landmark deserialize1 = Landmark.deserialize(data);
-            log.info("共同祖先hash{} 共同祖先高度{}",bytesToHex(deserialize1.getHash()),deserialize1.getHeight());
-            currentProcessHeight.set(deserialize1.getHeight() + 1);
-
-            //先简单实现 就用第一个节点作为同步节点循环获取区块
-            for (int i = currentProcessHeight.get(); i <= networkHeight; i++){
-                //休眠0.5秒
-                Thread.sleep(500);
-                Block block = fetchBlockFromPeerWithRetry(bytesToHex(bestPeer.getId()), i);
-                blockChainService.verifyBlock(block);
-            }
+        if (deserialize == null) {
+            log.error("获取共同祖先节点失败，同步终止");
+            return;
         }
-    }
 
+        byte[] data = deserialize.getData();
+        Landmark commonAncestor = Landmark.deserialize(data);
+        log.info("共同祖先hash{} 共同祖先高度{}", bytesToHex(commonAncestor.getHash()), commonAncestor.getHeight());
+
+        int startHeight = commonAncestor.getHeight() + 1;
+        int totalBlocksToSync = networkHeight - startHeight + 1;
+
+        if (totalBlocksToSync <= 0) {
+            log.info("无需要同步的区块，共同祖先高度={}, 网络高度={}", commonAncestor.getHeight(), networkHeight);
+            return;
+        }
+
+        // ========== 核心修改：给每个节点分配区块高度区间 ==========
+        // 1. 计算每个节点需要同步的区块数
+        int peerCount = optimalPeers.size();
+        int blocksPerPeer = totalBlocksToSync / peerCount;
+        int remainingBlocks = totalBlocksToSync % peerCount;
+
+        log.info("开始分节点同步：总需同步区块数={}, 节点数={}, 每节点基础区块数={}, 剩余区块数={}",
+                totalBlocksToSync, peerCount, blocksPerPeer, remainingBlocks);
+
+        // 2. 逐个节点分配任务并串行执行
+        int currentAssignHeight = startHeight;
+        for (int peerIndex = 0; peerIndex < optimalPeers.size(); peerIndex++) {
+            Peer currentPeer = optimalPeers.get(peerIndex);
+            String peerId = bytesToHex(currentPeer.getId());
+
+            // 计算当前节点需要同步的区块数量（最后一个节点处理剩余区块）
+            int currentPeerBlockCount = blocksPerPeer;
+            if (peerIndex == optimalPeers.size() - 1) {
+                currentPeerBlockCount += remainingBlocks;
+            }
+
+            // 计算当前节点的同步区间
+            int endHeight = currentAssignHeight + currentPeerBlockCount - 1;
+            // 防止超出网络高度
+            endHeight = Math.min(endHeight, networkHeight);
+
+            if (currentAssignHeight > endHeight) {
+                log.info("节点{}无需要同步的区块，跳过", peerId);
+                continue;
+            }
+
+            log.info("给节点{}分配同步任务：高度区间[{}, {}]，共{}个区块",
+                    peerId, currentAssignHeight, endHeight, (endHeight - currentAssignHeight + 1));
+
+            // 3. 串行同步当前节点分配的区块
+            for (int height = currentAssignHeight; height <= endHeight; height++) {
+                // 每同步100个区块短暂休眠，降低网络压力
+                if (height % 100 == 0) {
+                    Thread.sleep(500);
+                    log.info("节点{}同步进度：当前高度={}, 区间结束高度={}, 完成比例={}%",
+                            peerId, height, endHeight,
+                            Math.round((height - currentAssignHeight + 1) * 100.0 / (endHeight - currentAssignHeight + 1)));
+                }
+
+                // 下载并验证区块（带重试）
+                Block block = fetchBlockFromPeerWithRetry(peerId, height);
+                if (block == null) {
+                    log.error("节点{}下载区块{}失败（已重试{}次），同步终止",
+                            peerId, height, BLOCK_FETCH_RETRY_TIMES);
+                    return;
+                }
+
+                // 验证区块
+                try {
+                    blockChainService.verifyBlock(block);
+                } catch (Exception e) {
+                    log.error("节点{}下载的区块{}验证失败，同步终止", peerId, height, e);
+                    return;
+                }
+
+                // 更新当前处理高度
+                currentProcessHeight.set(height);
+            }
+
+            // 更新下一个节点的起始高度
+            currentAssignHeight = endHeight + 1;
+
+            // 节点切换时休眠，降低网络压力
+            if (peerIndex < optimalPeers.size() - 1) {
+                Thread.sleep(PEER_SWITCH_SLEEP_MS);
+                log.info("切换到下一个节点，已休眠{}毫秒", PEER_SWITCH_SLEEP_MS);
+            }
+
+            log.info("节点{}同步完成：共同步{}个区块（高度区间[{}, {}]）",
+                    peerId, (endHeight - (currentAssignHeight - currentPeerBlockCount) + 1),
+                    (currentAssignHeight - currentPeerBlockCount), endHeight);
+        }
+
+        log.info("所有节点同步完成！最终同步高度：{}，本地最新高度：{}",
+                currentProcessHeight.get(), getCurrentLocalHeight());
+    }
 
 
     /**
