@@ -93,7 +93,6 @@ public class PeerClient {
                     return null;
                 }
             }else {
-                log.info("连接为空");
                 return null;
             }
         }catch (Exception e){

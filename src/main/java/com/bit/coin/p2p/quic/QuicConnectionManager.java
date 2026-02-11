@@ -198,6 +198,7 @@ public class QuicConnectionManager {
         String peerId = multiAddress.getPeerId();
         QuicConnection peerConnection = getPeerConnection(peerId);
         if (peerConnection != null){
+            log.info("当前节点已经存在连接");
             return peerConnection;
         }
         log.info("节点ID{}",peerId);

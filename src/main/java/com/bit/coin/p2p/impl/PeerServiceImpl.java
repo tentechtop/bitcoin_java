@@ -138,16 +138,6 @@ public class PeerServiceImpl implements PeerService {
             List<String> bootstrap = systemConfig.getBootstrap();
             for (String bootstrapNode : bootstrap){
                 QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
-                String peerId = quicConnection.getPeerId();
-
-/*                new Timer().schedule(new TimerTask() {
-                    @Override
-                    public void run() {
-
-                    }
-                }, 5000);*/
-
-
             }
             //连接完成后对引导节点进行节点查询
         }catch (Exception e){

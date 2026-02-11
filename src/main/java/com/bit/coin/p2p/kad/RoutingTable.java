@@ -10,6 +10,7 @@ import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.dto.BroadcastResource;
 import com.bit.coin.p2p.quic.QuicConnection;
+import com.bit.coin.p2p.quic.QuicConnectionManager;
 import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.MultiAddress;
@@ -619,11 +620,11 @@ public class RoutingTable {
             public void run() {
                 //连接路由表中的节点
                 for (Peer peer : getAll()) {
+                    log.info("连接其他的节点{}",peer.getMultiaddr());
+                    QuicConnection quicConnection = null;
                     try {
-                        QuicConnection quicConnection = connectRemoteByAddr(peer.getMultiaddr());
+                        quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
                         if (quicConnection!=null){
-                            //发起Find_Node
-                            log.info("迭代查询节点");
                             List<Peer> nodeIterative = findNodeIterative(peer.getId(), localNodeId);
                         }
                     } catch (ExecutionException e) {
@@ -1101,8 +1102,6 @@ public class RoutingTable {
             }
 
             String currentPeerIdHex = bytesToHex(currentPeer.getId());
-            log.info("开始查询节点: {}", currentPeerIdHex.substring(0, 8) + "...");
-
             try {
                 // 5. 向当前节点发送FindNode请求
                 List<Peer> responsePeers = sendFindNodeToPeer(currentPeer, searchId, k, timeoutMillis);
