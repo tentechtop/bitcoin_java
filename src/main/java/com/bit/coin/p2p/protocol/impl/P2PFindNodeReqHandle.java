@@ -32,12 +32,14 @@ public class P2PFindNodeReqHandle implements ProtocolHandler.ResultProtocolHandl
         System.arraycopy(data, 0, targetId, 0, 32);
         //读取后4字节
         int count = bytesToInt(new byte[]{data[32], data[33], data[34], data[35]});
-        log.info("收到节点查询请求{} 查询数量{}", Base58.encode(data),count);
         List<Peer> closestPeers = routingTable.findClosestPeers(targetId, count);
         log.info("返回最近的节点信息{}",closestPeers.size());
         byte[] bytes = routingTable.serializePeers(closestPeers);
-        log.info("自己的ID{}",Base58.encode(CommonConfig.getSelf().getId()));
         P2PMessage p2PMessage = newResponseMessage(CommonConfig.getSelf().getId(), ProtocolEnum.P2P_Find_Node_Req,requestParams.getRequestId(), bytes);
-        return p2PMessage.serialize();
+        byte[] serialize = p2PMessage.serialize();
+
+        log.info("序列化后{}",serialize.length);
+
+        return serialize;
     }
 }

@@ -4,6 +4,7 @@ import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.impl.PeerServiceImpl;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
+import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.quic.QuicConnection;
 import com.bit.coin.p2p.quic.QuicConnectionManager;
@@ -70,20 +71,30 @@ public class PeerApi {
 
     @RequestMapping("/findNode")
     public List<Peer> findNode(String targetId,String searchId){
-        return routingTable.sendFindNode(hexToBytes(targetId),hexToBytes(searchId));
+        return routingTable.sendFindNode(Base58.decode(targetId),Base58.decode(searchId));
+    }
+
+
+    //向指定节点迭代查询
+    @RequestMapping("/findNodeIterative")
+    public List<Peer> findNodeIterative(String targetId,String searchId){
+        return routingTable.findNodeIterative(Base58.decode(targetId),Base58.decode(searchId));
     }
 
 
 
     @RequestMapping("/findNodeMock")
-    public String findNodeMock(String targetId,String searchId){
+    public List<Peer> findNodeMock(String targetId,String searchId) throws Exception {
         int count = 20;
         byte[] data = new byte[36];
         //[32字节查询节点][4字节数量]
-        System.arraycopy(hexToBytes(searchId), 0, data, 0, 32);
+        System.arraycopy(Base58.decode(searchId), 0, data, 0, 32);
         System.arraycopy(intToBytes(count), 0, data, 32, 4);
-        byte[] p2pRes = peerClient.sendData(targetId, ProtocolEnum.P2P_Find_Node_Req, data, 5000);
-        return bytesToHex(p2pRes);
+        byte[] p2pRes = peerClient.sendData(bytesToHex(Base58.decode(targetId)), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
+        P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
+        byte[] data1 = deserialize.getData();
+        List<Peer> peers = routingTable.deserializePeers(data1);
+        return peers;
     }
 
 

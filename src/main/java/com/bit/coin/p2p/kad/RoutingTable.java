@@ -624,10 +624,7 @@ public class RoutingTable {
                         if (quicConnection!=null){
                             //发起Find_Node
                             log.info("迭代查询节点");
-
-
-
-
+                            List<Peer> nodeIterative = findNodeIterative(peer.getId(), localNodeId);
                         }
                     } catch (ExecutionException e) {
                         throw new RuntimeException(e);
@@ -799,6 +796,9 @@ public class RoutingTable {
         }
     }
 
+
+
+
     //更新节点的最后访问时间
     public void updateLastSeen(String peerId) {
         Peer peer = getNodeByHexId(peerId);
@@ -807,6 +807,8 @@ public class RoutingTable {
             addPeer(peer);
         }
     }
+
+
 
 
     /**
@@ -852,7 +854,6 @@ public class RoutingTable {
             log.info("请求sendFindNode");
             byte[] p2pRes = peerClient.sendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
             P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
-            assert deserialize != null;
             byte[] res = deserialize.getData();
             if (res!=null){
                 List<Peer> peers = deserializePeers(res);
@@ -1329,7 +1330,4 @@ public class RoutingTable {
             log.info("路由表业务线程池已关闭");
         }
     }
-
-
-
 }

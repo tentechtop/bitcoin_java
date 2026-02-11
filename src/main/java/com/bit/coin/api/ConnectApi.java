@@ -61,9 +61,11 @@ public class ConnectApi {
             byte[] bytes = peerClient.sendData(bytesToHex(decode), TEXT_V1, mockData, 5000);
             if (bytes!=null){
                 P2PMessage deserialize = P2PMessage.deserialize(bytes);
+                assert deserialize != null;
                 byte[] data = deserialize.getData();
-                log.info("节点回复：{}", parseUtf8(data));
                 return parseUtf8(data);
+            }else {
+                log.info("回复为空");
             }
         }
         return "123";

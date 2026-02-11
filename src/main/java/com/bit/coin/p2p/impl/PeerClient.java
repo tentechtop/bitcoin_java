@@ -76,13 +76,15 @@ public class PeerClient {
 
     //32字节hex
     public byte[] sendData(String peerId, ProtocolEnum protocol, byte[] request, int time)  {
+        log.info("发送数据");
         try {
-            P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), protocol, request);
-            byte[] serialize = p2PMessage.serialize();
-            CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
-            RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
             QuicConnection peerConnection = getPeerConnection(peerId);
             if (peerConnection!=null){
+                P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), protocol, request);
+                byte[] serialize = p2PMessage.serialize();
+                CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
+                RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
+                log.info("连接不为空{}",peerConnection.getConnectionId());
                 //且协议有返回值
                 peerConnection.sendData(serialize);
                 if (protocol.isHasResponse()){
@@ -91,6 +93,7 @@ public class PeerClient {
                     return null;
                 }
             }else {
+                log.info("连接为空");
                 return null;
             }
         }catch (Exception e){

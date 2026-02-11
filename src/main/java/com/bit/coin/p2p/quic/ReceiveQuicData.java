@@ -43,6 +43,7 @@ public class ReceiveQuicData extends QuicData {
 
     //当收到数据帧时
    synchronized public void handleFrame(QuicFrame quicFrame) {
+       log.info("接收数据");
         int sequence = quicFrame.getSequence();
         int total = quicFrame.getTotal();
         long dataId = quicFrame.getDataId();

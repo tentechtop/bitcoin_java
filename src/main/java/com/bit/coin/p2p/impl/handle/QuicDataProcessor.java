@@ -141,8 +141,6 @@ public class QuicDataProcessor {
             if (msg.getConnectionId() == 0 && msg.getDataId() == 0) {
                 routingTable.updateLastSeenByBucket(msg.getData());
                 return;
-            }else {
-                log.info("非心跳消息");
             }
 
 
@@ -154,9 +152,8 @@ public class QuicDataProcessor {
 
             //回复节点  通过节点ID找到连接 并发送信息  将消息分发到对应的处理器处理即可 处理器如果有返回值 就调用协议返回即可
             P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
-            if (deserialize!= null){
+            if (deserialize!=null){
                 if (deserialize.isRequest()) {
-                    log.info("收到请求: {}", deserialize);
                     Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
                     ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
                     if (protocolHandler != null){
@@ -169,7 +166,6 @@ public class QuicDataProcessor {
                             //引用计数无意义：其 release() 方法仅修改引用计数，但不会释放任何内存（因为内存是外部的 byte[]，由 JVM 垃圾回收管理）。
                             QuicConnection connection = getConnection(msg.getConnectionId());
                             if (connection!=null){
-                                log.info("与节点的连接{}",connection.getConnectionId());
                                 connection.sendData(handle);
                             }
                         }
@@ -190,8 +186,7 @@ public class QuicDataProcessor {
                 //更新访问时间
                 routingTable.updateLastSeenByBucket(senderId);
             }else {
-                //舍弃
-                log.info("丢弃");
+                log.info("解析失败丢弃");
             }
         }catch (InvalidProtocolBufferException e){
             log.error("解析失败");

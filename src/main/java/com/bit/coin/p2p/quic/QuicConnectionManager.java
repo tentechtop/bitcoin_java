@@ -253,7 +253,7 @@ public class QuicConnectionManager {
             log.error("远程地址不能为空");
             return null;
         }
-        long conId = generateConIdByRemoteAddress(remoteAddress);
+        long conId = generator.nextId();
         long dataId = generator.nextId();
         QuicConnection existingConn = getConnection(conId);
         if (existingConn != null) {
