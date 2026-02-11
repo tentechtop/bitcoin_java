@@ -29,20 +29,18 @@ import java.util.concurrent.TimeUnit;
 import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.config.SystemConfig.SelfKey;
+import static com.bit.coin.p2p.protocol.P2PMessage.newNormalMessage;
 import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
 import static com.bit.coin.p2p.quic.SendQuicData.buildFromFullData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 @Slf4j
 @Data
-@Component
 public class QuicConnection {
-
-    @Autowired
-    private RoutingTable routingTable;
 
     private String peerId;// 节点ID
     private long connectionId;// 连接ID
@@ -124,9 +122,6 @@ public class QuicConnection {
                             log.debug("出站连接PING帧发送成功，连接ID:{}，PONG帧:{}", connectionId, quicFrame);
                             updateLastSeen(); // 接收PONG更新活动时间
                             quicFrame.release();
-
-                            //更新路由表中的节点
-
                         }
                     } catch (Exception e) {
                         log.error("[出站心跳异常] 连接ID:{}", connectionId, e);
@@ -261,6 +256,8 @@ public class QuicConnection {
     //发送二进制数据 二进制到QuicData
     //处理数据帧 返回ACK帧
     private void handleDataFrame(QuicFrame quicFrame) {
+        log.info("处理数据帧");
+
         boolean receiveDataExistInConnect = isReceiveDataExistInConnect(quicFrame.getConnectionId(), quicFrame.getDataId());
         if (receiveDataExistInConnect){
             //存在就直接获取到
@@ -363,6 +360,13 @@ public class QuicConnection {
 
     private void handlePongFrame( QuicFrame quicFrame) {
         log.debug("处理PONG帧{}",quicFrame);
+        //更新访问时间
+        QuicMsg quicMsg = new QuicMsg();
+        quicMsg.setConnectionId(0);
+        quicMsg.setDataId(0);
+        quicMsg.setData(hexToBytes(peerId));
+        pushCompleteMsg(quicMsg);
+
         CompletableFuture<Object> ifPresent = QUIC_RESPONSE_FUTURECACHE.asMap().remove(quicFrame.getDataId());
         if (ifPresent != null) {
             ifPresent.complete(quicFrame);
@@ -443,6 +447,9 @@ public class QuicConnection {
                     quicMsg.setDataId(dataId);
                     quicMsg.setData(serialize1);
                     pushCompleteMsg(quicMsg);
+
+                    //被连接的一方也可以
+
                 }
             });
         }catch (Exception e){
@@ -489,8 +496,13 @@ public class QuicConnection {
         try {
             log.debug("处理ping");
             //更新访问时间
-            //回复PONG帧
+            QuicMsg quicMsg = new QuicMsg();
+            quicMsg.setConnectionId(0);
+            quicMsg.setDataId(0);
+            quicMsg.setData(hexToBytes(peerId));
+            pushCompleteMsg(quicMsg);
 
+            //回复PONG帧
             pongFrame.setConnectionId(connectionId);
             pongFrame.setDataId(quicFrame.getDataId()); // 临时数据ID
             pongFrame.setFrameType(QuicFrameEnum.PONG_FRAME.getCode()); // PING_FRAME类型

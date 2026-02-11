@@ -58,11 +58,12 @@ public class ConnectApi {
         Arrays.fill(mockData, (byte) 'a');
         //发送一百次
         for (int i = 0; i < 1; i++) {
-            byte[] bytes = peerClient.sendData(bytesToHex(decode), TEXT_V1, mockData, 5);
+            byte[] bytes = peerClient.sendData(bytesToHex(decode), TEXT_V1, mockData, 5000);
             if (bytes!=null){
                 P2PMessage deserialize = P2PMessage.deserialize(bytes);
                 byte[] data = deserialize.getData();
                 log.info("节点回复：{}", parseUtf8(data));
+                return parseUtf8(data);
             }
         }
         return "123";

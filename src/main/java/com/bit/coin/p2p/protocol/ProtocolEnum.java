@@ -28,8 +28,7 @@ public enum ProtocolEnum {
 
     //收到FinNode请求 回复FindNode结果  负载是需要查询的节点ID 32位
     P2P_Find_Node_Req(7, "/P2P_Find_Node_Req/1.0.0",true),
-    //返回List<Peer>
-    P2P_Find_Node_Res(8, "/P2P_Find_Node/1.0.0",false),
+
 
 
     //广播简约资源消息 资源类型 区块 交易  无回复 [hash 32字节][type 1字节 0区块 1交易]
@@ -54,6 +53,10 @@ public enum ProtocolEnum {
 
     //通过本地路标找到共同祖先 返回值是一个路标
     P2P_Query_Common_Ancestor(15, "/P2P_Query_Common_Ancestor/1.0.0",true),
+
+
+
+
 
 
 

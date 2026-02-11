@@ -81,13 +81,13 @@ public class Bucket {
                 exist.setLastSeen(peer.getLastSeen());
                 //hashHex
                 exist.setHashHex(peer.getHashHex());
-                log.info("路由表最新Hash: {}",peer.getHashHex());
+                log.debug("路由表最新Hash: {}",peer.getHashHex());
                 //height
                 exist.setHeight(peer.getHeight());
-                log.info("路由表最新高度: {}",peer.getHeight());
+                log.debug("路由表最新高度: {}",peer.getHeight());
                 //工作总量
                 exist.setChainWork(peer.getChainWork());
-                log.info("工作总量: {}",peer.getChainWork().toString());
+                log.debug("工作总量: {}",peer.getChainWork().toString());
             }else {
                 nodeMap.put(peerId, peer);
             }
@@ -163,10 +163,10 @@ public class Bucket {
             exist.setLastSeen(peer.getLastSeen());
             //hashHex
             exist.setHashHex(peer.getHashHex());
-            log.info("路由表最新Hash: {}",peer.getHashHex());
+            log.debug("路由表最新Hash: {}",peer.getHashHex());
             //height
             exist.setHeight(peer.getHeight());
-            log.info("路由表最新高度: {}",peer.getHeight());
+            log.debug("路由表最新高度: {}",peer.getHeight());
             //工作总量
             exist.setChainWork(peer.getChainWork());
 
@@ -205,4 +205,33 @@ public class Bucket {
     public ConcurrentHashMap<String, Peer> getNodeMap() {
         return nodeMap;
     }
+
+
+    //更新节点最后访问时间
+    public void updateLastSeen(String peerId) {
+        // 加锁保证操作原子性，避免并发修改问题
+        synchronized (this) {
+            // 1. 检查节点是否存在于当前桶中
+            if (nodeMap.containsKey(peerId)) {
+                // 2. 获取节点并更新其最后访问时间为当前时间戳
+                Peer peer = nodeMap.get(peerId);
+                long currentTime = System.currentTimeMillis();
+                peer.setLastSeen(currentTime);
+
+                // 3. 更新桶本身的最后访问时间
+                this.lastSeen = currentTime;
+
+                log.debug("更新节点[{}]的最后访问时间为: {}ms", peerId, currentTime);
+            } else {
+                // 节点不存在时打印调试日志，方便排查问题
+                log.debug("尝试更新不存在的节点[{}]的最后访问时间，桶ID: {}", peerId, this.id);
+            }
+        }
+    }
+
+    public void updateLastSeen(byte[] peerIdBytes) {
+        String peerIdHex = bytesToHex(peerIdBytes);
+        this.updateLastSeen(peerIdHex);
+    }
+
 }

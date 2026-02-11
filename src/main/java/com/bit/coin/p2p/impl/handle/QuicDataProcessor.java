@@ -1,5 +1,7 @@
 package com.bit.coin.p2p.impl.handle;
 
+import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
@@ -11,6 +13,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.units.qual.N;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,6 +33,9 @@ public class QuicDataProcessor {
 
     @Autowired
     private ProtocolRegistry protocolRegistry;
+
+    @Autowired
+    private RoutingTable routingTable;
 
     // 消费线程池
     private ExecutorService consumerExecutor;
@@ -88,11 +94,11 @@ public class QuicDataProcessor {
 
                 // 4. 批量处理消息
                 processBatch(batchMsgs);
-                log.info("本次批量处理完成，共处理{}条消息", batchMsgs.size());
+                log.debug("本次批量处理完成，共处理{}条消息", batchMsgs.size());
 
             } catch (InterruptedException e) {
                 // 线程被中断，优雅退出循环
-                log.info("消费线程被中断，准备退出");
+                log.debug("消费线程被中断，准备退出");
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
@@ -128,7 +134,18 @@ public class QuicDataProcessor {
     private void processSingleMsg(QuicMsg msg, int index) {
         try {
             // 示例逻辑：打印消息长度（实际场景：解析Protobuf/JSON、写入DB、调用RPC等）
-            log.info("处理第{}条消息，字节长度：{} 数据{}", index, msg.getData().length,bytesToHex(msg.getData()));
+            log.debug("处理第{}条消息，字节长度：{} 数据{}", index, msg.getData().length,bytesToHex(msg.getData()));
+
+            // ========== 新增：判断是否为心跳消息 ==========
+            // 连接ID和数据ID都为0 → 心跳消息
+            if (msg.getConnectionId() == 0 && msg.getDataId() == 0) {
+                routingTable.updateLastSeenByBucket(msg.getData());
+                return;
+            }else {
+                log.info("非心跳消息");
+            }
+
+
 
             // TODO 替换为真实业务逻辑：
             // 1. 解析二进制消息（如protobuf反序列化）
@@ -137,32 +154,44 @@ public class QuicDataProcessor {
 
             //回复节点  通过节点ID找到连接 并发送信息  将消息分发到对应的处理器处理即可 处理器如果有返回值 就调用协议返回即可
             P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
-            if (deserialize.isRequest()) {
-                log.info("收到请求: {}", deserialize);
-                Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
-                ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
-                if (protocolHandler != null){
-                    byte[] handle = protocolHandler.handle(deserialize);
-                    if (handle != null){
-                        //用原来的流写回
-                        //包装型 ByteBuf 无需释放的底层逻辑
-                        //Unpooled.wrappedBuffer(handle) 创建的 UnpooledHeapByteBuf 有两个关键特性：
-                        //零拷贝：缓冲区不持有新内存，只是对外部 handle 字节数组的 “视图”；
-                        //引用计数无意义：其 release() 方法仅修改引用计数，但不会释放任何内存（因为内存是外部的 byte[]，由 JVM 垃圾回收管理）。
-                        QuicConnection connection = getConnection(msg.getConnectionId());
-                        connection.sendData(handle);
+            if (deserialize!= null){
+                if (deserialize.isRequest()) {
+                    log.info("收到请求: {}", deserialize);
+                    Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
+                    ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
+                    if (protocolHandler != null){
+                        byte[] handle = protocolHandler.handle(deserialize);
+                        if (handle != null){
+                            //用原来的流写回
+                            //包装型 ByteBuf 无需释放的底层逻辑
+                            //Unpooled.wrappedBuffer(handle) 创建的 UnpooledHeapByteBuf 有两个关键特性：
+                            //零拷贝：缓冲区不持有新内存，只是对外部 handle 字节数组的 “视图”；
+                            //引用计数无意义：其 release() 方法仅修改引用计数，但不会释放任何内存（因为内存是外部的 byte[]，由 JVM 垃圾回收管理）。
+                            QuicConnection connection = getConnection(msg.getConnectionId());
+                            if (connection!=null){
+                                log.info("与节点的连接{}",connection.getConnectionId());
+                                connection.sendData(handle);
+                            }
+                        }
+                    }else {
+                        log.info("未注册的协议：{}", deserialize.getType());
+                    }
+                }else if (deserialize.isResponse()) {
+                    log.info("收到响应: {}", deserialize);
+                    CompletableFuture<QuicMsg> ifPresent = RESPONSE_FUTURECACHE.asMap().remove(bytesToHex(deserialize.getRequestId()));
+                    if (ifPresent != null) {
+                        ifPresent.complete(msg);
                     }
                 }else {
-                    log.info("未注册的协议：{}", deserialize.getType());
+                    log.info("收到普通消息: {}", deserialize);
                 }
-            }else if (deserialize.isResponse()) {
-                log.info("收到响应: {}", deserialize);
-                CompletableFuture<QuicMsg> ifPresent = RESPONSE_FUTURECACHE.asMap().remove(bytesToHex(deserialize.getRequestId()));
-                if (ifPresent != null) {
-                    ifPresent.complete(msg);
-                }
+
+                byte[] senderId = deserialize.getSenderId();
+                //更新访问时间
+                routingTable.updateLastSeenByBucket(senderId);
             }else {
-                log.info("收到普通消息: {}", deserialize);
+                //舍弃
+                log.info("丢弃");
             }
         }catch (InvalidProtocolBufferException e){
             log.error("解析失败");

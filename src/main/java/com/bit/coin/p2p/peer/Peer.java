@@ -15,6 +15,8 @@ import tools.jackson.databind.annotation.JsonSerialize;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 /**
  * 节点信息  按 8 字节对齐：180 ÷ 8 = 22.5 → 补 2 字节，最终Peer 对象本身占 182 字节（对齐后 184 字节）。
@@ -120,6 +122,11 @@ public class Peer {
      * 最后访问时间
      */
     private long lastSeen;
+    //
+    public String getLastSeenStr(){
+        //yyyy-mm-ss hh-mm-ss
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(lastSeen));
+    }
 
 
 

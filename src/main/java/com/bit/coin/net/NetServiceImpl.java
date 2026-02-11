@@ -167,13 +167,7 @@ public class NetServiceImpl implements NetService {
 
             // 3. 串行同步当前节点分配的区块
             for (int height = currentAssignHeight; height <= endHeight; height++) {
-                // 每同步100个区块短暂休眠，降低网络压力
-                if (height % 100 == 0) {
-                    Thread.sleep(500);
-                    log.info("节点{}同步进度：当前高度={}, 区间结束高度={}, 完成比例={}%",
-                            peerId, height, endHeight,
-                            Math.round((height - currentAssignHeight + 1) * 100.0 / (endHeight - currentAssignHeight + 1)));
-                }
+                Thread.sleep(100);
 
                 // 下载并验证区块（带重试）
                 Block block = fetchBlockFromPeerWithRetry(peerId, height);

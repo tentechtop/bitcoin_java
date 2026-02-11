@@ -333,8 +333,6 @@ public class QuicConnectionManager {
             peer.setChainWork(deserialize.getChainWork());
             log.info("握手工作总量{}",deserialize.getChainWork().toString());
 
-
-
             P2PMessage p2PMessage = newRequestMessage(CommonConfig.getSelf().getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
             byte[] serialize1 = p2PMessage.serialize();
             QuicMsg quicMsg = new QuicMsg();

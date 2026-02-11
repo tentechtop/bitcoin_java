@@ -318,6 +318,11 @@ public class UTXOCacheImpl implements UTXOCache {
     }
 
     public List<String> getUTXOKeyListByAddr(String address) {
+        //对参数校验
+        if (address == null || address.trim().isEmpty()) {
+            log.warn("查询UTXO的参数无效，返回空列表");
+            return Collections.emptyList();
+        }
         byte[] pubkey = Base58.decode(address);
         byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
         List<String> utxos = new ArrayList<>();

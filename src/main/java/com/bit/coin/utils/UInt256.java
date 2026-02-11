@@ -53,7 +53,8 @@ public class UInt256 implements Comparable<UInt256> {
      */
     public static UInt256 fromBytes(byte[] bytes) {
         if (bytes == null || bytes.length != 32) {
-            throw new IllegalArgumentException("UInt256 requires exactly 32 bytes input");
+            //返回零
+            return ZERO;
         }
         // 1表示无符号（避免BigInteger解析为负数）
         BigInteger bigInt = new BigInteger(1, bytes);

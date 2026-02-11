@@ -82,11 +82,14 @@ public class PeerClient {
             CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
             RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
             QuicConnection peerConnection = getPeerConnection(peerId);
-            log.info("节点ID{}",peerId);
-            assert peerConnection != null;
-            //且协议有返回值
-            if (peerConnection.sendData(serialize) && protocol.isHasResponse()){
-                return responseFuture.get(time, TimeUnit.SECONDS).getData();
+            if (peerConnection!=null){
+                //且协议有返回值
+                peerConnection.sendData(serialize);
+                if (protocol.isHasResponse()){
+                    return responseFuture.get(time, TimeUnit.MILLISECONDS).getData();
+                }else {
+                    return null;
+                }
             }else {
                 return null;
             }

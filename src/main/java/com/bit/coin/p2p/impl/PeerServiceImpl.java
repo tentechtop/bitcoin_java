@@ -31,7 +31,11 @@ import java.io.IOException;
 import java.security.cert.CertificateException;
 import java.util.List;
 import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
@@ -135,9 +139,15 @@ public class PeerServiceImpl implements PeerService {
             for (String bootstrapNode : bootstrap){
                 QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
                 String peerId = quicConnection.getPeerId();
-                new Thread(()->{
-                    routingTable.findNodeIterative(hexToBytes(peerId),self.getId());
-                }).start();
+
+/*                new Timer().schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+
+                    }
+                }, 5000);*/
+
+
             }
             //连接完成后对引导节点进行节点查询
         }catch (Exception e){

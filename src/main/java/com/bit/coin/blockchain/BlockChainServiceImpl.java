@@ -33,6 +33,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -1768,8 +1769,16 @@ public class BlockChainServiceImpl implements BlockChainService{
         return null;
     }
 
+    //分页获取这个地址下的交易
+    public List<Transaction> getTxListByAddres(String address,int pageNum,int pageSize) {
 
-    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 2016; // 每2016个区块调整一次
+        return null;
+    }
+
+
+
+
+    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 100; // 每2016个区块调整一次
     private static final int TARGET_BLOCK_SPACING_SECONDS = 10 * 60; // 目标出块时间：10分钟
     private static final long EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL = (long) DIFFICULTY_ADJUSTMENT_INTERVAL * TARGET_BLOCK_SPACING_SECONDS; // 2016个区块的预期总时间
 
@@ -1777,6 +1786,8 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
     public int calculateNextBlockDifficulty() {
+        ParamsConfig.Params params = config.getParams();
+
         // 1. 获取当前链的高度
         // 假设你有一个方法可以获取当前链的高度
         int currentHeight = getCurrentChainHeight();
@@ -1852,6 +1863,10 @@ public class BlockChainServiceImpl implements BlockChainService{
 
         return newBits;
     }
+
+
+
+
 
     private int getCurrentChainHeight() {
         byte[] bytes = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);

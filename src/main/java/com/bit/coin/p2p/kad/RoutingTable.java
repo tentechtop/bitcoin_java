@@ -9,6 +9,7 @@ import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.dto.BroadcastResource;
+import com.bit.coin.p2p.quic.QuicConnection;
 import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.MultiAddress;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -241,6 +243,7 @@ public class RoutingTable {
             log.warn("尝试添加空节点，忽略");
             return;
         }
+        peer.setLastSeen(System.currentTimeMillis());
         byte[] peerId = peer.getId();
         // 跳过本地节点
         if (Arrays.equals(peerId, localNodeId)) {
@@ -259,7 +262,7 @@ public class RoutingTable {
                 if (bucket.contains(peerIdHex)) {
                     // 节点已存在，移到头部（更新活跃度）
                     bucket.pushToFront(peer);
-                    log.info("节点{}已存在，更新活跃度并移到桶{}头部", peerIdHex, bucketIndex);
+                    log.debug("节点{}已存在，更新活跃度并移到桶{}头部", peerIdHex, bucketIndex);
                     isNodeChanged = true; // 新增节点，标记变动
                 } else {
                     if (bucket.size() < bucketSize) {
@@ -300,6 +303,20 @@ public class RoutingTable {
             }
         }
     }
+
+    //仅仅更新最后访问时间
+    public void updateLastSeenByBucket(byte[] peerId) {
+        if (peerId == null || peerId.length != 32) {
+            log.warn("节点ID格式错误，忽略");
+            return;
+        }
+        //找到该节点所在的桶子
+        int bucketIndex = getBucketIndex(peerId);
+        Bucket bucket = buckets.get(bucketIndex);
+        //更新节点最后访问时间
+        bucket.updateLastSeen(peerId);
+    }
+
 
 
 
@@ -551,6 +568,7 @@ public class RoutingTable {
      * 从数据库恢复路由表节点
      */
     public void restoreFromDatabase() {
+        log.info("从数据库回复节点");
         try {
             byte[] serializedPeers = dataBase.get(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes());
             if (serializedPeers == null || serializedPeers.length == 0) {
@@ -581,9 +599,14 @@ public class RoutingTable {
         log.info("开始从节点列表恢复路由表，共{}个节点", peerList.size());
         for (Peer peer : peerList) {
             try {
+                //打印节点最后访问时间 转yyyy-mm-ss
+                log.info("最后访问时间:{}", new SimpleDateFormat("yyyy-MM-dd").format(new Date(peer.getLastSeen())));
                 //只添加3天内活跃的节点
                 if (peer.getLastSeen() > System.currentTimeMillis() - 3 * 24 * 60 * 60 * 1000) {
+                    log.info("活跃");
                     addPeer(peer);
+                }else {
+                    log.info("不活跃");
                 }
             } catch (Exception e) {
                 log.error("恢复节点{}失败", bytesToHex(peer.getId()), e);
@@ -597,7 +620,15 @@ public class RoutingTable {
                 //连接路由表中的节点
                 for (Peer peer : getAll()) {
                     try {
-                        connectRemoteByAddr(peer.getMultiaddr());
+                        QuicConnection quicConnection = connectRemoteByAddr(peer.getMultiaddr());
+                        if (quicConnection!=null){
+                            //发起Find_Node
+                            log.info("迭代查询节点");
+
+
+
+
+                        }
                     } catch (ExecutionException e) {
                         throw new RuntimeException(e);
                     } catch (InterruptedException e) {
@@ -768,6 +799,15 @@ public class RoutingTable {
         }
     }
 
+    //更新节点的最后访问时间
+    public void updateLastSeen(String peerId) {
+        Peer peer = getNodeByHexId(peerId);
+        if (peer!=null){
+            peer.setLastSeen(System.currentTimeMillis());
+            addPeer(peer);
+        }
+    }
+
 
     /**
      * 辅助类：存储节点和距离
@@ -809,8 +849,10 @@ public class RoutingTable {
             //[32字节查询节点][4字节数量]
             System.arraycopy(searchId, 0, data, 0, 32);
             System.arraycopy(intToBytes(count), 0, data, 32, 4);
+            log.info("请求sendFindNode");
             byte[] p2pRes = peerClient.sendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
             P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
+            assert deserialize != null;
             byte[] res = deserialize.getData();
             if (res!=null){
                 List<Peer> peers = deserializePeers(res);
@@ -841,6 +883,10 @@ public class RoutingTable {
      */
     public List<Peer> iterativeFindNode(String searchIdHex) {
         return iterativeFindNode(hexToBytes(searchIdHex), 20, 3, 2000);
+    }
+
+    public List<Peer> iterativeFindNode(byte[] searchId) {
+        return iterativeFindNode(searchId, 20, 3, 2000);
     }
 
     /**
@@ -1054,7 +1100,7 @@ public class RoutingTable {
             }
 
             String currentPeerIdHex = bytesToHex(currentPeer.getId());
-            log.debug("开始查询节点: {}", currentPeerIdHex.substring(0, 8) + "...");
+            log.info("开始查询节点: {}", currentPeerIdHex.substring(0, 8) + "...");
 
             try {
                 // 5. 向当前节点发送FindNode请求
@@ -1108,6 +1154,7 @@ public class RoutingTable {
 
     // 重载方法：简化调用（使用默认参数）
     public List<Peer> findNodeIterative(byte[] targetId, byte[] searchId) {
+        log.info("迭代查询");
         // 默认参数：k=20，并发数=3，超时=2000ms
         return findNodeIterative(targetId, searchId, 20, 3, 2000);
     }
@@ -1282,6 +1329,7 @@ public class RoutingTable {
             log.info("路由表业务线程池已关闭");
         }
     }
+
 
 
 }

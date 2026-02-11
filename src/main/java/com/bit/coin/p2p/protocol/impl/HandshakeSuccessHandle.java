@@ -24,11 +24,8 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
     @Override
     public void handleVoid(P2PMessage requestParams) throws IOException {
         //握手成功后将节点加入到路由表
-        log.debug("将节点加入到路由表");
         byte[] data = requestParams.getData();
-        log.debug("数据长度{}",data.length);
         Peer deserialize = Peer.deserialize(data);
-        log.debug("反序列化后{}",deserialize.toString());
         routingTable.addPeer(deserialize);
     }
 }
