@@ -34,7 +34,7 @@ public class P2PReceiveBlockHandle implements ProtocolHandler.VoidProtocolHandle
         Block deserialize = Block.deserialize(data);
         //是否已经存在
         if (deserialize!=null){
-            log.info("区块信息{}",deserialize.toString());
+            log.info("从远程节点接收到区块信息{}",deserialize.toString());
             //是否已经存在
             Integer ifPresent = EXIST_RESOURCE_CACHE.getIfPresent(bytesToHex(deserialize.getHash()));
             if (ifPresent==null){

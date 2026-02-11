@@ -22,7 +22,7 @@ system:
   server-pubkey:
     - '101.35.87.31:3479'
   bootstrap:
-    - '/ip4/127.0.0.1/quic/8333/p2p/6TsLGiHvVY5ZDJ1MV4mF8X5ZPnJKsxbntRVeeUJh1aEK'
+    - '/ip4/127.0.0.1/quic/8333/p2p/8qeR2LbCDfQwu67AVj9Beiairn92KiJrttWG9U8ZKb9k'
 
 
 logging:

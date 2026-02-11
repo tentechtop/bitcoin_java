@@ -271,6 +271,18 @@ public class ChainApi {
 
 
 
+    //指定广播一个区块 参数hashhex
+    @GetMapping("/broadcastResource")
+    public void broadcastResource(String hashHex) {
+        byte[] hash = hexToBytes(hashHex);
+        routingTable.BroadcastResource(0, hash);
+    }
 
+
+    //获取全部的孤儿区块
+    @GetMapping("/getOrphanBlocks")
+    public List<Block> getOrphanBlocks() {
+        return blockChainService.getOrphanBlocks();
+    }
 
 }

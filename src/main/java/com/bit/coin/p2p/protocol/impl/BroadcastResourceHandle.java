@@ -33,9 +33,6 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
     public void handleVoid(P2PMessage requestParams) throws IOException {
         byte[] data = requestParams.getData();
         byte[] senderId = requestParams.getSenderId();
-        log.info("发送者{}",bytesToHex(senderId));
-        log.info("本地 {}",bytesToHex(CommonConfig.getSelf().getId()));
-
         BroadcastResource broadcastResource = BroadcastResource.fromBytes(data);
         if (broadcastResource!=null){
             int type = broadcastResource.getType();
@@ -64,6 +61,8 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
             if (need){
                 log.info("需要这个资源 {} ",data.length);
                 peerClient.sendData(bytesToHex(senderId),ProtocolEnum.P2P_Get_Resource_Req,data,5000);
+            }else {
+                log.info("不需要这个资源");
             }
         }
     }

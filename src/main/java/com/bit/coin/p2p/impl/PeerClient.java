@@ -76,7 +76,6 @@ public class PeerClient {
 
     //32字节hex
     public byte[] sendData(String peerId, ProtocolEnum protocol, byte[] request, int time)  {
-        log.info("发送数据");
         try {
             QuicConnection peerConnection = getPeerConnection(peerId);
             if (peerConnection!=null){
@@ -84,7 +83,6 @@ public class PeerClient {
                 byte[] serialize = p2PMessage.serialize();
                 CompletableFuture<QuicMsg> responseFuture = new CompletableFuture<>();
                 RESPONSE_FUTURECACHE.put(bytesToHex(p2PMessage.getRequestId()), responseFuture);
-                log.info("连接不为空{}",peerConnection.getConnectionId());
                 //且协议有返回值
                 peerConnection.sendData(serialize);
                 if (protocol.isHasResponse()){

@@ -2,13 +2,12 @@ package com.bit.coin.p2p.quic;
 
 
 import com.bit.coin.config.CommonConfig;
-import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
-import com.bit.coin.p2p.quic.control.ReceiveWindow;
 
+import com.bit.coin.p2p.quic.control.GlobalDataTransmissionController;
 import com.bit.coin.utils.ECCWithAESGCM;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
@@ -18,8 +17,6 @@ import io.netty.util.TimerTask;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 
 import java.net.InetSocketAddress;
@@ -29,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.CommonConfig.self;
 import static com.bit.coin.config.SystemConfig.SelfKey;
-import static com.bit.coin.p2p.protocol.P2PMessage.newNormalMessage;
 import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
 import static com.bit.coin.p2p.quic.QuicConstants.*;
@@ -66,11 +62,6 @@ public class QuicConnection {
     //true 是出站连接 false是入站连接
     private boolean isOutbound;
 
-    //local 本地接收窗口 本地通过接收窗口控制发送速度
-    private ReceiveWindow localReceiveWindow;
-
-    //远程接收窗口  接收方通过这个来控制发送方的发送速度
-    private ReceiveWindow remoteReceiveWindow;
 
 
 
@@ -212,6 +203,8 @@ public class QuicConnection {
         sendQuicData.sendAllFrames();
         return true;
     }
+
+
 
 
 

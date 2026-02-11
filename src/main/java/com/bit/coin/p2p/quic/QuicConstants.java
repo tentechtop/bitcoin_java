@@ -92,9 +92,9 @@ public class QuicConstants {
     public static final int MAX_FRAME = 8192;//单次最大发送8192帧 当一帧承载1K数据 8192帧 约等于8M数据 极限是一帧1400字节
 
     // 出站连接主动心跳间隔
-    public static final long OUTBOUND_HEARTBEAT_INTERVAL = 500L;
+    public static final long OUTBOUND_HEARTBEAT_INTERVAL = 1000L;
     // 连接过期阈值（统一1000ms无活动）
-    public static final long CONNECTION_EXPIRE_TIMEOUT = 2000L;
+    public static final long CONNECTION_EXPIRE_TIMEOUT = 5000L;
     private QuicConstants() {}
 
 

@@ -836,12 +836,14 @@ public class TxPoolImpl implements TxPool{
         if (failedTxs == null || failedTxs.length == 0) {
             return;
         }
+        int i = 0;
 
         try {
             for (Transaction tx : failedTxs) {
                 if (tx == null || tx.isCoinbase()) {
                     continue;
                 }
+
                 String txIdStr = bytesToHex(tx.getTxId());
 
                 // 回退交易状态到IN_POOL
@@ -862,8 +864,10 @@ public class TxPoolImpl implements TxPool{
                 spendingUTXOKeyList.forEach(spendingSet::remove);
                 List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
                 pendingConfirmationOfReceipt.forEach(processingSet::remove);
+
+                i++;
             }
-            log.info("区块上链失败，已回退 {} 笔交易到交易池", failedTxs.length);
+            log.info("区块上链失败，已回退 {} 笔交易到交易池", i);
         } catch (Exception e) {
             log.error("处理区块上链失败异常", e);
         }

@@ -1078,6 +1078,12 @@ public class BlockChainServiceImpl implements BlockChainService{
         return null;
     }
 
+    public List<Block> getOrphanBlocks() {
+        return orphanBlocks.asMap().values().stream()
+                .flatMap(List::stream)
+                .toList();
+    }
+
 
     // 辅助类：用于返回多值（可替换为Apache Commons Pair或自定义类）
     private static class Pair<F, S> {
