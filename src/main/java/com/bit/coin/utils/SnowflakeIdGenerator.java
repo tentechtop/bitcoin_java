@@ -1,5 +1,7 @@
 package com.bit.coin.utils;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.security.SecureRandom;
@@ -7,6 +9,7 @@ import java.util.Enumeration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
 
+@Slf4j
 public class SnowflakeIdGenerator {
     // ====================== 雪花算法核心常量 ======================
     private static final int SIGN_BIT = 1;
@@ -135,16 +138,16 @@ public class SnowflakeIdGenerator {
                     }
                 }
             } catch (SocketException e) {
-                System.err.println("❌ 获取MAC地址失败（Socket异常），将使用安全随机生成节点ID：" + e.getMessage());
+                log.error("获取MAC地址失败（Socket异常），将使用安全随机生成节点ID：{}", e.getMessage());
             }
 
             // 第二步：MAC获取失败，用安全随机生成
             if (!macSuccess) {
                 // SecureRandom生成0-511的非负整数
                 nodeId = Math.abs(SECURE_RANDOM.nextLong()) % (MAX_NODE_ID + 1);
-                System.out.println("ℹ️ 使用安全随机生成节点ID：" + nodeId);
+                log.info("ℹ使用安全随机生成节点ID：{}", nodeId);
             } else {
-                System.out.println("ℹ️ 从MAC地址生成节点ID：" + nodeId);
+                log.info("ℹ从MAC地址生成节点ID：{}", nodeId);
             }
 
             // 缓存节点ID（所有实例复用）
