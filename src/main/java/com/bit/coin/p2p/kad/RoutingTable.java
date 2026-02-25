@@ -27,9 +27,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
@@ -60,6 +62,22 @@ public class RoutingTable {
     private ScheduledExecutorService persistScheduler;
     // 定时检查周期：1分钟（单位：毫秒）
     private static final long PERSIST_CHECK_PERIOD = 10 * 1000L;
+
+    // 路由表刷新相关配置
+    // 刷新周期：10分钟（Kademlia 标准）
+    private static final long ROUTING_TABLE_REFRESH_PERIOD = 10 * 60 * 1000L;
+    // 每个桶刷新时的并发查询数
+    private static final int REFRESH_PARALLELISM = 3;
+    // 单次查询超时时间
+    private static final int REFRESH_QUERY_TIMEOUT = 3000;
+    // 路由表刷新定时任务
+    private ScheduledFuture<?> refreshTask;
+    // 避免并发刷新的锁
+    private final ReentrantLock refreshLock = new ReentrantLock();
+    // 标记是否正在刷新
+    private final AtomicBoolean isRefreshing = new AtomicBoolean(false);
+
+
 
     @Autowired
     private SystemConfig config;
@@ -141,6 +159,25 @@ public class RoutingTable {
 
         // ========== 新增：启动定时持久化检查任务 ==========
         initPersistScheduler();
+
+        // ========== 新增：启动路由表刷新任务 ==========
+        initRefreshScheduler();
+    }
+
+
+
+    /**
+     * 初始化路由表定时刷新任务
+     */
+    private void initRefreshScheduler() {
+        // 复用持久化的定时线程池（单线程避免并发冲突）
+        refreshTask = persistScheduler.scheduleAtFixedRate(
+                this::refreshRoutingTable,
+                ROUTING_TABLE_REFRESH_PERIOD, // 首次执行延迟10分钟
+                ROUTING_TABLE_REFRESH_PERIOD, // 之后每10分钟执行一次
+                TimeUnit.MILLISECONDS
+        );
+        log.info("路由表定时刷新任务已启动，刷新周期：{}分钟", ROUTING_TABLE_REFRESH_PERIOD / 60000);
     }
 
     /**
@@ -154,7 +191,6 @@ public class RoutingTable {
             return thread;
         });
 
-        // 延迟10分钟后开始，每10分钟执行一次检查
         persistScheduler.scheduleAtFixedRate(
                 this::checkAndPersist,
                 PERSIST_CHECK_PERIOD,
@@ -175,6 +211,7 @@ public class RoutingTable {
                 persistToDatabase();
                 // 持久化成功后重置计数器
                 nodeChangeCount.set(0);
+
             } else {
                 log.debug("定时检查无节点变动，跳过持久化");
             }
@@ -1329,4 +1366,167 @@ public class RoutingTable {
             log.info("路由表业务线程池已关闭");
         }
     }
+
+
+    /**
+     * 执行路由表全量刷新（Kademlia 标准流程）
+     * 1. 遍历所有 K 桶
+     * 2. 为每个桶生成随机目标 ID（落在桶的距离区间）
+     * 3. 对目标 ID 执行迭代查找
+     * 4. 用新节点更新桶，淘汰失效节点
+     */
+    private void refreshRoutingTable() {
+        // 防止并发刷新
+        if (!refreshLock.tryLock()) {
+            log.debug("路由表刷新任务已在执行，跳过本次");
+            return;
+        }
+
+        if (isRefreshing.get()) {
+            refreshLock.unlock();
+            return;
+        }
+
+        isRefreshing.set(true);
+
+        try {
+            log.info("开始执行路由表刷新任务");
+            long startTime = System.currentTimeMillis();
+
+            // 遍历所有 K 桶（跳过空桶/无节点的桶）
+            for (int bucketIndex = 0; bucketIndex < buckets.size(); bucketIndex++) {
+                Bucket bucket = buckets.get(bucketIndex);
+                if (bucket == null || bucket.size() == 0) {
+                    continue;
+                }
+
+                // 跳过长期未访问的桶（优化：仅刷新30分钟内有访问的桶）
+                Long lastAccessTime = lastBucketAccessTime.get(bucketIndex);
+                if (lastAccessTime != null &&
+                        System.currentTimeMillis() - lastAccessTime > 30 * 60 * 1000) {
+                    log.debug("桶{}超过30分钟未访问，跳过刷新", bucketIndex);
+                    continue;
+                }
+
+                // 为当前桶生成随机目标 ID（核心：目标 ID 落在该桶的距离区间）
+                byte[] randomTargetId = generateRandomTargetIdForBucket(bucketIndex);
+                if (randomTargetId == null) {
+                    log.warn("桶{}生成随机目标ID失败，跳过刷新", bucketIndex);
+                    continue;
+                }
+
+                log.debug("开始刷新桶{}，随机目标ID：{}",
+                        bucketIndex, bytesToHex(randomTargetId).substring(0, 8) + "...");
+
+                // 对随机目标 ID 执行迭代查找（复用现有迭代查找逻辑）
+                List<Peer> newPeers = iterativeFindNode(
+                        randomTargetId,
+                        bucketSize,       // 返回20个节点（与桶大小一致）
+                        REFRESH_PARALLELISM, // 并发查询数
+                        REFRESH_QUERY_TIMEOUT // 超时时间
+                );
+
+                // 用新节点更新当前桶
+                updateBucketWithNewPeers(bucketIndex, newPeers);
+
+                //TODO
+                // 清理桶内失效节点（PING 检测）
+
+                log.debug("桶{}刷新完成，新增/更新{}个节点", bucketIndex, newPeers.size());
+            }
+
+            long costTime = System.currentTimeMillis() - startTime;
+            log.info("路由表刷新任务执行完成，耗时{}ms", costTime);
+
+        } catch (Exception e) {
+            log.error("路由表刷新任务执行失败", e);
+        } finally {
+            isRefreshing.set(false);
+            refreshLock.unlock();
+        }
+    }
+
+
+    /**
+     * 为指定桶生成随机目标 ID（落在该桶的距离区间）
+     * Kademlia 核心：目标 ID 与本地节点的异或距离，刚好落在该桶的区间
+     * @param bucketIndex 桶索引（0-255）
+     * @return 随机目标 ID（32字节）
+     */
+    private byte[] generateRandomTargetIdForBucket(int bucketIndex) {
+        try {
+            // 1. 生成随机32字节ID
+            byte[] randomId = new byte[32];
+            new SecureRandom().nextBytes(randomId);
+
+            // 2. 计算本地节点ID与随机ID的异或距离
+            byte[] distance = calculateDistance(localNodeId, randomId);
+
+            // 3. 调整距离，使其落在目标桶的区间
+            // 桶索引越大 → 距离越近 → 最高有效位越靠后
+            int targetBitPosition = 255 - bucketIndex; // 目标最高有效位的位置
+            int byteIndex = targetBitPosition / 8;     // 目标字节索引（0-31）
+            int bitIndex = targetBitPosition % 8;      // 目标位索引（0-7）
+
+            // 重置所有更高位为0，确保最高有效位是目标位
+            for (int i = 0; i < byteIndex; i++) {
+                distance[i] = 0;
+            }
+            // 清空当前字节的更高位
+            byte mask = (byte) (0xFF >> (8 - bitIndex));
+            distance[byteIndex] = (byte) (distance[byteIndex] & mask);
+            // 设置目标位为1（确保最高有效位是目标位）
+            distance[byteIndex] |= (byte) (1 << bitIndex);
+
+            // 4. 异或回去得到目标ID：targetId = localNodeId XOR distance
+            byte[] targetId = new byte[32];
+            for (int i = 0; i < 32; i++) {
+                targetId[i] = (byte) (localNodeId[i] ^ distance[i]);
+            }
+
+            // 验证：目标ID对应的桶索引是否正确
+            int verifyIndex = getBucketIndex(targetId);
+            if (verifyIndex != bucketIndex) {
+                log.warn("桶{}生成的目标ID验证失败，实际桶{}", bucketIndex, verifyIndex);
+            }
+
+            return targetId;
+        } catch (Exception e) {
+            log.error("生成桶{}的随机目标ID失败", bucketIndex, e);
+            return null;
+        }
+    }
+
+    /**
+     * 用迭代查找返回的新节点更新指定桶
+     * @param bucketIndex 桶索引
+     * @param newPeers 新发现的节点列表
+     */
+    private void updateBucketWithNewPeers(int bucketIndex, List<Peer> newPeers) {
+        if (newPeers == null || newPeers.isEmpty()) {
+            return;
+        }
+
+        Bucket bucket = buckets.get(bucketIndex);
+        if (bucket == null) {
+            return;
+        }
+
+        synchronized (bucket) {
+            for (Peer newPeer : newPeers) {
+                if (newPeer == null || Arrays.equals(newPeer.getId(), localNodeId)) {
+                    continue;
+                }
+
+                // 复用addPeer逻辑，自动处理桶的满/空、节点活跃度
+                addPeer(newPeer);
+            }
+        }
+
+        log.debug("桶{}已更新，新增{}个有效节点", bucketIndex, newPeers.size());
+    }
+
+
+
+
 }
