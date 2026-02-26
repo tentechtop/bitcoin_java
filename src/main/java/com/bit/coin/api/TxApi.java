@@ -235,6 +235,7 @@ public class TxApi {
     }
 
 
+    //TODO 废弃 无法兼容索引需要重新设计
     @PostMapping("/transfer101")
     public Result<Transaction> transfer101(@RequestBody TransferTestDTO transferDTO) throws Exception {
 
@@ -268,7 +269,7 @@ public class TxApi {
             // 3. 获取发送方的UTXO
             assert bytes != null;
             String senderAddress = Base58.encode(bytes);
-            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT);
+            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT  | COINBASE_MATURED);
 
             List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
             log.info("可用余额{}",utxos.size());
@@ -357,11 +358,11 @@ public class TxApi {
                 byte[] senderScriptPubKeyHash = Sha.applyRIPEMD160(Sha.applySHA256(senderAddressBytes));
 
                 Script sendStandardLockingScript = new Script();
-                standardLockingScript.addOpCode(Script.OP_DUP);
-                standardLockingScript.addOpCode(Script.OP_HASH160);
-                standardLockingScript.addData(senderScriptPubKeyHash);
-                standardLockingScript.addOpCode(Script.OP_EQUALVERIFY);
-                standardLockingScript.addOpCode(Script.OP_CHECKSIG);
+                sendStandardLockingScript.addOpCode(Script.OP_DUP);
+                sendStandardLockingScript.addOpCode(Script.OP_HASH160);
+                sendStandardLockingScript.addData(senderScriptPubKeyHash);
+                sendStandardLockingScript.addOpCode(Script.OP_EQUALVERIFY);
+                sendStandardLockingScript.addOpCode(Script.OP_CHECKSIG);
 
                 changeOutput.setScriptPubKey(sendStandardLockingScript.serialize());
                 outputs.add(changeOutput);

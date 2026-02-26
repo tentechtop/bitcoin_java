@@ -69,6 +69,8 @@ public class ScriptTest {
 
     public static void main(String[] args) throws IOException, ScriptExecutionException {
 
+        testP2PKH();
+
         test1();
         test2();
 

@@ -449,6 +449,36 @@ public class Script {
 
     }
 
+    /**
+     * 获取签名类型（仅适用于P2PKH解锁脚本）
+     * 签名类型是65字节签名数据的最后1字节（哈希类型：SIGHASH_ALL/SIGHASH_NONE等）
+     * @return 签名类型字节
+     * @throws IllegalStateException 非P2PKH解锁脚本或签名数据异常时抛出
+     */
+    public byte getSignatureType() {
+        // 1. 校验脚本元素结构：P2PKH解锁脚本应包含2个元素（65字节签名 + 32字节公钥）
+        if (elements == null || elements.size() != 2) {
+            throw new IllegalStateException("非P2PKH解锁脚本，无法提取签名类型（期望2个元素，实际：" +
+                    (elements == null ? 0 : elements.size()) + "）");
+        }
+
+        // 2. 获取第一个元素（签名数据）并校验类型
+        ScriptElement signatureElement = elements.get(0);
+        if (signatureElement.isOpCode()) {
+            throw new IllegalStateException("第一个元素应为签名数据，而非操作码");
+        }
+
+        // 3. 获取签名数据并校验长度（标准P2PKH签名数据为65字节：64字节签名 + 1字节类型）
+        byte[] signatureData = signatureElement.getData();
+        if (signatureData == null || signatureData.length != 65) {
+            throw new IllegalStateException("签名数据长度异常（期望65字节，实际：" +
+                    (signatureData == null ? 0 : signatureData.length) + "）");
+        }
+
+        // 4. 提取最后1字节作为签名类型（SIGHASH类型）
+        return signatureData[64];
+    }
+
 
     public static class ScriptElement {
         private int opCode;

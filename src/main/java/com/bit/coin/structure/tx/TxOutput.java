@@ -106,6 +106,7 @@ public class TxOutput {
         byte[] valueBytes = new byte[8];
         dis.readFully(valueBytes);
         output.setValue(com.bit.coin.utils.SerializeUtils.littleEndianToLong(valueBytes));
+
         long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
         if (scriptPubKeyLength > 0) {
             byte[] scriptSig = new byte[(int) scriptPubKeyLength];

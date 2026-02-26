@@ -1,9 +1,11 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.structure.script.Script;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.annotation.JsonSerialize;
 
 import java.io.ByteArrayInputStream;
@@ -11,10 +13,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 
 import static com.bit.coin.structure.tx.UTXOStatusResolver.PENDING_SPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
+@Slf4j
 @Data
 @JsonPropertyOrder({"txId", "index", "value","script","coinbase","height"})  // 按指定顺序输出
 public class UTXO {
@@ -51,6 +55,34 @@ public class UTXO {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] script;
+
+    @JsonIgnore
+    private WeakReference<Script> scriptPubKeyWk;
+
+
+    @JsonIgnore
+    public WeakReference<Script> getScriptPubKeyWk() {
+        if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
+            try {
+                log.info("打印公钥{} 长度{}",bytesToHex(script),script.length);
+                Script deserialized = Script.deserialize(script);
+                scriptPubKeyWk = new WeakReference<>(deserialized);
+            } catch (IOException e) {
+                log.error("解析解锁脚本失败：{}", e.getMessage());
+            }
+        }
+        return scriptPubKeyWk;
+    }
+
+
+    public String getScriptPubKeyString() {
+        WeakReference<Script> scriptPubKeyWk1 = getScriptPubKeyWk();
+        Script script = scriptPubKeyWk1.get();
+        if (script==null){
+            return "";
+        }
+        return script.toString();
+    }
 
     //..............................非核心字段 不参与序列化反序列化..................................
     /**
@@ -101,7 +133,10 @@ public class UTXO {
             dos.write(com.bit.coin.utils.SerializeUtils.longToLittleEndian(value));
             com.bit.coin.utils.SerializeUtils.writeBoolean(dos, coinbase);
             com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, height);
-            com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, script, SCRIPT_LENGTH);
+            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, script.length);
+            if (script.length > 0) {
+                dos.write(script);
+            }
             dos.close();
             return baos.toByteArray();
         }catch (Exception e){
@@ -131,9 +166,14 @@ public class UTXO {
         byte[] heightBytes = new byte[4];
         dis.readFully(heightBytes);
         utxo.setHeight(com.bit.coin.utils.SerializeUtils.littleEndianToInt(heightBytes));
-
-        byte[] script = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, SCRIPT_LENGTH);
-        utxo.setScript(script);
+        long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptPubKeyLength > 0) {
+            byte[] scriptSig = new byte[(int) scriptPubKeyLength];
+            dis.readFully(scriptSig);
+            utxo.setScript(scriptSig);
+        } else {
+            utxo.setScript(new byte[0]);
+        }
         return utxo;
     }
 

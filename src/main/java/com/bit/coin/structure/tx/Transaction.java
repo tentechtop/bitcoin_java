@@ -1,6 +1,8 @@
 package com.bit.coin.structure.tx;
 
 import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.structure.script.Script;
+import com.bit.coin.structure.script.ScriptExecutor;
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
@@ -16,12 +18,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.structure.script.ScriptExecutor.combineScripts;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -148,12 +152,38 @@ public class Transaction {
                     return false;
                 }
 
+
+                //验证脚本
+                //如果交易版本大于100 则验证脚本
+                if (version>100){
+                    WeakReference<Script> scriptSigWk = input.getScriptSigWk();
+                    Script unlockingScript = scriptSigWk.get();
+                    if (unlockingScript==null){
+                        return false;
+                    }
+                    //获得签名类型
+                    byte signatureType = unlockingScript.getSignatureType();
+                    byte[] scriptPubKey = referencedUtxo.getScript();
+                    WeakReference<Script> scriptPubKeyWk = referencedUtxo.getScriptPubKeyWk();
+                    Script lockingScript = scriptPubKeyWk.get();
+                    if (lockingScript==null){
+                        return false;
+                    }
+                    log.info("签名类型{}",signatureType);
+                    byte[] dataToVerify = prepareDataForSigning(i, scriptPubKey, signatureType);
+                    log.info("签名数据{}",bytesToHex(Sha.applySHA256(dataToVerify)));
+
+                    ScriptExecutor executor1 = new ScriptExecutor();
+                    Script combinedStandard = combineScripts(unlockingScript, lockingScript);
+                    boolean standardResult = executor1.execute(combinedStandard, this, 0);
+                    log.info("标准P2PKH脚本验证结果: {} (预期: true)", standardResult);
+                    return standardResult;
+                }
+
                 // 从输入中提取签名和公钥
                 byte[] signature = input.getSignature();
                 byte[] publicKey = input.getPublicKey();
-
                 log.info("解锁脚本{}",bytesToHex(input.getScriptSig()));
-
                 // 从引用的UTXO中获取锁定脚本
                 byte[] scriptPubKey = referencedUtxo.getScript();
                 byte signatureType = input.getSignatureType();
@@ -162,7 +192,6 @@ public class Transaction {
                 // 为了简化，我们假设使用 SIGHASH_ALL。在实际实现中，你需要从解锁脚本中读取它。
                 log.info("签名类型{}",signatureType);
                 byte[] dataToVerify = prepareDataForSigning(i, scriptPubKey, signatureType);
-
                 log.info("签名数据{}",bytesToHex(Sha.applySHA256(dataToVerify)));
 
                 // 使用公钥和数据验证签名
