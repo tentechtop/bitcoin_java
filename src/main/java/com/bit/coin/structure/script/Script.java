@@ -102,6 +102,85 @@ public class Script {
      * 从字节数组指定位置反序列化
      */
     public static Script deserialize(byte[] bytes, int offset, int length) throws IOException {
+        //如果固定只有97长度 先尝试翻译成P2PKH解锁脚本
+        if (length == 97) {
+            Script script = new Script();
+            ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+
+            // 第一步：解析64字节签名（无长度前缀）
+            byte[] signature = new byte[64];
+            if (buffer.remaining() >= 64) {
+                buffer.get(signature);
+            } else {
+                throw new IOException("P2PKH解锁脚本签名长度不足，期望64字节，剩余：" + buffer.remaining());
+            }
+
+            // 第二步：解析1字节签名类型
+            byte sigType;
+            if (buffer.remaining() >= 1) {
+                sigType = buffer.get();
+            } else {
+                throw new IOException("P2PKH解锁脚本缺少签名类型字节");
+            }
+
+            // 合并签名+签名类型（符合脚本规范的65字节签名数据）
+            byte[] signatureData = new byte[65];
+            System.arraycopy(signature, 0, signatureData, 0, 64);
+            signatureData[64] = sigType;
+            script.addData(signatureData); // 添加到脚本元素
+
+            // 第三步：解析32字节公钥（无长度前缀）
+            byte[] pubKeyData = new byte[32];
+            if (buffer.remaining() >= 32) {
+                buffer.get(pubKeyData);
+                script.addData(pubKeyData); // 添加公钥数据到脚本
+            } else {
+                throw new IOException("P2PKH解锁脚本公钥长度不足，期望32字节，剩余：" + buffer.remaining());
+            }
+
+            // 验证是否解析完所有数据
+            if (buffer.remaining() != 0) {
+                throw new IOException("P2PKH解锁脚本解析后仍有剩余数据，剩余字节数：" + buffer.remaining());
+            }
+
+            return script;
+        }
+
+        // 如果固定为20字节，解释为P2PKH锁定脚本（公钥哈希）
+        if (length == 20) {
+            // 复制20字节的公钥哈希（避免原数组被修改）
+            byte[] pubKeyHash = new byte[20];
+            System.arraycopy(bytes, offset, pubKeyHash, 0, 20);
+
+            // 构建标准的P2PKH锁定脚本
+            Script standardLockingScript = new Script();
+            standardLockingScript.addOpCode(Script.OP_DUP);         // 0x76
+            standardLockingScript.addOpCode(Script.OP_HASH160);     // 0xa9
+            standardLockingScript.addData(pubKeyHash);              // 20字节公钥哈希
+            standardLockingScript.addOpCode(Script.OP_EQUALVERIFY); // 0x88
+            standardLockingScript.addOpCode(Script.OP_CHECKSIG);    // 0xac
+
+            return standardLockingScript;
+        }
+
+        //如果长度是16 则是coinbase的锁定脚本
+        if (length == 16) {
+            Script coinbaseScript = new Script();
+            // 复制16字节的coinbase数据（避免原数组引用被修改）
+            byte[] coinbaseData = new byte[16];
+            System.arraycopy(bytes, offset, coinbaseData, 0, 16);
+
+            // Coinbase锁定脚本标准结构：OP_PUSHDATA1 + 0x10(16) + 16字节数据
+            // 1. 添加OP_PUSHDATA1操作码（用于推送16字节数据，因为16>75不适用直接长度前缀）
+            coinbaseScript.addOpCode(OP_PUSHDATA1);
+            // 2. 添加数据长度标识（16字节）
+            coinbaseScript.addData(new byte[]{(byte) 0x10});
+            // 3. 添加16字节的coinbase核心数据
+            coinbaseScript.addData(coinbaseData);
+            return coinbaseScript;
+        }
+
         Script script = new Script();
         ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
                 .order(ByteOrder.LITTLE_ENDIAN);

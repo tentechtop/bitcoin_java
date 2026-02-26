@@ -5,6 +5,7 @@ import com.bit.coin.structure.script.Script;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.annotation.JsonSerialize;
 
 import java.io.ByteArrayInputStream;
@@ -14,7 +15,9 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
+@Slf4j
 @JsonPropertyOrder({"value", "scriptPubKey"})  // 按指定顺序输出
 @Data
 public class TxOutput {
@@ -40,6 +43,29 @@ public class TxOutput {
     public static final int SERIALIZED_LENGTH = 28;    // 序列化总长度: 8+20=28字节
 
 
+    @JsonIgnore
+    public WeakReference<Script> getScriptPubKeyWk() {
+        if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
+            try {
+                log.info("打印公钥{} 长度{}",bytesToHex(scriptPubKey),scriptPubKey.length);
+                Script script = Script.deserialize(scriptPubKey);
+                scriptPubKeyWk = new WeakReference<>(script);
+            } catch (IOException e) {
+                log.error("解析解锁脚本失败：{}", e.getMessage());
+            }
+        }
+        return scriptPubKeyWk;
+    }
+
+
+    public String getScriptPubKeyString() {
+        WeakReference<Script> scriptPubKeyWk1 = getScriptPubKeyWk();
+        Script script = scriptPubKeyWk1.get();
+        if (script==null){
+            return "";
+        }
+        return script.toString();
+    }
 
 
     /**

@@ -76,6 +76,30 @@ public class TxInput {
 
 
 
+    @JsonIgnore
+    public WeakReference<Script> getScriptSigWk() {
+        if (scriptSigWk == null || scriptSigWk.get() == null) {
+            try {
+                log.info("打印签名{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
+                Script script = Script.deserialize(scriptSig);
+                scriptSigWk = new WeakReference<>(script);
+            } catch (IOException e) {
+                log.error("解析解锁脚本失败：{}", e.getMessage());
+            }
+        }
+        return scriptSigWk;
+    }
+
+
+    public String getScriptSigString() {
+        WeakReference<Script> scriptSigWk1 = getScriptSigWk();
+        Script script = scriptSigWk1.get();
+        if (script==null){
+            return "";
+        }
+        return script.toString();
+    }
+
 
     /**
      * 验证字段长度

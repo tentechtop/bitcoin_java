@@ -79,6 +79,159 @@ public class ScriptTest {
         testTimeLockOperations();
     }
 
+    //OP_DUP OP_HASH160 与 OP_OVER OP_HASH160
+    /**
+     * 测试P2PKH脚本中 OP_DUP OP_HASH160 与 OP_OVER OP_HASH160 的差异和一致性
+     * 修复：明确OP_OVER的正确使用方式，解释验证失败的根源
+     */
+    public static void testP2PKH() {
+        try {
+            log.info("\n===== 开始测试P2PKH中的OP_DUP vs OP_OVER =====");
+
+            // ========== 步骤1：生成测试用密钥对和基础数据 ==========
+            byte[] privateKey = hexToBytes("1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8");
+            byte[] publicKey = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
+            byte[] pubKeyHash = Sha.applyRIPEMD160(Sha.applySHA256(publicKey));
+
+            log.info("测试公钥: {}", bytesToHex(publicKey));
+            log.info("公钥哈希: {}", bytesToHex(pubKeyHash));
+
+            // ========== 步骤2：构造测试交易 ==========
+            Transaction testTx = new Transaction();
+            testTx.setVersion(1);
+            testTx.setLockTime(0);
+
+            TxInput txInput = new TxInput();
+            txInput.setTxId(hexToBytes("06071a12ea4acf1b977fdf0c13c4adc7d65eb6cc5bb6f931fcaddb15e73df1cd"));
+            txInput.setIndex(0);
+            txInput.setSequence(0xFFFFFFFFL);
+            testTx.getInputs().add(txInput);
+
+            TxOutput txOutput = new TxOutput();
+            txOutput.setValue(5000000000L);
+            txOutput.setScriptPubKey(hexToBytes("76934d8111b97796af8d22443628399ebb612124"));
+            testTx.getOutputs().add(txOutput);
+
+            // 构造UTXO映射
+            Map<String, UTXO> utxoMap = new HashMap<>();
+            UTXO utxo = new UTXO();
+            utxo.setTxId(txInput.getTxId());
+            utxo.setIndex(txInput.getIndex());
+            utxo.setValue(5000000000L);
+            utxo.setScript(hexToBytes("76a914" + bytesToHex(pubKeyHash) + "88ac"));
+            utxoMap.put(bytesToHex(UTXO.getKey(txInput.getTxId(), txInput.getIndex())), utxo);
+            testTx.setUtxoMap(utxoMap);
+
+            // ========== 步骤3：生成交易签名 ==========
+            byte[] sigHash = testTx.prepareDataForSigning(0, utxo.getScript(), SIGHASH_ALL);
+            byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(sigHash));
+
+            byte[] signatureWithHashType = new byte[signature.length + 1];
+            System.arraycopy(signature, 0, signatureWithHashType, 0, signature.length);
+            signatureWithHashType[signature.length] = SIGHASH_ALL;
+
+            log.info("交易签名: {}", bytesToHex(signatureWithHashType).substring(0, 40) + "...");
+
+            // ========== 步骤4：构造解锁脚本 ==========
+            Script unlockingScript = new Script();
+            unlockingScript.addData(signatureWithHashType);
+            unlockingScript.addData(publicKey);
+            log.info("解锁脚本: {}", unlockingScript.toString());
+
+
+            // ========== 步骤5：测试1 - 标准OP_DUP脚本（预期成功） ==========
+            Script standardLockingScript = new Script();
+            standardLockingScript.addOpCode(Script.OP_DUP);
+            standardLockingScript.addOpCode(Script.OP_HASH160);
+            standardLockingScript.addData(pubKeyHash);
+            standardLockingScript.addOpCode(Script.OP_EQUALVERIFY);
+            standardLockingScript.addOpCode(Script.OP_CHECKSIG);
+
+            log.info("\n标准P2PKH锁定脚本: {}", standardLockingScript.toString());
+
+            ScriptExecutor executor1 = new ScriptExecutor();
+            Script combinedStandard = combineScripts(unlockingScript, standardLockingScript);
+            boolean standardResult = executor1.execute(combinedStandard, testTx, 0);
+            log.info("标准P2PKH脚本验证结果: {} (预期: true)", standardResult);
+
+            // 打印标准脚本执行后的栈状态（调试用）
+            log.info("标准脚本执行后栈大小: {}", executor1.getStack().size());
+            if (!executor1.getStack().isEmpty()) {
+                log.info("标准脚本栈顶结果: {}", castToBool(executor1.getStack().get(0)));
+            }
+
+            //将解锁脚本和锁定脚本设置到输入和输出 并序列化和反序列化
+            txInput.setScriptSig(unlockingScript.serialize());
+            txOutput.setScriptPubKey(standardLockingScript.serialize());
+            byte[] txSerialized = testTx.serialize();
+            log.info("交易序列化后字节长度: {}", txSerialized.length);
+            log.info("交易序列化后前64字节: {}", bytesToHex(Arrays.copyOf(txSerialized, Math.min(64, txSerialized.length))));
+            // 4. 交易反序列化
+            Transaction txDeserialized = Transaction.deserialize(txSerialized);
+            log.info("交易反序列化完成，版本号: {}", txDeserialized.getVersion());
+
+            List<TxOutput> outputs = txDeserialized.getOutputs();
+            for (TxOutput output : outputs) {
+                log.info("输出脚本: {}", output.getScriptPubKeyWk());
+            }
+
+
+
+
+            // ========== 步骤6：测试2 - 直接替换OP_OVER（预期失败，解释原因） ==========
+            Script overLockingScript = new Script();
+            overLockingScript.addOpCode(Script.OP_OVER); // 直接替换DUP为OVER
+            overLockingScript.addOpCode(Script.OP_HASH160);
+            overLockingScript.addData(pubKeyHash);
+            overLockingScript.addOpCode(Script.OP_EQUALVERIFY);
+            overLockingScript.addOpCode(Script.OP_CHECKSIG);
+            log.info("\n直接替换OP_OVER的锁定脚本: {}", overLockingScript.toString());
+
+            ScriptExecutor executor2 = new ScriptExecutor();
+            Script combinedOver = combineScripts(unlockingScript, overLockingScript);
+            boolean overResult = executor2.execute(combinedOver, testTx, 0);
+            log.info("直接替换OP_OVER脚本验证结果: {} (预期: false)", overResult);
+
+            // 调试：打印OP_OVER执行后的栈状态，明确失败原因
+            log.info("OP_OVER脚本执行后栈大小: {}", executor2.getStack().size());
+            if (executor2.getStack().size() >= 4) {
+                byte[] hashFromOver = executor2.getStack().get(2); // OP_OVER复制的是签名，哈希后的值
+                log.info("OP_OVER复制的元素哈希值: {}", bytesToHex(hashFromOver));
+                log.info("目标公钥哈希值: {}", bytesToHex(pubKeyHash));
+                log.info("哈希对比结果: {}", Arrays.equals(hashFromOver, pubKeyHash));
+            }
+
+            // ========== 步骤7：测试3 - 修正后的OP_OVER脚本（先调整栈顺序，预期成功） ==========
+            // 修复思路：先交换栈中签名和公钥的顺序，让公钥成为第二个元素
+            Script fixedOverLockingScript = new Script();
+            fixedOverLockingScript.addOpCode(Script.OP_SWAP); // 交换栈顶两个元素：[公钥, 签名]
+            fixedOverLockingScript.addOpCode(Script.OP_OVER); // 复制第二个元素（公钥）到栈顶：[公钥, 签名, 公钥]
+            fixedOverLockingScript.addOpCode(Script.OP_HASH160);
+            fixedOverLockingScript.addData(pubKeyHash);
+            fixedOverLockingScript.addOpCode(Script.OP_EQUALVERIFY);
+            fixedOverLockingScript.addOpCode(Script.OP_SWAP); // 恢复栈顺序：[签名, 公钥]
+            fixedOverLockingScript.addOpCode(Script.OP_CHECKSIG);
+            log.info("\n修正后的OP_OVER锁定脚本: {}", fixedOverLockingScript.toString());
+
+            ScriptExecutor executor3 = new ScriptExecutor();
+            Script combinedFixedOver = combineScripts(unlockingScript, fixedOverLockingScript);
+            boolean fixedOverResult = executor3.execute(combinedFixedOver, testTx, 0);
+            log.info("修正后的OP_OVER脚本验证结果: {} (预期: true)", fixedOverResult);
+
+            // ========== 步骤8：栈操作原理对比 ==========
+            log.info("\n===== 核心原理对比 =====");
+            log.info("1. 解锁脚本执行后栈状态: [签名, 公钥]");
+            log.info("2. OP_DUP: 复制栈顶（公钥）→ [签名, 公钥, 公钥] → 哈希后与目标一致");
+            log.info("3. 直接OP_OVER: 复制第二个元素（签名）→ [签名, 公钥, 签名] → 哈希后与目标不一致 → 验证失败");
+            log.info("4. 修正后OP_OVER: OP_SWAP→[公钥, 签名] → OP_OVER→[公钥, 签名, 公钥] → 哈希后一致 → 验证成功");
+
+        } catch (Exception e) {
+            log.error("P2PKH测试过程出错: ", e);
+        }
+    }
+
+
+
     // ========== 新增main方法 ==========
     public static void test1() {
         try {
