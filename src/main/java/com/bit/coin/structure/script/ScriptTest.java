@@ -940,4 +940,29 @@ public class ScriptTest {
         copy.setUtxoMap(new HashMap<>(original.getUtxoMap()));
         return copy;
     }
+
+
+    //{
+    //    "version": 1,
+    //    "lockTime": 0,
+    //    "inputs": [
+    //        {
+    //            "txId": "3d41ded755686020e0798e7380cb27cf9fc66c2728366ce9bbab10dca74e7f87",
+    //            "index": 0,
+    //            "scriptSig": "c4b304aa374747e1684f7d67adfc17ca6c98bea45f43616bbbad3b9d6f88165938f6796801a0393eefeb00aeb871f5c326ee460d242950f8ca7be49829af770e0130641fd84c1e33c880dd96abfb3b83b93b8385d55a1d1636e2cca13c5561c5db"
+    //        }
+    //    ],
+    //    "outputs": [
+    //        {
+    //            "value": 1200000000,
+    //            "scriptPubKey": "a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"
+    //        },
+    //        {
+    //            "value": 3799990000,
+    //            "scriptPubKey": "76934d8111b97796af8d22443628399ebb612124"
+    //        }
+    //    ]
+    //}
+
+
 }

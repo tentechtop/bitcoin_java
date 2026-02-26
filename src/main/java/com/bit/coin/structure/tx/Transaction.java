@@ -152,6 +152,8 @@ public class Transaction {
                 byte[] signature = input.getSignature();
                 byte[] publicKey = input.getPublicKey();
 
+                log.info("解锁脚本{}",bytesToHex(input.getScriptSig()));
+
                 // 从引用的UTXO中获取锁定脚本
                 byte[] scriptPubKey = referencedUtxo.getScript();
                 byte signatureType = input.getSignatureType();

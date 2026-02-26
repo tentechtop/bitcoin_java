@@ -46,6 +46,8 @@ public class TransferDTO {
             input.setTxId(hexToBytes(inputDTO.getTxId()));
             input.setIndex(inputDTO.getIndex());
             input.setScriptSig(hexToBytes(inputDTO.getScriptSig()));
+            //序列号
+            input.setSequence(inputDTO.getSequence());
             txInputs.add(input);
         }
         transaction.setInputs(txInputs);
