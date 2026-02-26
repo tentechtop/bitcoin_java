@@ -3,8 +3,6 @@ package com.bit.coin.structure.script;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
-import static com.bit.coin.utils.SerializeUtils.bytesToHex;
-import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 /**
  * 地址抽象层
@@ -13,6 +11,7 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 @Slf4j
 @Data
 public class Address {
+
     private ScriptType scriptType;
     private byte[] addressBytes;  // 解析出的统一地址(20或32字节)
     private byte[] fullScript;    // 完整的scriptPubKey(用于验证)
@@ -25,6 +24,7 @@ public class Address {
         this.addressBytes = addressBytes;
         this.fullScript = fullScript;
     }
+
 
 
 
