@@ -5,8 +5,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.Arrays;
 
-import static com.bit.coin.structure.script.Address.hexToBytes;
+
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 /**
  * 地址生成器
@@ -463,6 +464,10 @@ public class AddressGenerator {
         System.out.println("\n===========================================");
         System.out.println("测试完成!");
         System.out.println("===========================================");
+
+
+        Address add1 = Address.parseFromString("bc1qq54l3rgwtk8g20pqmtvwrwnaugm6zlrzkydvwgm");
+        log.info("地址解析类型{}",add1.getScriptType());
     }
 
     /**

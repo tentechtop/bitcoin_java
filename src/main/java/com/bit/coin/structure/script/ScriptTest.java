@@ -79,6 +79,8 @@ public class ScriptTest {
         testNumericOperations();
 
         testTimeLockOperations();
+
+        testBech32Address();  // 新增Bech32地址测试
     }
 
     //OP_DUP OP_HASH160 与 OP_OVER OP_HASH160
@@ -1081,6 +1083,45 @@ public class ScriptTest {
             boolean result8 = executor8.execute(csvTimeValidScript, tx8, 0);
             log.info("CSV合法场景（时间戳） - 结果: {} | 预期: true", result8, true);
         }
+    }
+
+    /**
+     * 测试Bech32地址解析
+     * bc1qq54l3rgwtk8g20pqmtvwrwnaugm6zlrzkydvwgm 是一个Bech32编码的比特币地址
+     */
+    private static void testBech32Address() {
+        log.info("\n===== Bech32地址解析测试 =====");
+
+        String bech32Address = "bc1qq54l3rgwtk8g20pqmtvwrwnaugm6zlrzkydvwgm";
+        log.info("测试地址: {}", bech32Address);
+
+        // 1. 尝试用当前方法解析
+        Address address = Address.parseFromString(bech32Address);
+        if (address == null) {
+            log.info("❌ Address.parseFromString 解析失败");
+        } else {
+            log.info("✅ Address.parseFromString 解析成功");
+            log.info("地址类型: {}", address.getScriptType());
+            log.info("地址哈希: {}", address.toHex());
+        }
+
+        // 2. 测试Base58解码
+        try {
+            byte[] base58Decoded = org.bitcoinj.core.Base58.decode(bech32Address);
+            log.info("Base58解码结果长度: {}", base58Decoded != null ? base58Decoded.length : 0);
+            log.info("Base58解码结果: {}", base58Decoded != null ? bytesToHex(base58Decoded) : "null");
+        } catch (Exception e) {
+            log.info("❌ Base58解码失败: {}", e.getMessage());
+        }
+
+        // 3. 分析问题
+        log.info("\n===== 问题分析 =====");
+        log.info("bc1q... 是Bech32编码格式（SegWit地址）");
+        log.info("当前parseFromString方法只支持：");
+        log.info("  - 16进制字符串的公钥哈希");
+        log.info("  - 16进制字符串的完整scriptPubKey");
+        log.info("  - Base58编码的比特币地址（P2PKH/P2SH）");
+        log.info("不支持Bech32编码（P2WPKH/P2WSH）");
     }
 
     /**

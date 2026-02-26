@@ -31,6 +31,11 @@ public class ScriptParser {
         }
 
         try {
+            // 兼容：如果直接是20字节的公钥哈希，解析为P2PKH
+            if (scriptPubKey.length == 20) {
+                return ScriptType.P2PKH;
+            }
+
             // P2PKH: OP_DUP OP_HASH160 <20字节hash> OP_EQUALVERIFY OP_CHECKSIG
             // 格式: 76 A9 14 <20字节> 88 AC (总共25字节)
             if (scriptPubKey.length == 25
@@ -106,7 +111,11 @@ public class ScriptParser {
         try {
             switch (type) {
                 case P2PKH:
-                    // P2PKH: 返回第3-22字节的20字节hash
+                    // 兼容：如果直接是20字节的公钥哈希，直接返回
+                    if (scriptPubKey.length == 20) {
+                        return scriptPubKey.clone();
+                    }
+                    // P2PKH标准脚本: 返回第3-22字节的20字节hash
                     if (scriptPubKey.length >= 23) {
                         return Arrays.copyOfRange(scriptPubKey, 3, 23);
                     }

@@ -13,6 +13,7 @@ import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockBody;
 import com.bit.coin.structure.block.BlockHeader;
+import com.bit.coin.structure.script.Address;
 import com.bit.coin.structure.tx.*;
 import com.bit.coin.txpool.TxPool;
 import com.bit.coin.utils.Sha;
@@ -2083,6 +2084,12 @@ public class BlockChainServiceImpl implements BlockChainService{
             // 地址转换：Base58解码 -> 双重哈希得到前缀
             byte[] pubkey = Base58.decode(address);
             byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
+
+            Address address1 = Address.parseFromString(address);
+            log.info("地址类型{}", address1.getScriptType());
+
+            byte[] fullScript = address1.getFullScript();
+
 
             // 处理lastKey：空值转为null，非空则十六进制转字节数组
             byte[] lastKeyBytes = (lastKey == null || lastKey.isEmpty()) ? null : hexToBytes(lastKey);
