@@ -22,30 +22,13 @@ public class AddressGenerator {
     // Base58字符集
     private static final String BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-    /**
-     * 从32字节原始公钥生成压缩公钥(33字节)
-     * 格式: 0x02(偶y) 或 0x03(奇y) + 32字节x坐标
-     */
-    public static byte[] toCompressedPublicKey(byte[] rawPublicKey) {
-        if (rawPublicKey == null || rawPublicKey.length != 32) {
-            throw new IllegalArgumentException("公钥必须是32字节");
-        }
-
-        byte[] compressed = new byte[33];
-        // 使用0x02作为前缀(实际应用中应根据y坐标奇偶性选择0x02或0x03)
-        // 这里简化处理,统一使用0x02
-        compressed[0] = 0x02;
-        System.arraycopy(rawPublicKey, 0, compressed, 1, 32);
-        return compressed;
-    }
 
     /**
      * 生成P2PKH地址 (Pay to Public Key Hash)
      * 格式: Base58Check(0x00 + RIPEMD160(SHA256(压缩公钥)))
      */
     public static String generateP2PKHAddress(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
 
         // 添加版本字节(主网P2PKH为0x00)
         byte[] versionedHash = new byte[21];
@@ -61,13 +44,11 @@ public class AddressGenerator {
      * 注意:这里简化处理,使用标准P2PKH赎回脚本
      */
     public static String generateP2SHAddress(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-
         // 构建标准P2PKH赎回脚本: <压缩公钥> OP_CHECKSIG
         // 格式: <33字节> <AC>
-        byte[] redeemScript = new byte[compressedPubKey.length + 1];
-        System.arraycopy(compressedPubKey, 0, redeemScript, 0, compressedPubKey.length);
-        redeemScript[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+        byte[] redeemScript = new byte[rawPublicKey.length + 1];
+        System.arraycopy(rawPublicKey, 0, redeemScript, 0, rawPublicKey.length);
+        redeemScript[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
 
         // 计算赎回脚本的哈希
         byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(redeemScript));
@@ -85,8 +66,7 @@ public class AddressGenerator {
      * 格式: Bech32(bc1q + RIPEMD160(SHA256(压缩公钥)))
      */
     public static String generateP2WPKHAddress(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
 
         return bech32Encode("bc", 0, hash);
     }
@@ -96,12 +76,10 @@ public class AddressGenerator {
      * 格式: Bech32(bc1q + SHA256(赎回脚本))
      */
     public static String generateP2WSHAddress(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-
         // 构建赎回脚本: <压缩公钥> OP_CHECKSIG
-        byte[] redeemScript = new byte[compressedPubKey.length + 1];
-        System.arraycopy(compressedPubKey, 0, redeemScript, 0, compressedPubKey.length);
-        redeemScript[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+        byte[] redeemScript = new byte[rawPublicKey.length + 1];
+        System.arraycopy(rawPublicKey, 0, redeemScript, 0, rawPublicKey.length);
+        redeemScript[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
 
         // 计算SHA256哈希(P2WSH使用SHA256而非RIPEMD160)
         byte[] hash = Sha.applySHA256(redeemScript);
@@ -128,10 +106,9 @@ public class AddressGenerator {
      * 格式: <公钥> OP_CHECKSIG
      */
     public static byte[] generateP2PKScript(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-        byte[] script = new byte[compressedPubKey.length + 1];
-        System.arraycopy(compressedPubKey, 0, script, 0, compressedPubKey.length);
-        script[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+        byte[] script = new byte[rawPublicKey.length + 1];
+        System.arraycopy(rawPublicKey, 0, script, 0, rawPublicKey.length);
+        script[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
         return script;
     }
 
@@ -140,8 +117,7 @@ public class AddressGenerator {
      * 格式: OP_DUP OP_HASH160 <20字节hash> OP_EQUALVERIFY OP_CHECKSIG
      */
     public static byte[] generateP2PKHScript(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
 
         byte[] script = new byte[25];
         script[0] = (byte) ScriptParser.OP_DUP;
@@ -158,12 +134,10 @@ public class AddressGenerator {
      * 格式: OP_HASH160 <20字节hash> OP_EQUAL
      */
     public static byte[] generateP2SHScript(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-
         // 构建标准P2PKH赎回脚本: <压缩公钥> OP_CHECKSIG
-        byte[] redeemScript = new byte[compressedPubKey.length + 1];
-        System.arraycopy(compressedPubKey, 0, redeemScript, 0, compressedPubKey.length);
-        redeemScript[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+        byte[] redeemScript = new byte[rawPublicKey.length + 1];
+        System.arraycopy(rawPublicKey, 0, redeemScript, 0, rawPublicKey.length);
+        redeemScript[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
 
         byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(redeemScript));
 
@@ -180,8 +154,7 @@ public class AddressGenerator {
      * 格式: OP_0 <20字节>
      */
     public static byte[] generateP2WPKHScript(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+        byte[] hash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
 
         byte[] script = new byte[22];
         script[0] = (byte) ScriptParser.OP_0;
@@ -195,12 +168,10 @@ public class AddressGenerator {
      * 格式: OP_0 <32字节>
      */
     public static byte[] generateP2WSHScript(byte[] rawPublicKey) {
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
-
         // 构建赎回脚本: <压缩公钥> OP_CHECKSIG
-        byte[] redeemScript = new byte[compressedPubKey.length + 1];
-        System.arraycopy(compressedPubKey, 0, redeemScript, 0, compressedPubKey.length);
-        redeemScript[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+        byte[] redeemScript = new byte[rawPublicKey.length + 1];
+        System.arraycopy(rawPublicKey, 0, redeemScript, 0, rawPublicKey.length);
+        redeemScript[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
 
         byte[] hash = Sha.applySHA256(redeemScript);
 
@@ -510,25 +481,24 @@ public class AddressGenerator {
 
         // 根据类型计算期望的哈希值
         byte[] expectedHash;
-        byte[] compressedPubKey = toCompressedPublicKey(rawPublicKey);
 
         switch (expectedType) {
             case P2PKH:
-                expectedHash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+                expectedHash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
                 break;
             case P2SH:
-                byte[] redeemScript = new byte[compressedPubKey.length + 1];
-                System.arraycopy(compressedPubKey, 0, redeemScript, 0, compressedPubKey.length);
-                redeemScript[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+                byte[] redeemScript = new byte[rawPublicKey.length + 1];
+                System.arraycopy(rawPublicKey, 0, redeemScript, 0, rawPublicKey.length);
+                redeemScript[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
                 expectedHash = Sha.applyRIPEMD160(Sha.applySHA256(redeemScript));
                 break;
             case P2WPKH:
-                expectedHash = Sha.applyRIPEMD160(Sha.applySHA256(compressedPubKey));
+                expectedHash = Sha.applyRIPEMD160(Sha.applySHA256(rawPublicKey));
                 break;
             case P2WSH:
-                byte[] redeemScript2 = new byte[compressedPubKey.length + 1];
-                System.arraycopy(compressedPubKey, 0, redeemScript2, 0, compressedPubKey.length);
-                redeemScript2[compressedPubKey.length] = (byte) ScriptParser.OP_CHECKSIG;
+                byte[] redeemScript2 = new byte[rawPublicKey.length + 1];
+                System.arraycopy(rawPublicKey, 0, redeemScript2, 0, rawPublicKey.length);
+                redeemScript2[rawPublicKey.length] = (byte) ScriptParser.OP_CHECKSIG;
                 expectedHash = Sha.applySHA256(redeemScript2);
                 break;
             case P2TR:
