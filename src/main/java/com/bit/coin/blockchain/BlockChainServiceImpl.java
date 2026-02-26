@@ -2085,12 +2085,6 @@ public class BlockChainServiceImpl implements BlockChainService{
             byte[] pubkey = Base58.decode(address);
             byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
 
-            Address address1 = Address.parseFromString(address);
-            log.info("地址类型{}", address1.getScriptType());
-
-            byte[] fullScript = address1.getFullScript();
-
-
             // 处理lastKey：空值转为null，非空则十六进制转字节数组
             byte[] lastKeyBytes = (lastKey == null || lastKey.isEmpty()) ? null : hexToBytes(lastKey);
      /*       //lastKeyBytes在前面拼接20字节的addr 重点

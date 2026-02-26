@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.Arrays;
 
+import static com.bit.coin.structure.script.Script.*;
+
 /**
  * 脚本解析器
  * 用于解析比特币脚本,提取地址信息
@@ -12,14 +14,7 @@ import java.util.Arrays;
 @Slf4j
 public class ScriptParser {
 
-    // 比特币操作码常量
-    public static final int OP_DUP = 0x76;
-    public static final int OP_HASH160 = 0xA9;
-    public static final int OP_EQUAL = 0x87;
-    public static final int OP_EQUALVERIFY = 0x88;
-    public static final int OP_CHECKSIG = 0xAC;
-    public static final int OP_0 = 0x00;
-    public static final int OP_1 = 0x51;
+
 
     /**
      * 检测脚本类型

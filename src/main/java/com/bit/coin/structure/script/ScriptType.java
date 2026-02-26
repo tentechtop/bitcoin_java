@@ -10,7 +10,7 @@ public enum ScriptType {
     P2WPKH(0x02, "Witness v0 Key Hash", 20),             // 20字节
     P2WSH(0x03, "Witness v0 Script Hash", 32),           // 32字节
     P2TR(0x04, "Taproot", 32),                           // 32字节
-    P2PK(0x05, "Pay to Public Key", -1),                // 33或65字节(不固定)
+    P2PK(0x05, "Pay to Public Key", -1),                 // 32字节
     UNKNOWN(0xFF, "Unknown Script", 0);
 
     private final int code;
