@@ -383,10 +383,18 @@ public class MiningServiceImpl {
             cuMemcpyHtoD(dHeader, Pointer.to(headerData), headerData.length);
 
             // 2. 设置挖矿参数（nonce范围）
-            int baseBlockSize = 256;// 从256降低，减少并行线程数
+/*            int baseBlockSize = 256;
             int startNonce = 0;
             int endNonce = Integer.MAX_VALUE;
-            int actualGridSize =1024;
+            int actualGridSize =1024;*/
+
+            int baseBlockSize = 128;// 从256降低，减少并行线程数
+            int startNonce = 0;
+            int endNonce = Integer.MAX_VALUE;
+            int actualGridSize =128;
+
+
+
 
             // 3. 配置内核参数（使用静态加载的kernelFunction）
             Pointer kernelParams = Pointer.to(

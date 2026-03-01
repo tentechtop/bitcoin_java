@@ -2,6 +2,7 @@ package com.bit.coin.txpool;
 
 import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
 
 import java.util.List;
@@ -54,5 +55,14 @@ public interface TxPool {
 
     // 区块上链失败，回退交易到交易池（将交易从打包状态释放回可用状态）
     void onBlockFailed(Transaction[] failedTxs);
+
+
+    //交易池中的已经使用的UTXO
+    List<UTXO> getUTXOInPool();
+
+
+    //广播交易池中的交易
+    void broadcastTxPool();
+
 
 }

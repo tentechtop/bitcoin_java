@@ -103,6 +103,7 @@ public class Script {
      */
     public static Script deserialize(byte[] bytes, int offset, int length) throws IOException {
         //如果固定只有97长度 先尝试翻译成P2PKH解锁脚本
+        //如果是创世 输入
         if (length == 97) {
             Script script = new Script();
             ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
@@ -164,8 +165,25 @@ public class Script {
             return standardLockingScript;
         }
 
+
         //如果长度是16 则是coinbase的锁定脚本
         if (length == 16) {
+            Script coinbaseScript = new Script();
+            // 复制16字节的coinbase数据（避免原数组引用被修改）
+            byte[] coinbaseData = new byte[16];
+            System.arraycopy(bytes, offset, coinbaseData, 0, 16);
+
+            // Coinbase锁定脚本标准结构：OP_PUSHDATA1 + 0x10(16) + 16字节数据
+            // 1. 添加OP_PUSHDATA1操作码（用于推送16字节数据，因为16>75不适用直接长度前缀）
+            coinbaseScript.addOpCode(OP_PUSHDATA1);
+            // 2. 添加数据长度标识（16字节）
+            coinbaseScript.addData(new byte[]{(byte) 0x10});
+            // 3. 添加16字节的coinbase核心数据
+            coinbaseScript.addData(coinbaseData);
+            return coinbaseScript;
+        }
+
+        if (length == 69){
             Script coinbaseScript = new Script();
             // 复制16字节的coinbase数据（避免原数组引用被修改）
             byte[] coinbaseData = new byte[16];

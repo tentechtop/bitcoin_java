@@ -230,7 +230,8 @@ public class UTXOCacheImpl implements UTXOCache {
             long status1 = 0L;
             status1 = setLifecycleStatus(status1, CONFIRMED_UNSPENT);
             utxo.setStatus(status1);
-            removeUTXOKeyFromAddress(utxo);
+            // 注意：这里不需要调用 removeUTXOKeyFromAddress，
+            // 因为 addPendingTx 时并没有从地址索引中移除输入的UTXO
         }
         for (int i = 0; i < outputs.size(); i++) {
             TxOutput txOutput = outputs.get(i);

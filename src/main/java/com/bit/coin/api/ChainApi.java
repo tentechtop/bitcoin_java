@@ -285,6 +285,13 @@ public class ChainApi {
     }
 
 
+    //广播交易池中的交易
+    @GetMapping("/broadcastTxPool")
+    public void broadcastTxPool() {
+        txPool.broadcastTxPool();
+    }
+
+
     //获取全部的孤儿区块
     @GetMapping("/getOrphanBlocks")
     public List<Block> getOrphanBlocks() {

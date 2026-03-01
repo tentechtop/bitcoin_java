@@ -21,10 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static com.bit.coin.structure.tx.UTXOStatusResolver.*;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -96,9 +94,14 @@ public class TxApi {
             // 3. 获取发送方的UTXO
             assert bytes != null;
             String senderAddress = Base58.encode(bytes);
-            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT | COINBASE_MATURED  );
+            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT | COINBASE_MATURED   );
 
             List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
+            //筛选掉交易池中锁定的UTXO
+            List<UTXO> utxoInPool = txPool.getUTXOInPool();
+            //utxos要去除utxoInPool 判断utxo的key是否相等
+            utxos = filterUtxoExcludePool(utxos, utxoInPool);
+
             log.info("可用余额{}",utxos.size());
             long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额
 
@@ -414,6 +417,68 @@ public class TxApi {
             return Result.error(e.getMessage());
         }
     }
+
+
+
+    /**
+     * 从原始UTXO列表中移除交易池锁定的UTXO（使用Stream API，简洁高效）
+     * @param originalUtxos 原始UTXO列表
+     * @param utxoInPool 交易池锁定的UTXO列表
+     * @return 过滤后的UTXO列表
+     */
+    public static List<UTXO> filterUtxoExcludePool(List<UTXO> originalUtxos, List<UTXO> utxoInPool) {
+        // 空值校验，避免空指针
+        if (originalUtxos == null || originalUtxos.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (utxoInPool == null || utxoInPool.isEmpty()) {
+            return new ArrayList<>(originalUtxos);
+        }
+
+        // 1. 提取交易池中UTXO的key字符串，存入Set（O(1)查找效率）
+        Set<String> poolUtxoKeySet = utxoInPool.stream()
+                .map(UTXO::getKeyStr)  // 使用UTXO自带的getKeyStr()方法获取key字符串
+                .collect(Collectors.toSet());
+
+        // 2. 过滤原始列表，保留不在交易池中的UTXO
+        return originalUtxos.stream()
+                .filter(utxo -> !poolUtxoKeySet.contains(utxo.getKeyStr()))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 从原始UTXO列表中移除交易池锁定的UTXO（传统循环方式，适合新手理解）
+     * @param originalUtxos 原始UTXO列表
+     * @param utxoInPool 交易池锁定的UTXO列表
+     * @return 过滤后的UTXO列表
+     */
+    public static List<UTXO> filterUtxoExcludePoolByLoop(List<UTXO> originalUtxos, List<UTXO> utxoInPool) {
+        // 空值校验
+        List<UTXO> result = new ArrayList<>();
+        if (originalUtxos == null || originalUtxos.isEmpty()) {
+            return result;
+        }
+        if (utxoInPool == null || utxoInPool.isEmpty()) {
+            result.addAll(originalUtxos);
+            return result;
+        }
+
+        // 1. 构建交易池UTXO的key集合
+        Set<String> poolUtxoKeySet = new HashSet<>();
+        for (UTXO utxo : utxoInPool) {
+            poolUtxoKeySet.add(utxo.getKeyStr());
+        }
+
+        // 2. 遍历原始列表，过滤掉交易池中的UTXO
+        for (UTXO utxo : originalUtxos) {
+            if (!poolUtxoKeySet.contains(utxo.getKeyStr())) {
+                result.add(utxo);
+            }
+        }
+
+        return result;
+    }
+
 
 
 }

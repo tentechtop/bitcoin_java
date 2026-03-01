@@ -47,7 +47,7 @@ public class TxOutput {
     public WeakReference<Script> getScriptPubKeyWk() {
         if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
             try {
-                log.info("打印公钥{} 长度{}",bytesToHex(scriptPubKey),scriptPubKey.length);
+                log.debug("打印公钥{} 长度{}",bytesToHex(scriptPubKey),scriptPubKey.length);
                 Script script = Script.deserialize(scriptPubKey);
                 scriptPubKeyWk = new WeakReference<>(script);
             } catch (IOException e) {

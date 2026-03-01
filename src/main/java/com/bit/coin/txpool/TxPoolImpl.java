@@ -2,6 +2,7 @@ package com.bit.coin.txpool;
 
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
+import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
@@ -14,6 +15,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -195,6 +200,14 @@ public class TxPoolImpl implements TxPool{
                 return false;
             }
 
+            //是否已经上链
+            byte[] blockIndexBytes = dataBase.get(TableEnum.TX_TO_BLOCK, tx.getTxId());
+            if (blockIndexBytes != null) {
+                //已经上链
+                log.warn("交易已上链，拒绝添加新交易");
+                return false;
+            }
+
             // 4. 初始化交易状态为PENDING（待处理）
             long status = 0L;
             status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.PENDING);
@@ -236,7 +249,11 @@ public class TxPoolImpl implements TxPool{
 
             log.info("交易添加成功：txId={}, fee={}, status={}",
                     txIdStr, fee, TransactionStatusResolver.toString(status));
-            utxoCache.addPendingTx(tx);
+
+            // 注意：不在这里调用 addPendingTx 修改UTXO状态
+            // UTXO状态只有在区块确认后（onBlockConfirmed）才修改
+            // 这样可以避免挖矿失败时的回退逻辑
+
             List<String> utxoList = tx.getSpendingUTXOKeyList();
             spendingSet.addAll(utxoList);
             List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
@@ -356,11 +373,11 @@ public class TxPoolImpl implements TxPool{
                 buildAddressMapping(tx, txId);
                 rollbackActions.add(() -> removeAddressMapping(tx));
 
-                // 3.5 更新UTXO缓存，并记录回滚操作
-                utxoCache.addPendingTx(tx);
-                rollbackActions.add(() -> utxoCache.revokePendingTx(tx));
+                // 3.5 更新spendingSet和processingSet，并记录回滚操作
+                // 注意：不在这里调用 addPendingTx 修改UTXO状态
+                // UTXO状态只有在区块确认后（onBlockConfirmed）才修改
+                // 这样可以避免挖矿失败时的回退逻辑
 
-                // 3.6 更新spendingSet和processingSet，并记录回滚操作
                 List<String> utxoList = tx.getSpendingUTXOKeyList();
                 spendingSet.addAll(utxoList);
                 rollbackActions.add(() -> utxoList.forEach(spendingSet::remove));
@@ -369,7 +386,7 @@ public class TxPoolImpl implements TxPool{
                 processingSet.addAll(pendingList);
                 rollbackActions.add(() -> pendingList.forEach(processingSet::remove));
 
-                // 3.7 广播交易
+                // 3.6 广播交易
                 routingTable.BroadcastResource(1, txId);
 
                 log.info("批量添加交易成功（单条）：txId={}, fee={}, status={}",
@@ -592,7 +609,6 @@ public class TxPoolImpl implements TxPool{
         for (Transaction tx : selectedTxs) {
             String txIdStr = bytesToHex(tx.getTxId());
             Transaction memTx = mempool.get(txIdStr);
-            Map<String, UTXO> utxoMap = tx.getUtxoMap();
             if (memTx != null) {
                 packingTxs.put(txIdStr, memTx);
 
@@ -836,7 +852,6 @@ public class TxPoolImpl implements TxPool{
         if (failedTxs == null || failedTxs.length == 0) {
             return;
         }
-        int i = 0;
 
         try {
             for (Transaction tx : failedTxs) {
@@ -855,22 +870,80 @@ public class TxPoolImpl implements TxPool{
                 // 从打包状态移除，交易仍留在mempool中（可重新参与打包）
                 Transaction removed = packingTxs.remove(txIdStr);
                 if (removed != null) {
-                    log.debug("区块上链失败，回退交易到交易池：{}，状态={}",
+                    log.debug("区块上链失败，移除打包标记：{}，状态={}",
                             txIdStr, TransactionStatusResolver.toString(status));
                 }
-                utxoCache.revokePendingTx(tx);
-                List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
-                //去除
-                spendingUTXOKeyList.forEach(spendingSet::remove);
-                List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
-                pendingConfirmationOfReceipt.forEach(processingSet::remove);
 
-                i++;
+                // 注意：挖矿失败时不调用 revokePendingTx，也不修改UTXO状态
+                // 因为区块没有上链，UTXO状态没有变化
+                // 交易仍在mempool中，下次挖矿可以继续使用
             }
-            log.info("区块上链失败，已回退 {} 笔交易到交易池", i);
+            log.info("区块上链失败，已移除 {} 笔交易的打包标记", failedTxs.length);
         } catch (Exception e) {
             log.error("处理区块上链失败异常", e);
         }
+    }
+
+    /**
+     * 获取交易池中已经使用的UTXO
+     * @return
+     */
+// 优化版：使用并行流提升大交易池场景下的效率
+    @Override
+    public List<UTXO> getUTXOInPool() {
+        try {
+            return mempool.values().stream()
+                    .parallel() // 并行处理
+                    .filter(tx -> tx != null && !tx.isCoinbase())
+                    .flatMap(tx -> tx.getInputs().stream())
+                    .filter(input -> input != null)
+                    .map(input -> {
+                        byte[] key = UTXO.getKey(input.getTxId(), input.getIndex());
+                        return utxoCache.getUTXO(key);
+                    })
+                    .filter(utxo -> utxo != null && utxo.isSpendable())
+                    .distinct() // 去重
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("获取交易池中使用的UTXO失败", e);
+            return Collections.emptyList();
+        }
+    }
+
+    @Override
+    public void broadcastTxPool() {
+        // 先过滤出需要广播的交易
+        List<Transaction> txList = new ArrayList<>(mempool.values()).stream()
+                .filter(tx -> tx != null && !tx.isCoinbase())
+                .collect(Collectors.toList());
+
+        if (txList.isEmpty()) {
+            return;
+        }
+
+        // 使用 ScheduledExecutorService 实现精准的 10ms 间隔广播
+        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        AtomicInteger index = new AtomicInteger(0);
+
+        executor.scheduleAtFixedRate(() -> {
+            int i = index.getAndIncrement();
+            // 所有交易广播完成后关闭线程池
+            if (i >= txList.size()) {
+                executor.shutdown();
+                return;
+            }
+
+            Transaction tx = txList.get(i);
+            try {
+                routingTable.BroadcastResource(1, tx.getTxId());
+            } catch (Exception e) {
+                log.error("广播交易 {} 失败", bytesToHex(tx.getTxId()), e);
+            }
+        }, 0, 10, TimeUnit.MILLISECONDS);
+
+        // 优雅关闭（可选）
+        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
     }
 
     /**

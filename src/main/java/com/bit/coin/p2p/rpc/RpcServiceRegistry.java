@@ -31,7 +31,7 @@ public class RpcServiceRegistry {
      */
     public void batchRegisterServices(Map<Class<?>, Object> serviceMap) {
         if (CollectionUtils.isEmpty(serviceMap)) {
-            log.warn("没有需要注册的RPC服务");
+            log.info("没有需要注册的RPC服务");
             return;
         }
         serviceMap.forEach((interfaceClass, implInstance) -> {

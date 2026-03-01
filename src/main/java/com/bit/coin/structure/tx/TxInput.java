@@ -80,7 +80,7 @@ public class TxInput {
     public WeakReference<Script> getScriptSigWk() {
         if (scriptSigWk == null || scriptSigWk.get() == null) {
             try {
-                log.info("打印签名{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
+                log.debug("打印签名{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
                 Script script = Script.deserialize(scriptSig);
                 scriptSigWk = new WeakReference<>(script);
             } catch (IOException e) {

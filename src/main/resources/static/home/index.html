@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Blockchain Explorer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .api-section {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::before {
+            content: "⚡";
+        }
+
+        .api-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        .api-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+
+        .api-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+            border-color: #667eea;
+        }
+
+        .api-name {
+            font-weight: bold;
+            font-size: 1.1rem;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .api-method {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .api-method.get {
+            background: #48bb78;
+            color: white;
+        }
+
+        .api-method.post {
+            background: #ed8936;
+            color: white;
+        }
+
+        .api-path {
+            font-family: 'Courier New', monospace;
+            color: #667eea;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+
+        .input-group {
+            margin-top: 10px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #4a5568;
+            margin-bottom: 5px;
+        }
+
+        .input-group input, .input-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group input:focus, .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .input-group textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 10px;
+            width: 100%;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .result-area {
+            margin-top: 15px;
+            background: #2d3748;
+            color: #a0aec0;
+            padding: 15px;
+            border-radius: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            display: none;
+        }
+
+        .result-area.show {
+            display: block;
+        }
+
+        .result-area pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-bar {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 10px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .status-bar.success {
+            background: #48bb78;
+            display: block;
+        }
+
+        .status-bar.error {
+            background: #f56565;
+            display: block;
+        }
+
+        .status-bar.info {
+            background: #4299e1;
+            display: block;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            border-radius: 25px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .tab:hover, .tab.active {
+            background: white;
+            color: #667eea;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .api-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .api-section {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="container">
+        <div class="header">
+            <h1>₿ Bitcoin Blockchain Explorer</h1>
+            <p>区块链浏览器 - 完整的链数据查询与管理平台</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showSection('blocks')">区块查询</button>
+            <button class="tab" onclick="showSection('transactions')">交易查询</button>
+            <button class="tab" onclick="showSection('address')">地址查询</button>
+            <button class="tab" onclick="showSection('mining')">挖矿管理</button>
+            <button class="tab" onclick="showSection('network')">网络管理</button>
+            <button class="tab" onclick="showSection('sync')">区块同步</button>
+        </div>
+
+        <!-- 区块查询 -->
+        <div class="section active" id="blocks">
+            <div class="api-section">
+                <h2 class="section-title">区块查询接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">获取最新顶端区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getMainLatestBlock</div>
+                        <button class="btn" onclick="callApi('getMainLatestBlock', null, this)">查询最新区块</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">分页查询区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getBlocksByPage</div>
+                        <div class="input-group">
+                            <label>起始高度</label>
+                            <input type="number" id="startBlock" value="0">
+                        </div>
+                        <div class="input-group">
+                            <label>结束高度</label>
+                            <input type="number" id="endBlock" value="10">
+                        </div>
+                        <button class="btn" onclick="callApi('getBlocksByPage', {start: getVal('startBlock'), end: getVal('endBlock')}, this)">查询区块范围</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">根据Hash查询区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getBlockByHash</div>
+                        <div class="input-group">
+                            <label>区块Hash</label>
+                            <input type="text" id="blockHash" placeholder="输入区块哈希值">
+                        </div>
+                        <button class="btn" onclick="callApi('getBlockByHash', {hash: getVal('blockHash')}, this)">根据Hash查询</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">根据高度查询区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getBlockByHeight</div>
+                        <div class="input-group">
+                            <label>区块高度</label>
+                            <input type="number" id="blockHeight" value="0">
+                        </div>
+                        <button class="btn" onclick="callApi('getBlockByHeight', {height: getVal('blockHeight')}, this)">根据高度查询</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取区块头信息</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getBlockHeaderByHash</div>
+                        <div class="input-group">
+                            <label>区块Hash</label>
+                            <input type="text" id="headerHash" placeholder="输入区块哈希值">
+                        </div>
+                        <button class="btn" onclick="callApi('getBlockHeaderByHash', {hash: getVal('headerHash')}, this)">获取区块头</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取孤儿区块列表</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getOrphanBlocks</div>
+                        <button class="btn" onclick="callApi('getOrphanBlocks', null, this)">查询孤儿区块</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取下一个区块难度</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/calculateNextBlockDifficulty</div>
+                        <button class="btn" onclick="callApi('calculateNextBlockDifficulty', null, this)">计算难度</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 交易查询 -->
+        <div class="section" id="transactions">
+            <div class="api-section">
+                <h2 class="section-title">交易查询接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">分页查询交易</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getTransactionsByPage</div>
+                        <div class="input-group">
+                            <label>页码</label>
+                            <input type="number" id="txPageNum" value="1">
+                        </div>
+                        <div class="input-group">
+                            <label>每页数量</label>
+                            <input type="number" id="txPageSize" value="10">
+                        </div>
+                        <button class="btn" onclick="callApi('getTransactionsByPage', {pageNum: getVal('txPageNum'), pageSize: getVal('txPageSize')}, this)">分页查询交易</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">根据Hash查询交易</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getTxByHash</div>
+                        <div class="input-group">
+                            <label>交易Hash</label>
+                            <input type="text" id="txHash" placeholder="输入交易哈希值">
+                        </div>
+                        <button class="btn" onclick="callApi('getTxByHash', {hash: getVal('txHash')}, this)">根据Hash查询交易</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">根据UTXO Key查询</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getUtxo</div>
+                        <div class="input-group">
+                            <label>UTXO Key</label>
+                            <input type="text" id="utxoKey" placeholder="输入UTXO Key">
+                        </div>
+                        <button class="btn" onclick="callApi('getUtxo', {key: getVal('utxoKey')}, this)">查询UTXO</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 地址查询 -->
+        <div class="section" id="address">
+            <div class="api-section">
+                <h2 class="section-title">地址查询接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">查询地址UTXO列表</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getUTXOListByAddres</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="utxoAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getUTXOListByAddres', {address: getVal('utxoAddress')}, this)">查询UTXO列表</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询地址UTXO(缓存)</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getUTXOListByAddresInCaChe</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="utxoCacheAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getUTXOListByAddresInCaChe', {address: getVal('utxoCacheAddress')}, this)">从缓存查询UTXO</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询地址所有UTXO</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getUTXOsByAddres</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="allUtxoAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getUTXOsByAddres', {address: getVal('allUtxoAddress')}, this)">查询所有UTXO</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询UTXO及数量</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getUTXOsByAddressAndCount</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="utxoCountAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getUTXOsByAddressAndCount', {address: getVal('utxoCountAddress')}, this)">查询UTXO及数量</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询地址余额</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getBalance</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="balanceAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getBalance', {address: getVal('balanceAddress')}, this)">查询余额</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">按状态查询UTXO</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getAddressAllUTXO</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="statusAddress" placeholder="输入地址">
+                        </div>
+                        <div class="input-group">
+                            <label>状态</label>
+                            <input type="number" id="utxoStatus" placeholder="输入状态值">
+                        </div>
+                        <button class="btn" onclick="callApi('getAddressAllUTXO', {address: getVal('statusAddress'), status: getVal('utxoStatus')}, this)">按状态查询</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询地址交易列表</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getTxListByAddres</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="txListAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getTxListByAddres', {address: getVal('txListAddress')}, this)">查询交易列表</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查询交易池中的交易</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getTxListByAddresInPool</div>
+                        <div class="input-group">
+                            <label>地址</label>
+                            <input type="text" id="poolTxAddress" placeholder="输入地址">
+                        </div>
+                        <button class="btn" onclick="callApi('getTxListByAddresInPool', {address: getVal('poolTxAddress')}, this)">查询交易池</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 挖矿管理 -->
+        <div class="section" id="mining">
+            <div class="api-section">
+                <h2 class="section-title">挖矿管理接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">开始挖矿</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/startMining</div>
+                        <button class="btn" onclick="callApi('startMining', null, this)">开始挖矿</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">挖掘一个区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/mingOneBlock</div>
+                        <button class="btn" onclick="callApi('mingOneBlock', null, this)">挖掘单个区块</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">挖掘指定数量区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/mingOneBlockByCount</div>
+                        <div class="input-group">
+                            <label>区块数量</label>
+                            <input type="number" id="mineCount" value="5">
+                        </div>
+                        <button class="btn" onclick="callApi('mingOneBlockByCount', {count: getVal('mineCount')}, this)">挖掘多个区块</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 网络管理 -->
+        <div class="section" id="network">
+            <div class="api-section">
+                <h2 class="section-title">网络管理接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">获取最新区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getLatestBlcok</div>
+                        <button class="btn" onclick="callApi('getLatestBlcok', null, this)">获取最新区块</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取在线节点列表</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getConnectedPeers</div>
+                        <button class="btn" onclick="callApi('getConnectedPeers', null, this)">获取在线节点</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">从在线节点获取最新区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getLatestBlockFromOnlinePeers</div>
+                        <button class="btn" onclick="callApi('getLatestBlockFromOnlinePeers', null, this)">获取远端最新区块</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">广播区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/broadcastResource</div>
+                        <div class="input-group">
+                            <label>区块Hash</label>
+                            <input type="text" id="broadcastHash" placeholder="输入要广播的区块哈希值">
+                        </div>
+                        <button class="btn" onclick="callApi('broadcastResource', {hashHex: getVal('broadcastHash')}, this)">广播区块</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 区块同步 -->
+        <div class="section" id="sync">
+            <div class="api-section">
+                <h2 class="section-title">区块同步接口</h2>
+                <div class="api-grid">
+                    <div class="api-card">
+                        <div class="api-name">开始同步区块</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/startSync</div>
+                        <button class="btn" onclick="callApi('startSync', null, this)">开始同步</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取本地路标</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getLoclRoadMark</div>
+                        <button class="btn" onclick="callApi('getLoclRoadMark', null, this)">获取本地路标</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">获取指定高度路标</div>
+                        <div class="api-method get">GET</div>
+                        <div class="api-path">/chain/getRoadMark</div>
+                        <div class="input-group">
+                            <label>区块高度</label>
+                            <input type="number" id="roadMarkHeight" value="1000">
+                        </div>
+                        <button class="btn" onclick="callApi('getRoadMark', {height: getVal('roadMarkHeight')}, this)">获取路标</button>
+                        <div class="result-area"></div>
+                    </div>
+
+                    <div class="api-card">
+                        <div class="api-name">查找共同祖先</div>
+                        <div class="api-method post">POST</div>
+                        <div class="api-path">/chain/getCommonAncestor</div>
+                        <div class="input-group">
+                            <label>路标列表 (JSON格式)</label>
+                            <textarea id="landmarksJson" placeholder='[{"height": 100, "hash": "..."}, ...]'></textarea>
+                        </div>
+                        <button class="btn" onclick="callApiPost('getCommonAncestor', getVal('landmarksJson'), this)">查找共同祖先</button>
+                        <div class="result-area"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function getVal(id) {
+            return document.getElementById(id).value;
+        }
+
+        function showSection(sectionId) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(sectionId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function showStatus(message, type) {
+            const statusBar = document.getElementById('statusBar');
+            statusBar.textContent = message;
+            statusBar.className = `status-bar ${type}`;
+            setTimeout(() => {
+                statusBar.style.display = 'none';
+            }, 3000);
+        }
+
+        function formatResult(data) {
+            if (typeof data === 'string') {
+                return data;
+            }
+            return JSON.stringify(data, null, 2);
+        }
+
+        async function callApi(apiName, params, btn) {
+            const resultArea = btn.nextElementSibling;
+            const originalText = btn.innerHTML;
+
+            try {
+                btn.innerHTML = '<span class="loading"></span>请求中...';
+                btn.disabled = true;
+
+                let url = `/chain/${apiName}`;
+                if (params && Object.keys(params).length > 0) {
+                    const query = new URLSearchParams();
+                    Object.keys(params).forEach(key => {
+                        if (params[key] !== '' && params[key] !== null && params[key] !== undefined) {
+                            query.append(key, params[key]);
+                        }
+                    });
+                    url += '?' + query.toString();
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                resultArea.classList.add('show');
+                resultArea.innerHTML = '<pre>' + formatResult(data) + '</pre>';
+
+                if (response.ok) {
+                    showStatus('请求成功!', 'success');
+                } else {
+                    showStatus('请求失败: ' + response.status, 'error');
+                }
+            } catch (error) {
+                resultArea.classList.add('show');
+                resultArea.innerHTML = '<pre style="color: #f56565;">错误: ' + error.message + '</pre>';
+                showStatus('发生错误: ' + error.message, 'error');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function callApiPost(apiName, body, btn) {
+            const resultArea = btn.nextElementSibling;
+            const originalText = btn.innerHTML;
+
+            try {
+                btn.innerHTML = '<span class="loading"></span>请求中...';
+                btn.disabled = true;
+
+                const url = `/chain/${apiName}`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: body
+                });
+
+                const data = await response.json();
+
+                resultArea.classList.add('show');
+                resultArea.innerHTML = '<pre>' + formatResult(data) + '</pre>';
+
+                if (response.ok) {
+                    showStatus('请求成功!', 'success');
+                } else {
+                    showStatus('请求失败: ' + response.status, 'error');
+                }
+            } catch (error) {
+                resultArea.classList.add('show');
+                resultArea.innerHTML = '<pre style="color: #f56565;">错误: ' + error.message + '</pre>';
+                showStatus('发生错误: ' + error.message, 'error');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
