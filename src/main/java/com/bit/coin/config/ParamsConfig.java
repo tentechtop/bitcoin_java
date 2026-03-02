@@ -106,7 +106,7 @@ public final class ParamsConfig {
                 10, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
                 Duration.ofDays(14), // 难度调整周期
-                Duration.ofMinutes(10), // 目标出块时间
+                Duration.ofMinutes(1), // 目标出块时间
                 4, // 难度调整因子
                 false, // 是否降低最小难度
                 Duration.ZERO // 降低最小难度的时间间隔

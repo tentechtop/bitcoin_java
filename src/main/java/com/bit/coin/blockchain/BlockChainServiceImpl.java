@@ -1789,8 +1789,8 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
 
-    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 100; // 每2016个区块调整一次
-    private static final int TARGET_BLOCK_SPACING_SECONDS = 10 * 60; // 目标出块时间：10分钟
+    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 20; // 每2016个区块调整一次
+    private static final int TARGET_BLOCK_SPACING_SECONDS = 1 * 60; // 目标出块时间：10分钟
     private static final long EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL = (long) DIFFICULTY_ADJUSTMENT_INTERVAL * TARGET_BLOCK_SPACING_SECONDS; // 2016个区块的预期总时间
 
     private static final BigInteger MAX_TARGET = new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16);
