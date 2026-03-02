@@ -317,11 +317,20 @@ public class QuicConnectionManager {
             connection.setUDP(true);
             connection.setOutbound(true);
             connection.setExpired(false);
-            connection.setLastSeen(System.currentTimeMillis());
+            long currentTimeMillis = System.currentTimeMillis();
+            connection.setLastSeen(currentTimeMillis);
+            log.info("[切换为出站] 连接ID:{} 设置lastSeen:{} 当前时间:{}",
+                    conId, connection.getLastSeen(), currentTimeMillis);
             connection.setSharedSecret(sharedSecret);
             connection.startHeartbeat();
-            addConnection(conId, connection);
-            addPeerConnect(bytesToHex(nodeId),conId);
+
+            // 确保连接在映射中（可能已被清理，需要重新添加）
+            if (getConnection(conId) == null) {
+                addConnection(conId, connection);
+                log.info("[重新添加连接] 连接ID:{}", conId);
+            }
+
+            addPeerConnect(bytesToHex(nodeId), conId);
 
             log.info("释放帧");
 

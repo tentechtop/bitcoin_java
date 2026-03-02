@@ -76,14 +76,22 @@ public class QuicConnection {
             return;
         }
 
+        // 启动心跳时立即更新最后活动时间，避免因对象复用导致立即过期
+        updateLastSeen();
+        log.info("[心跳任务启动] 连接ID:{} 出站:{} 更新lastSeen:{}", connectionId, isOutbound, lastSeen);
+
         // 分支1：出站连接 - 主动心跳（400ms）+ 过期检查
         if (isOutbound) {
             connectionTask = new TimerTask() {
                 @Override
                 public void run(Timeout timeout) throws Exception {
                     long now = System.currentTimeMillis();
+                    log.debug("[出站心跳检查] 连接ID:{} now:{} lastSeen:{} 差值:{}ms 过期阈值:{}ms",
+                            connectionId, now, lastSeen, now - lastSeen, CONNECTION_EXPIRE_TIMEOUT);
                     // 先检查是否过期
                     if (now - lastSeen > CONNECTION_EXPIRE_TIMEOUT) {
+                        log.warn("[出站连接过期] 连接ID:{} now:{} lastSeen:{} 差值:{}ms 超过阈值:{}ms",
+                                connectionId, now, lastSeen, now - lastSeen, CONNECTION_EXPIRE_TIMEOUT);
                         markAsExpired();
                         return;
                     }
@@ -214,7 +222,8 @@ public class QuicConnection {
             return;
         }
         expired = true;
-        log.warn("连接已过期... 时间{}",System.currentTimeMillis());
+        log.warn("连接已过期... 连接ID:{} 当前时间:{} lastSeen:{} 差值:{}ms",
+                connectionId, System.currentTimeMillis(), lastSeen, System.currentTimeMillis() - lastSeen);
         // 1. 移除连接管理器的核心引用（重中之重）
         QuicConnectionManager.removeConnection(connectionId);
         // 2. 彻底清理定时任务（避免Timer持有对象引用）
@@ -352,7 +361,7 @@ public class QuicConnection {
     }
 
     private void handlePongFrame( QuicFrame quicFrame) {
-        log.debug("处理PONG帧{}",quicFrame);
+        log.debug("处理PONG帧 lastSeen:{}", lastSeen);
         //更新访问时间
         QuicMsg quicMsg = new QuicMsg();
         quicMsg.setConnectionId(0);

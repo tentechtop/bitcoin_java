@@ -388,10 +388,10 @@ public class MiningServiceImpl {
             int endNonce = Integer.MAX_VALUE;
             int actualGridSize =1024;*/
 
-            int baseBlockSize = 256;// 从256降低，减少并行线程数
+            int baseBlockSize = 128;// 从256降低，减少并行线程数
             int startNonce = 0;
             int endNonce = Integer.MAX_VALUE;
-            int actualGridSize =1024;
+            int actualGridSize =128;
 
 
 
