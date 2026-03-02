@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: Bitcoin
+    version: 1.0.0
+  profiles:
+    active: prod
+
+
+
+protocol:
+  # 本地节点支持的版本范围（核心）
+  min_supported_version: 1
+  max_supported_version: 3
+  # 发送消息时的默认首选版本（优先用高版本）
+  default_send_version: 3
+  # 废弃的版本（收到该版本消息直接拒绝）
+  deprecated_versions: [0]
+  # 版本降级开关（对方不支持新版时，自动降为兼容版本）
+  enable_version_fallback: true

@@ -1,0 +1,30 @@
+#http-json
+server:
+  port: 18555
+
+system:
+  mining-type: 2 # 1CPU 2GPU
+  miner-address-list:
+    - 'Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz'
+  net-params: 'MainNetParams'
+  #数据存储路径 按照网络前缀分类
+  path: "/bitcoin/localdb"
+  #数据库缓存大小 单位MB 基于LRU策略实现的一级缓存
+  db-cache-size: 500
+  #节点与节点之间的通信 TCP通信 支持P2P网络
+  quic-port: 8335
+  is-stun: false
+  stun-port: 3479
+  stun-address:
+    - '127.0.0.1:3479'
+  web-socket: 28335
+  #用户在启动时可以配置公钥 对于隐私接口必须签名才能访问 也就是节点所有者
+  server-pubkey:
+    - ''
+  bootstrap:
+    - '/ip4/127.0.0.1/quic/8333/p2p/8qeR2LbCDfQwu67AVj9Beiairn92KiJrttWG9U8ZKb9k'
+
+
+logging:
+  level:
+    root: INFO

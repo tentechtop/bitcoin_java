@@ -1,0 +1,100 @@
+syntax = "proto3";
+//protoc --proto_path=. --java_out=. structure.proto
+//cd F:\workSpace2026\blockchain\solana_java\src\main\java\com\bit\solana\proto  protoc --proto_path=. --java_out=. structure.proto
+//protoc --proto_path=. --java_out=. structure.proto
+message ProtoBlockHeader {
+  bytes previous_block_hash = 1;      // 前序区块哈希（32字节）
+  bytes state_root_hash = 2;          // 状态根哈希（32字节）
+  uint64 block_time = 3;              // 区块提议时间戳（毫秒级）
+  bytes poh_hash = 4;                 // PoH哈希（32字节）
+  uint64 poh_height = 5;              // PoH高度
+  uint64 version = 6;                 // 协议版本号
+  uint64 slot = 7;                    // 插槽号
+  uint64 parent_slot = 8;             // 父插槽号
+  bytes recent_votes_hash = 9;        // 最近投票哈希（32字节）
+  uint64 leader_schedule_epoch = 10;  // 领导者调度周期
+  uint64 transactions_count = 11;     // 交易数量
+  bytes fee_calculator_hash = 12;     // 费用计算器哈希（32字节）
+  bytes tx_bloom_filter = 13;         // 交易布隆过滤器（序列化后字节）
+  bytes log_bloom_filter = 14;        // 日志布隆过滤器（序列化后字节）
+}
+
+message ProtoBlock {
+    ProtoBlockHeader header = 1;
+
+}
+
+message ProtoP2pMessage {
+  bytes sender_id = 1;          // 32字节Solana公钥（Base58编码前的原始字节）
+  bytes message_id = 2;         // 16字节UUID V7原始字节
+  bytes request_id = 3;         // 16字节UUID V7原始字节（全零=非请求/响应）
+  uint32 req_res_flag = 4;      // 请求/响应标识：0=请求，1=响应（protobuf无byte，用uint32兼容）
+  uint32 type = 5;              // 消息类型（PING=1, PONG=2, TRANSACTION=3等）
+  uint32 length = 6;            // data字段长度（防御性存储）
+  uint32 version = 7;           // 协议版本（short转uint32，避免符号问题）
+  bytes data = 8;               // 业务数据（嵌套Protobuf的序列化字节，如ProtoBlock/ProtoPeer）
+}
+
+
+
+message ProtoPeer {
+  // 核心标识
+  bytes id = 1;        // 节点公钥（32字节）
+  bytes private_key = 2;       // 节点私钥
+  // 网络信息
+  string address = 3;          // IP地址（IPv4/IPv6）
+  int32 port = 4;              // P2P通信端口
+  string multiaddr = 5;        // 多地址（Multiaddr格式）
+  string protocol_version = 6; // 通信协议版本
+  // 节点状态
+  int32 node_type = 7;         // 节点类型
+  bool is_online = 8;          // 是否在线
+  uint64 latest_slot = 9;      // 最新同步区块槽位
+  // 能力与属性
+  bool is_validator = 10;      // 是否为验证者
+  double stake_amount = 11;    // 验证者质押量（SOL）
+  int32 software_version = 12; // 节点软件版本
+  uint64 last_seen = 13;       // 最后访问时间（毫秒级时间戳）
+
+
+
+
+  //最新高度 无符号32
+  uint32 height = 14;
+  //最新hash 字符串
+  string latest_hash = 15;
+  //顶端累计工作总量
+  bytes total_work = 16;
+
+
+
+}
+
+// Solana P2P 节点握手协议消息
+message ProtoNetworkHandshake {
+  // 网络魔法值（区分主网/测试网/私有链）
+  bytes network_magic = 1;
+  // 节点硬件标识（可选，如CPU核心数/内存大小）
+  string hardware_info = 2;
+  // 节点ID（Ed25519公钥，32字节）
+  bytes node_id = 3;
+  // 随机数（UUID v7，字节数组形式）
+  bytes nonce_id = 4;
+  // 节点版本（如"1.18.17"）
+  string node_version = 5;
+  // 签名（Ed25519签名，64字节）
+  bytes signature = 6;
+  // 共享密钥对
+  bytes shared_secret = 7;
+
+  //最新hash
+  bytes latest_hash = 8;
+
+  //最新高度
+  uint32 latest_height = 9;
+
+  //顶端累计工作总量 字节数组
+  bytes total_work = 10;
+
+
+}

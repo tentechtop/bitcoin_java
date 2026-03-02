@@ -1,0 +1,303 @@
+package com.bit.coin.structure.tx;
+
+import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.structure.script.Script;
+import com.bit.coin.utils.SerializeUtils;
+import com.bit.coin.utils.Sha;
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+import tools.jackson.databind.annotation.JsonSerialize;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
+import java.util.Arrays;
+
+import static com.bit.coin.structure.tx.Transaction.TX_ID_LENGTH;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+
+/**
+ * 兼容极简验证和脚本验证  即如果解锁脚本固定为20字节 且解锁脚本固定为97字节 则认为是P2PKH
+ */
+@Slf4j
+@Data
+@JsonPropertyOrder({"txId", "index","sequence","scriptSig","output"})  // 按指定顺序输出
+public class TxInput {
+
+    /**
+     * [32字节] 交易ID
+     */
+    @JsonSerialize(using = HexByteArraySerializer.class)
+    private byte[] txId;
+
+    /**
+     * [4字节] 交易的输出索引
+     */
+    private int index;
+
+    //序列化时只占用4字节 无符号32位整数最大值
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private long sequence = 0xFFFFFFFFL;//4294967295
+
+
+    /**
+     * 解锁脚本 脚本类型
+     * 包含签名和公钥 [固定64字节签名][1字节签名类型][32公钥]
+     * [1字节 签名总长度]+ [64字节 Ed25519签名] + [1字节 SIGHASH类型]+ [1字节 公钥长度]+ [32字节 Ed25519公钥]
+     */
+    @JsonSerialize(using = HexByteArraySerializer.class)
+    private byte[] scriptSig;
+
+    @JsonIgnore
+    private WeakReference<Script> scriptSigWk;
+
+
+
+    //扩展非核心字段 在查询交易时带出引用的输出 coinbase交易为空 帮助钱包快速判断这笔交易对钱包来说是支出还是收入
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private TxOutput output;
+
+
+
+
+    // 常量定义
+    public static final int SCRIPT_SIG_LENGTH = 97; // 解锁脚本长度: 64+1+32
+    public static final int SIGNATURE_LENGTH = 64;
+    public static final int SIGNATURE_TYPE_LENGTH = 1; // <-- 新增常量
+    public static final int PUBLIC_KEY_LENGTH = 32;
+    public static final int SERIALIZED_LENGTH = 133; // 序列化总长度: 32+4+1+96=133字节
+
+
+
+    @JsonIgnore
+    public WeakReference<Script> getScriptSigWk() {
+        if (scriptSigWk == null || scriptSigWk.get() == null) {
+            try {
+                log.debug("打印签名{} 长度{}",bytesToHex(scriptSig),scriptSig.length);
+                Script script = Script.deserialize(scriptSig);
+                scriptSigWk = new WeakReference<>(script);
+            } catch (IOException e) {
+                log.error("解析解锁脚本失败：{}", e.getMessage());
+            }
+        }
+        return scriptSigWk;
+    }
+
+
+    public String getScriptSigString() {
+        WeakReference<Script> scriptSigWk1 = getScriptSigWk();
+        Script script = scriptSigWk1.get();
+        if (script==null){
+            return "";
+        }
+        return script.toString();
+    }
+
+
+    /**
+     * 验证字段长度
+     */
+    public void validate() {
+        if (txId == null || txId.length != TX_ID_LENGTH) {
+            throw new IllegalStateException("交易ID必须为" + TX_ID_LENGTH + "字节");
+        }
+        if (scriptSig == null || scriptSig.length != SCRIPT_SIG_LENGTH) {
+            throw new IllegalStateException("解锁脚本必须为" + SCRIPT_SIG_LENGTH + "字节");
+        }
+    }
+
+    /**
+     * 获取签名字节（解锁脚本的前64字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
+     */
+    @JsonIgnore
+    public byte[] getSignature() {
+        // 校验脚本长度是否足够容纳签名、类型和公钥
+        if (scriptSig == null || scriptSig.length < SCRIPT_SIG_LENGTH) { // SCRIPT_SIG_LENGTH 应为 97
+            log.warn("解锁脚本长度不足，无法提取签名，返回空字节数组。");
+            return new byte[64];
+        }
+        byte[] signature = new byte[64];
+        // 从索引 0 开始，复制 64 个字节
+        System.arraycopy(scriptSig, 0, signature, 0, 64);
+        return signature;
+    }
+
+    /**
+     * 获取公钥字节（解锁脚本的后32字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
+     */
+    @JsonIgnore
+    public byte[] getPublicKey() {
+        // 校验脚本长度是否足够容纳签名、类型和公钥
+        if (scriptSig == null || scriptSig.length < SCRIPT_SIG_LENGTH) { // SCRIPT_SIG_LENGTH 应为 97
+            log.warn("解锁脚本长度不足，无法提取公钥，返回空字节数组。");
+            return new byte[32];
+        }
+        byte[] publicKey = new byte[32];
+        // 公钥的起始索引变为 64 (签名) + 1 (类型) = 65
+        System.arraycopy(scriptSig, 65, publicKey, 0, 32);
+        return publicKey;
+    }
+
+    /**
+     * 获取签名类型（解锁脚本的第65个字节）
+     * <p>
+     * 规则：[固定64字节签名][1字节签名类型][32字节公钥]
+     * @return 签名类型的无符号整数值 (0-255)，如果脚本无效则返回 -1
+     */
+    @JsonIgnore
+    public byte getSignatureType() {
+        // 校验脚本长度是否足够容纳签名和签名类型
+        if (scriptSig == null || scriptSig.length < SIGNATURE_LENGTH + SIGNATURE_TYPE_LENGTH) {
+            log.warn("解锁脚本长度不足，无法提取签名类型。");
+            return -1; // 返回一个无效值
+        }
+        // 获取第65个字节（索引为64），并转换为无符号int
+        return scriptSig[64];
+    }
+
+
+
+    /**
+     * 设置签名和公钥
+     * @param signature 64字节签名字节数组
+     * @param publicKey 32字节公钥字节数组
+     */
+    /**
+     * 设置签名、签名类型和公钥，以构建解锁脚本
+     * @param signature 64字节签名字节数组
+     * @param signatureType 1字节签名类型
+     * @param publicKey 32字节公钥字节数组
+     */
+    public void setSignatureAndPublicKey(byte[] signature, byte signatureType, byte[] publicKey) {
+        if (signature == null || signature.length != SIGNATURE_LENGTH) {
+            throw new IllegalArgumentException("签名必须为" + SIGNATURE_LENGTH + "字节");
+        }
+        if (publicKey == null || publicKey.length != PUBLIC_KEY_LENGTH) {
+            throw new IllegalArgumentException("公钥必须为" + PUBLIC_KEY_LENGTH + "字节");
+        }
+
+        byte[] scriptSig = new byte[SCRIPT_SIG_LENGTH];
+        System.arraycopy(signature, 0, scriptSig, 0, SIGNATURE_LENGTH);
+        scriptSig[SIGNATURE_LENGTH] = signatureType; // 设置签名类型
+        System.arraycopy(publicKey, 0, scriptSig, SIGNATURE_LENGTH + SIGNATURE_TYPE_LENGTH, PUBLIC_KEY_LENGTH);
+        this.setScriptSig(scriptSig);
+    }
+
+
+    /**
+     * 创建Coinbase交易输入
+     * @param scriptSig Coinbase交易的特殊脚本（任意长度）
+     */
+    public static TxInput createCoinbaseInput(byte[] scriptSig) {
+        TxInput input = new TxInput();
+        // Coinbase交易的txId为全0
+        input.setTxId(new byte[TX_ID_LENGTH]);
+        // Coinbase交易的index为0xFFFFFFFF
+        input.setIndex(0xFFFFFFFF);
+        // 使用提供的脚本
+        input.setScriptSig(scriptSig != null ? scriptSig : new byte[0]);
+        return input;
+    }
+
+    /**
+     * 判断是否为Coinbase交易输入
+     */
+    @JsonIgnore
+    public boolean isCoinbase() {
+        // 检查txId是否全0
+        if (txId == null || txId.length != TX_ID_LENGTH) {
+            return false;
+        }
+        for (byte b : txId) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return index == 0;
+    }
+
+    /**
+     * 序列化交易输入为字节数组
+     * @return 序列化后的字节数组
+     * @throws IOException 如果发生I/O错误
+     */
+    public byte[] serialize()  {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+            com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, txId, TX_ID_LENGTH);
+            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, index);
+            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, (int)sequence);
+            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, scriptSig.length);
+            if (scriptSig.length > 0) {
+                dos.write(scriptSig);
+            }
+            dos.close();
+            return baos.toByteArray();
+        }catch (Exception e){
+            log.info("交易详情{}",this);
+            throw new IllegalArgumentException("交易输入序列化失败",e);
+        }
+    }
+
+    /**
+     * 从DataInputStream反序列化交易输入
+     * @param dis 数据输入流
+     * @return TxInput对象
+     * @throws IOException 如果发生I/O错误
+     */
+    public static TxInput deserialize(DataInputStream dis) throws IOException {
+        TxInput input = new TxInput();
+
+        // 1. 读取交易ID (32字节)
+        byte[] txId = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, TX_ID_LENGTH);
+        input.setTxId(txId);
+
+        // 读取输出索引 (4字节，小端)
+        int index = com.bit.coin.utils.SerializeUtils.readLittleEndianInt(dis);
+        input.setIndex(index);
+
+        // 读取序列号 (4字节，小端)
+        int sequenceInt  = SerializeUtils.readLittleEndianInt(dis);
+        // 转换为无符号long
+        long sequence = sequenceInt & 0xFFFFFFFFL;
+        input.setSequence(sequence);
+        long scriptSigLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptSigLength > 0) {
+            byte[] scriptSig = new byte[(int) scriptSigLength];
+            dis.readFully(scriptSig);
+            input.setScriptSig(scriptSig);
+        } else {
+            input.setScriptSig(new byte[0]);
+        }
+        return input;
+    }
+
+
+    /**
+     * 从字节数组反序列化交易输入
+     * @param data 字节数组
+     * @return TxInput对象
+     * @throws IOException 如果发生I/O错误
+     */
+    public static TxInput deserialize(byte[] data) throws IOException {
+        ByteArrayInputStream bais = new ByteArrayInputStream(data);
+        DataInputStream dis = new DataInputStream(bais);
+        TxInput input = deserialize(dis);
+        dis.close();
+        return input;
+    }
+
+
+}

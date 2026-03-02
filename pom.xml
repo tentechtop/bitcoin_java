@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.1</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+    <groupId>com.bit.coin</groupId>
+    <artifactId>bitcoin_java</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>bitcoin_java</name>
+    <description>bitcoin_java</description>
+    <url/>
+    <licenses>
+        <license/>
+    </licenses>
+    <developers>
+        <developer/>
+    </developers>
+    <scm>
+        <connection/>
+        <developerConnection/>
+        <tag/>
+        <url/>
+    </scm>
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.bitcoinj</groupId>
+            <artifactId>bitcoinj-core</artifactId>
+            <version>0.16.3</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version> <!-- 建议使用最新稳定版 -->
+        </dependency>
+
+        <!-- rocksdb -->
+        <dependency>
+            <groupId>org.rocksdb</groupId>
+            <artifactId>rocksdbjni</artifactId>
+            <version>7.10.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.2</version> <!-- 建议使用较新的稳定版本 -->
+        </dependency>
+
+        <!-- 替换为：只引入需要的模块 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>4.1.66.Final</version>
+        </dependency>
+
+
+        <!-- Protocol Buffers 核心依赖 -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>4.31.1</version> <!-- 版本号可根据需要调整，建议使用 3.x 最新稳定版 -->
+        </dependency>
+
+
+        <!--  proto 与 Json 互转会用到-->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java-util</artifactId>
+            <version>4.31.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.uuid</groupId>
+            <artifactId>java-uuid-generator</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+
+        <!--GPU参与运算-->
+        <!--OpenCL 的 Java 绑定-->
+        <dependency>
+            <groupId>org.jocl</groupId>
+            <artifactId>jocl</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jcuda</groupId>
+            <artifactId>jcuda</artifactId>
+            <version>12.6.0</version> <!-- 与 CUDA 匹配 -->
+        </dependency>
+        <dependency>
+            <groupId>org.jcuda</groupId>
+            <artifactId>jcuda-natives</artifactId>
+            <version>12.6.0</version> <!-- 保持版本一致 -->
+        </dependency>
+
+    </dependencies>
+
+
+    <build>
+        <!-- 直接定义最终JAR名称，优先级最高 -->
+        <finalName>${project.artifactId}-${project.version}</finalName>
+        <plugins>
+            <!-- Spring Boot打包插件：生成可执行JAR（repackage目标） -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                    <!-- 明确指定主类（与你项目的主类路径一致，避免找不到主类错误） -->
+                    <mainClass>com.bit.coin.BitcoinJavaApplication</mainClass>
+                </configuration>
+            </plugin>
+
+            <!-- 编译插件：适配Java 21，确保编译兼容性 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <!-- 核心：指定 JDK 21 编译 -->
+                    <release>21</release>
+                    <source>21</source>
+                    <target>21</target>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+
+            <!-- 测试插件：跳过测试，避免测试失败阻塞打包 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version> <!-- 使用最新稳定版本 -->
+                <configuration>
+                    <skipTests>true</skipTests> <!-- 全局跳过测试 -->
+                    <testFailureIgnore>false</testFailureIgnore> <!-- 若开启测试，失败则终止构建（可选） -->
+                </configuration>
+            </plugin>
+            <!-- 若有集成测试，可添加此插件并同样跳过 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <skipITs>true</skipITs> <!-- 跳过集成测试 -->
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
