@@ -38,8 +38,8 @@ public class QuicFrame {
 
 
 
-    // 对象池 定义 Recycler 池，指定“新对象创建规则”
-    private static final int RECYCLER_MAX_CAPACITY = 1024 * 1024 * 1024;
+    // 对象池 定义 Recycler 池，指定"新对象创建规则"
+    private static final int RECYCLER_MAX_CAPACITY = 64 * 1024; // 优化: 从1GB减少到64K，避免内存浪费
     private static final Recycler<QuicFrame> RECYCLER = new Recycler<QuicFrame>(RECYCLER_MAX_CAPACITY) {
         @Override
         protected QuicFrame newObject(Handle<QuicFrame> handle) {
@@ -69,11 +69,13 @@ public class QuicFrame {
             frameTotalLength = 0; // 新增：重置帧总长度
             remoteAddress = null; // 新增：重置远端地址
             payload = null;
-            // 归还对象（增加日志，便于排查对象池问题）
+            // 归还对象（移除高频日志，仅在调试模式启用）
+            if (log.isDebugEnabled()) {
+                log.debug("[释放完成] 对象已归还到对象池");
+            }
             handle.recycle(this);
-            log.debug("[释放完成] 对象已归还到对象池，connectionId:{} dataId:{}", connectionId, dataId);
         } catch (Exception e) {
-            log.error("[释放异常] connectionId:{} dataId:{}", connectionId, dataId, e);
+            log.error("[释放异常]", e);
         }
     }
 

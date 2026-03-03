@@ -32,6 +32,10 @@ public class SendQuicData extends QuicData {
     // 新增：首次重传扫描延迟时间（30ms）
     public  final long FIRST_RETRANSMIT_DELAY_MS = 500;
 
+    // 新增：重传配置
+    private static final long RETRANSMIT_MAX_DELAY_MS = 2000;  // 最大重传延迟2秒
+    private static final int MAX_RETRANSMIT_ROUNDS = 5;       // 最大重传轮数
+
     // ACK确认集合：记录B已确认的序列号
     private final  Set<Integer> ackedSequences = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
@@ -187,11 +191,16 @@ public class SendQuicData extends QuicData {
                             frame.setTime(System.nanoTime());
                         }
                     });
+                } else {
+                    // 连接不可用时立即释放buf
+                    buf.release();
                 }
             } catch (Exception e) {
-                // 异常时直接释放 buf，避免泄漏
+                // 异常时立即释放 buf，避免泄漏
                 log.error("[帧编码失败] 连接ID:{} 数据ID:{} 序列号:{}",
                         getConnectionId(), getDataId(), sequence, e);
+                buf.release();
+                throw e;
             }
      /*       Thread.ofVirtual()
                     .name("send-virtual-thread")
@@ -316,12 +325,27 @@ public class SendQuicData extends QuicData {
                     && (globalTimeout == null || !globalTimeout.isCancelled())
                     && !isCompleted
                     && !isFailed
+                    && retransmitCount < MAX_RETRANSMIT_ROUNDS
             ) {
-                retransmitTimeout = GLOBAL_TIMER.newTimeout(new RetransmitTask(), RETRANSMIT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+                // 使用指数退避计算重传延迟
+                long delay = calculateRetransmitDelay(retransmitCount);
+                retransmitCount++;
+                retransmitTimeout = GLOBAL_TIMER.newTimeout(new RetransmitTask(), delay, TimeUnit.MILLISECONDS);
             } else {
                 retransmitTimeout = null;
             }
         }
+    }
+
+    /**
+     * 计算重传延迟（指数退避策略）
+     * @param retryRound 当前重传轮数（从0开始）
+     * @return 重传延迟（毫秒）
+     */
+    private long calculateRetransmitDelay(int retryRound) {
+        // 指数退避: base * 2^retryRound，但不超过最大值
+        long delay = FIRST_RETRANSMIT_DELAY_MS * (1L << retryRound);
+        return Math.min(delay, RETRANSMIT_MAX_DELAY_MS);
     }
 
 

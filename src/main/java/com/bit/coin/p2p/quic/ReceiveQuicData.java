@@ -40,6 +40,12 @@ public class ReceiveQuicData extends QuicData {
     // 传输失败回调
     private Runnable failCallback;
 
+    // 新增：自适应ACK策略
+    private int lastAckSize = 0;
+    private long lastAckTime = System.currentTimeMillis();
+    private static final int ACK_BATCH_SIZE = 64;  // 每64帧发送一次批量ACK
+    private static final long ACK_MAX_DELAY_MS = 100;  // 最大延迟100ms
+
 
     //当收到数据帧时
    synchronized public void handleFrame(QuicFrame quicFrame) {
@@ -72,14 +78,31 @@ public class ReceiveQuicData extends QuicData {
 
        if (!isComplete() && !isFailed()){
            int size = receivedSequences.size();
-           if ((size>1 && size % 128 == 0) || total<=128 || size==total) {
+           long elapsed = System.currentTimeMillis() - lastAckTime;
+
+           // 自适应ACK: 每64帧或超过100ms或完成时发送
+           boolean shouldAck = (size >= lastAckSize + ACK_BATCH_SIZE) ||
+                               (elapsed > ACK_MAX_DELAY_MS && size > lastAckSize) ||
+                               (size == total);
+
+           if (shouldAck) {
                QuicFrame ackFrame = buildBatchAckFrame(quicFrame);
-               if (ackFrame!=null){
+               if (ackFrame != null){
                    ByteBuf buf = QuicConstants.ALLOCATOR.buffer();
-                   ackFrame.encode(buf);
-                   DatagramPacket packet = new DatagramPacket(buf, ackFrame.getRemoteAddress());
-                   Global_Channel.writeAndFlush(packet);
-                   ackFrame.release();
+                   try {
+                       ackFrame.encode(buf);
+                       DatagramPacket packet = new DatagramPacket(buf, ackFrame.getRemoteAddress());
+                       Global_Channel.writeAndFlush(packet).addListener(future -> {
+                           if (!future.isSuccess()) {
+                               log.warn("[批量ACK发送失败] 连接ID:{} 数据ID:{}", getConnectionId(), getDataId());
+                           }
+                       });
+                       lastAckSize = size;
+                       lastAckTime = System.currentTimeMillis();
+                   } catch (Exception e) {
+                       buf.release();
+                       log.error("[批量ACK编码失败]", e);
+                   }
                }
            }
        }
@@ -194,10 +217,10 @@ public class ReceiveQuicData extends QuicData {
     private void releaseFrames() {
         QuicFrame[] frameArray = getFrameArray();
         if (frameArray == null) return;
-        // 遍历释放已接收的QuicFrame（避免内存泄漏）
+        // 遍历释放已接收的QuicFrame（归还对象池，避免内存泄漏）
         for (QuicFrame frame : frameArray) {
             if (frame != null) {
-                frame=null;
+                frame.release(); // 调用对象池的release方法
             }
         }
         // 清空数组引用，帮助GC

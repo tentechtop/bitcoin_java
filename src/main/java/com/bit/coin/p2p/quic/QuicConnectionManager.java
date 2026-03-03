@@ -28,6 +28,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -53,9 +54,9 @@ public class QuicConnectionManager {
 
 
     //节点ID - > 连接ID 公钥的hex是节点ID
-    public static final Map<String, Long> PeerConnect = new HashMap<>();
+    public static final Map<String, Long> PeerConnect = new ConcurrentHashMap<>();
     public static DatagramChannel Global_Channel = null;// UDP通道
-    private static final Map<Long, QuicConnection> CONNECTION_MAP  = new HashMap<>();
+    private static final Map<Long, QuicConnection> CONNECTION_MAP  = new ConcurrentHashMap<>();
 
 
     @Autowired

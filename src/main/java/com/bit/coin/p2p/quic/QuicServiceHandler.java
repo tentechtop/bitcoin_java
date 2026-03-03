@@ -19,9 +19,17 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
         InetSocketAddress remote = datagramPacket.sender();
         InetSocketAddress local = (InetSocketAddress) ctx.channel().localAddress();
         QuicFrame quicFrame = null;
-        quicFrame = QuicFrame.decode(buf, remote);
-        QuicConnection orCreateConnection = QuicConnectionManager.createOrGetConnection((DatagramChannel)ctx.channel(),local,remote,quicFrame.getConnectionId());
-        orCreateConnection.handleFrame(quicFrame);
+        try {
+            quicFrame = QuicFrame.decode(buf, remote);
+            QuicConnection orCreateConnection = QuicConnectionManager.createOrGetConnection((DatagramChannel)ctx.channel(),local,remote,quicFrame.getConnectionId());
+            orCreateConnection.handleFrame(quicFrame);
+        } catch (IllegalArgumentException e) {
+            // 数据格式错误，记录但不中断处理
+            log.warn("[数据包格式错误] remote={}, error={}", remote, e.getMessage());
+        } catch (Exception e) {
+            // 其他异常记录完整堆栈
+            log.error("[数据包处理失败] remote={}, error={}", remote, e.getMessage(), e);
+        }
     }
 
 

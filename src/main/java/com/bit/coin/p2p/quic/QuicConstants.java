@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -99,12 +100,12 @@ public class QuicConstants {
 
 
     //连接ID -> 数据ID
-    public static final Map<Long, Long> connectSendMap = new HashMap<>();
-    public static final Map<Long, Long> connectReceiveMap = new HashMap<>();
+    public static final Map<Long, Long> connectSendMap = new ConcurrentHashMap<>();
+    public static final Map<Long, Long> connectReceiveMap = new ConcurrentHashMap<>();
 
     //数据ID-> 数据
-    public static Map<Long, SendQuicData> sendMap = new HashMap<>();//发送中的数据缓存 数据收到全部的ACK后释放掉 发送帧50ms后未收到ACK则重发 重发三次未收到ACK则放弃并清除数据 下线节点
-    public static  Map<Long, ReceiveQuicData> receiveMap = new HashMap<>();//接收中的数据缓存 数据完整后释放掉
+    public static Map<Long, SendQuicData> sendMap = new ConcurrentHashMap<>();//发送中的数据缓存 数据收到全部的ACK后释放掉 发送帧50ms后未收到ACK则重发 重发三次未收到ACK则放弃并清除数据 下线节点
+    public static  Map<Long, ReceiveQuicData> receiveMap = new ConcurrentHashMap<>();//接收中的数据缓存 数据完整后释放掉
 
 
     //已经发送的数据ID 缓存5百万条 8字节 500万 1秒过期
