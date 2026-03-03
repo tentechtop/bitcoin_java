@@ -434,7 +434,8 @@ public class SendQuicData extends QuicData {
     /**
      * 处理批量ACK：解析字节数组中的比特位，标记对应序列号为已确认
      * 格式约定：每个比特代表一个序列号的确认状态（1=已确认，0=未确认），采用大端序（第0位对应序列号0）
-     * @param ackList 批量ACK的比特位数组（长度为 (总帧数+7)/8 向上取整）
+     * payload 结构: [比特位图(总帧数+7)/8字节][接收窗口4字节]
+     * @param ackList 批量ACK的比特位数组（长度为 (总帧数+7)/8 向上取整 + 4字节接收窗口）
      */
     synchronized public void batchAck(byte[] ackList) {
         long rtime = System.nanoTime();
@@ -447,19 +448,35 @@ public class SendQuicData extends QuicData {
             }
 
             int totalFrames = getTotal();
-            int expectedByteLength = (totalFrames + 7) / 8; // 计算预期的字节长度
+            int expectedByteLength = (totalFrames + 7) / 8 + 4; // 计算预期的字节长度（比特位图 + 4字节接收窗口）
 
             // 校验ACK列表长度是否匹配总帧数（防止恶意或错误的ACK数据）
-            if (ackList.length != expectedByteLength) {
-                log.warn("[批量ACK处理] ACK列表长度不匹配，总帧数:{} 预期字节数:{} 实际字节数:{}，连接ID:{} 数据ID:{}",
+            if (ackList.length < expectedByteLength) {
+                log.warn("[批量ACK处理] ACK列表长度不足，总帧数:{} 预期最小字节数:{} 实际字节数:{}，连接ID:{} 数据ID:{}",
                         totalFrames, expectedByteLength, ackList.length, getConnectionId(), getDataId());
                 return;
             }
 
             int confirmedCount = 0; // 统计本次批量确认的新序列号数量
+            int bitmapLength = (totalFrames + 7) / 8; // 比特位图的实际长度
 
-            // 遍历每个字节解析比特位
-            for (int byteIndex = 0; byteIndex < ackList.length; byteIndex++) {
+            // 解析接收窗口（payload 最后 4 字节）
+            int receiveWindow = 0;
+            if (ackList.length >= bitmapLength + 4) {
+                int windowIndex = bitmapLength;
+                // 按大端序解析 int（4字节）
+                receiveWindow = ((ackList[windowIndex] & 0xFF) << 24) |
+                             ((ackList[windowIndex + 1] & 0xFF) << 16) |
+                             ((ackList[windowIndex + 2] & 0xFF) << 8) |
+                             (ackList[windowIndex + 3] & 0xFF);
+                log.debug("[解析接收窗口] 连接ID:{} 数据ID:{} 接收窗口:{}字节",
+                        getConnectionId(), getDataId(), receiveWindow);
+                // TODO: 这里可以将窗口信息传递给 QuicConnection 用于流控
+                // connection.updateReceiveWindow(receiveWindow);
+            }
+
+            // 遍历每个字节解析比特位（只解析比特位图部分）
+            for (int byteIndex = 0; byteIndex < bitmapLength; byteIndex++) {
                 byte ackByte = ackList[byteIndex];
 
                 // 遍历当前字节的8个比特（大端序：bitIndex=0对应最高位，代表序列号 byteIndex*8 + 0）

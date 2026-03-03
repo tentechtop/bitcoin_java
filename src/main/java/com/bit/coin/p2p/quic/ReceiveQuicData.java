@@ -265,6 +265,7 @@ public class ReceiveQuicData extends QuicData {
             long connectionId = quicFrame.getConnectionId();
             long dataId = quicFrame.getDataId();
             int totalFrames = getTotal(); // 总帧数（从当前接收数据的元信息中获取）
+            int receiveWindow = 0; // 接收窗口,初始设为0
 
             QuicFrame ackFrame = QuicFrame.acquire();
             ackFrame.setConnectionId(connectionId);
@@ -275,7 +276,9 @@ public class ReceiveQuicData extends QuicData {
             ackFrame.setRemoteAddress(quicFrame.getRemoteAddress());
 
             // 1. 计算比特槽位所需字节数：总帧数向上取整到8的倍数（1字节=8位）
-            int byteLength = (totalFrames + 7) / 8; // 例如2048帧需要256字节（2048/8=256）
+            // +4 字节用于接收窗口
+            int byteLength = (totalFrames + 7) / 8 + 4; // 例如2048帧需要256字节（2048/8=256）+ 4字节窗口
+
             byte[] ackPayload = new byte[byteLength];
 
             // 2. 填充比特槽位：已接收的序列号对应位置置为1
@@ -292,7 +295,14 @@ public class ReceiveQuicData extends QuicData {
                 ackPayload[byteIndex] |= (byte) (1 << (7 - bitIndex));
             }
 
-            // 3. 设置帧总长度：固定头部长度 +  payload字节数
+            // 3. 在 payload 末尾添加接收窗口(4字节,int类型)
+            int windowIndex = (totalFrames + 7) / 8; // 比特位图之后的位置
+            ackPayload[windowIndex] = (byte) ((receiveWindow >> 24) & 0xFF);       // 高字节
+            ackPayload[windowIndex + 1] = (byte) ((receiveWindow >> 16) & 0xFF);
+            ackPayload[windowIndex + 2] = (byte) ((receiveWindow >> 8) & 0xFF);
+            ackPayload[windowIndex + 3] = (byte) (receiveWindow & 0xFF);      // 低字节
+
+            // 4. 设置帧总长度：固定头部长度 +  payload字节数
             int totalLength = QuicFrame.FIXED_HEADER_LENGTH + byteLength;
             ackFrame.setFrameTotalLength(totalLength);
             ackFrame.setPayload(ackPayload);

@@ -21,7 +21,7 @@ public class QuicFrame {
     private byte frameType; // 帧类型 1字节
     private int sequence; // 序列号分片顺序 0-total 最大序列号是total-1 4字节  FIN帧是total-1  序列号是0就是第一帧 序列号是total-1就是最后一帧
     private int frameTotalLength;//载荷总长 4字节
-    private byte[] payload; // 有效载荷
+    private byte[] payload; // 有效载荷  ACK帧会携带4字节接收窗口
 
 
 
