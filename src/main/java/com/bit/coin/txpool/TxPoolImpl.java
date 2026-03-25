@@ -8,6 +8,7 @@ import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
 import com.bit.coin.utils.Sha;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +60,92 @@ public class TxPoolImpl implements TxPool{
     Set<String> processingSet = ConcurrentHashMap.newKeySet();
 
 
+    // 初始化定时任务（Spring容器启动后执行）
+    @PostConstruct
+    public void initScheduledTasks() {
+        // 10分钟重广播未确认交易
+        ScheduledExecutorService rebroadcastExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "tx-pool-rebroadcast");
+            t.setDaemon(true); // 守护线程，应用关闭时自动退出
+            return t;
+        });
+
+        // 延迟1分钟启动，之后每10分钟执行一次
+        rebroadcastExecutor.scheduleAtFixedRate(
+                this::rebroadcastUnconfirmedTxs,
+                1,  // 初始延迟（分钟）
+                10, // 间隔（分钟）
+                TimeUnit.MINUTES
+        );
+    }
+
+
+    /**
+     * 重广播交易池中未确认的交易（核心逻辑）
+     */
+    private void rebroadcastUnconfirmedTxs() {
+        try {
+            // 过滤出需要重广播的交易：未确认、未打包、最后广播时间超过5分钟
+            List<Transaction> toRebroadcast = mempool.values().stream()
+                    .filter(tx -> !tx.isCoinbase())
+                    .filter(tx -> {
+                        // 只处理「在池中等确认」的交易
+                        long status = tx.getStatus();
+                        return TransactionStatusResolver.getLifecycleStatus(status) == TransactionStatusResolver.IN_POOL
+                                && !TransactionStatusResolver.hasFlag(status, TransactionStatusResolver.MEMPOOL_LOCKED);
+                    })
+                    .filter(tx -> {
+                        // 避免过于频繁广播（至少间隔5分钟）
+                        Long lastBroadcast = tx.getBroadcastTime();
+                        return lastBroadcast == null || System.currentTimeMillis() - lastBroadcast > 5 * 60 * 1000;
+                    })
+                    .collect(Collectors.toList());
+
+            if (toRebroadcast.isEmpty()) {
+                log.debug("暂无需要重广播的交易，交易池当前大小：{}", mempool.size());
+                return;
+            }
+
+            log.info("开始重广播未确认交易，数量：{}", toRebroadcast.size());
+            // 复用你已有的广播逻辑（间隔10ms，避免网络拥塞）
+            broadcastTxList(toRebroadcast);
+
+            // 更新最后广播时间
+            toRebroadcast.forEach(tx -> tx.setBroadcastTime(System.currentTimeMillis()));
+            log.info("重广播完成，已更新 {} 笔交易的广播时间", toRebroadcast.size());
+
+        } catch (Exception e) {
+            log.error("定时重广播交易失败", e);
+        }
+    }
+
+    /**
+     * 复用的批量广播逻辑（抽离原broadcastTxPool的逻辑）
+     */
+    private void broadcastTxList(List<Transaction> txList) {
+        if (txList.isEmpty()) return;
+
+        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        AtomicInteger index = new AtomicInteger(0);
+
+        executor.scheduleAtFixedRate(() -> {
+            int i = index.getAndIncrement();
+            if (i >= txList.size()) {
+                executor.shutdown();
+                return;
+            }
+
+            Transaction tx = txList.get(i);
+            try {
+                routingTable.BroadcastResource(1, tx.getTxId());
+                log.debug("重广播交易成功：{}", bytesToHex(tx.getTxId()));
+            } catch (Exception e) {
+                log.error("重广播交易 {} 失败", bytesToHex(tx.getTxId()), e);
+            }
+        }, 0, 10, TimeUnit.MILLISECONDS);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    }
 
 
     @Override

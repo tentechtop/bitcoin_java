@@ -102,6 +102,21 @@ public class Transaction {
 
 
     /**
+     * 加入交易池时间
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Long joinTime;
+
+    /**
+     * 最近一次的广播时间
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Long broadcastTime;
+
+
+
+
+    /**
      * 状态
      */
     private long status;

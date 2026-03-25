@@ -50,12 +50,13 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @Slf4j
 @Component
 public class QuicConnectionManager {
-
-
-
     //节点ID - > 连接ID 公钥的hex是节点ID
     public static final Map<String, Long> PeerConnect = new ConcurrentHashMap<>();
+
+
     public static DatagramChannel Global_Channel = null;// UDP通道
+
+
     private static final Map<Long, QuicConnection> CONNECTION_MAP  = new ConcurrentHashMap<>();
 
 
@@ -380,8 +381,6 @@ public class QuicConnectionManager {
             quicConnection.setUDP(true);
             quicConnection.setOutbound(false);//非主动连接
             quicConnection.startHeartbeat();
-
-
             addConnection(connectionId, quicConnection);
         }
         quicConnection.updateLastSeen();
