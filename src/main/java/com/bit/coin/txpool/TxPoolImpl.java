@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import static com.bit.coin.api.TxApi.filterUtxoExcludePool;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -1031,6 +1034,34 @@ public class TxPoolImpl implements TxPool{
 
         // 优雅关闭（可选）
         Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    }
+
+    @Override
+    public Map<String, Object> getUTXOsAvailableBalance(String address) {
+        // 1. 获取地址下 已确认未花费 + 币基成熟 的所有UTXO
+        Map<String, Object> utxOsMap = utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED);
+        List<UTXO> utxos = (List<UTXO>) utxOsMap.get("utxos");
+
+        // 空值防护：避免空指针异常
+        if (utxos == null) {
+            utxos = new ArrayList<>();
+        }
+
+        // 2. 获取交易池中锁定的UTXO，并过滤掉这些锁定的UTXO
+        List<UTXO> utxoInPool = getUTXOInPool();
+        List<UTXO> availableUTXOs = filterUtxoExcludePool(utxos, utxoInPool);
+
+        // 3. 计算可用总余额：遍历可用UTXO，累加value（UTXO的金额字段）
+        long availableBalance = 0L;
+        for (UTXO utxo : availableUTXOs) {
+            availableBalance += utxo.getValue();
+        }
+
+        // 4. 封装返回结果：包含可用UTXO列表、可用总余额
+        return Map.of(
+                "availableUTXOs", availableUTXOs,   // 可用UTXO列表
+                "availableBalance", availableBalance // 可用总余额（单位：聪/最小货币单位）
+        );
     }
 
     /**

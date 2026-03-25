@@ -279,7 +279,11 @@ public class QuicConnectionManager {
 
     //根据节点ID获取连接 hexID
     public static QuicConnection getConnectionByPeerId(String peerId) {
-        return getConnection(PEER_CONNECTION.get(peerId));
+        Long l = PEER_CONNECTION.get(peerId);
+        if (l!=null){
+            return getConnection(l);
+        }
+        return null;
     }
 
     //Base58Id

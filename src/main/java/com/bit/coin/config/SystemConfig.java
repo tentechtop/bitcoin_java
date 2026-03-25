@@ -15,6 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +76,10 @@ public class SystemConfig {
     @Autowired
     private DataBase dataBase;
 
+
+    public static final DateTimeFormatter TX_TIME_FORMATTER = DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withZone(ZoneId.of("Asia/Shanghai")); // 核心修改：上海时区
 
     @PostConstruct
     public void init() {

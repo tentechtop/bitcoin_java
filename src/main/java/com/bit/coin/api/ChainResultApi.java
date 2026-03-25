@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.UNCONFIRMED_OUTPUT;
@@ -69,6 +70,33 @@ public class ChainResultApi {
         return Result.OK(txsByAddress);
     }
 
+    /**
+     * 查询地址下所有的UTXO
+     */
+    @GetMapping("/getUTXOsByAddressAndCount")
+    public Map<String, Object> getUTXOsByAddressAndCount(String address) {
+        return utxoCache.getUTXOsByAddressAndCount(address);
+    }
+
+
+    /**
+     * 查询地址下所有的UTXO
+     */
+    @GetMapping("/getUTXOsByAddressAndCountAndUTXO")
+    public Map<String, Object> getUTXOsByAddressAndCountAndUTXO(String address) {
+        return utxoCache.getUTXOsByAddressAndCountAndUTXO(address);
+    }
+
+
+    /**
+     * 查询地址可以用于交易的UTXO
+     */
+    @GetMapping("/getUTXOsAvailableBalance")
+    public Map<String, Object> getUTXOsAvailableBalance(String address) {
+        return txPool.getUTXOsAvailableBalance(address);
+    }
+
+
 
 
     //查询地址最近的交易
@@ -101,10 +129,7 @@ public class ChainResultApi {
     //在创建钱包后 后台启动从网络中恢复钱包过去可能使用的地址
     //可以一次扫描1024个地址 节点返回128字节 1024位的数据 0表示无交易 1表示有交易
     //钱包能根据交易判断这笔交易对该钱包来说是支出还是收入
-
-
     //查询地址下已经确认的交易带出输入引用 分页
-
     //查询交易池中的交易带出输入引用
 
 

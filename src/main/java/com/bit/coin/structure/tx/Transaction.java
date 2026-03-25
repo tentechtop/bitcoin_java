@@ -20,17 +20,19 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.config.SystemConfig.TX_TIME_FORMATTER;
 import static com.bit.coin.structure.script.ScriptExecutor.combineScripts;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs"})  // 按指定顺序输出
+@JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs","time","timeStr","height"})  // 按指定顺序输出
 public class Transaction {
     /**
      * 交易特征
@@ -84,19 +86,28 @@ public class Transaction {
     /**
      * 区块时间
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Long time;
+
+    private String timeStr;
+    public String getTimeStr() {
+        // 校验：时间戳非空 且 为有效正整数
+        if (time != null && time > 0) {
+            // 秒级时间戳 → 转换为Instant → 格式化为字符串
+            return TX_TIME_FORMATTER.format(Instant.ofEpochSecond(time));
+        }
+        // 无时间时返回空字符串
+        return "";
+    }
+
 
     /**
      * 区块高度
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Integer height;
 
     /**
      * 区块Hash
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] hash;
 

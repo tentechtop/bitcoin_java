@@ -558,4 +558,105 @@ public class UTXOCacheImpl implements UTXOCache {
         return result;
     }
 
+    @Override
+    public Map<String, Object> getUTXOsByAddressAndCountAndUTXO(String address) {
+        // 1. 获取地址下所有UTXO
+        List<UTXO> allUtxos = getAddressAllUTXO(address);
+        if (allUtxos.isEmpty()) {
+            // 修复：替换 Map.of 为 HashMap，解决10个键值对限制问题
+            Map<String, Object> emptyMap = new HashMap<>();
+            emptyMap.put("totalBalance", 0L);
+            emptyMap.put("availableBalance", 0L);
+            emptyMap.put("availableBalanceUTXOList", Collections.emptyList());
+            emptyMap.put("pendingReceive", 0L);
+            emptyMap.put("pendingReceiveUTXOList", Collections.emptyList());
+            emptyMap.put("pendingSpend", 0L);
+            emptyMap.put("maturingBalance", 0L);
+            emptyMap.put("maturingBalanceUTXOList", Collections.emptyList());
+            emptyMap.put("spentBalance", 0L);
+            emptyMap.put("orphanedBalance", 0L);
+            emptyMap.put("unavailableBalance", 0L);
+            return emptyMap;
+        }
+
+        // 2. 初始化线程安全的统计计数器
+        AtomicLong totalBalance = new AtomicLong(0);
+        AtomicLong availableBalance = new AtomicLong(0);
+        AtomicLong pendingReceive = new AtomicLong(0);
+        AtomicLong pendingSpend = new AtomicLong(0);
+        AtomicLong maturingBalance = new AtomicLong(0);
+        AtomicLong spentBalance = new AtomicLong(0);
+        AtomicLong orphanedBalance = new AtomicLong(0);
+
+        // 3. 初始化UTXO列表容器
+        List<UTXO> availableBalanceUTXOList = new ArrayList<>();
+        List<UTXO> pendingReceiveUTXOList = new ArrayList<>();
+        List<UTXO> maturingBalanceUTXOList = new ArrayList<>();
+
+        // 4. 遍历UTXO分类统计
+        allUtxos.forEach(utxo -> {
+            long value = utxo.getValue();
+            long status = utxo.getStatus();
+
+            // 未确认输出 → 待到账
+            if (UTXOStatusResolver.hasLifecycle(status, UNCONFIRMED_OUTPUT)) {
+                pendingReceive.addAndGet(value);
+                totalBalance.addAndGet(value);
+                pendingReceiveUTXOList.add(utxo);
+            }
+            // 已确认未花费 → 区分成熟状态
+            else if (UTXOStatusResolver.hasLifecycle(status, CONFIRMED_UNSPENT)) {
+                totalBalance.addAndGet(value);
+                if (UTXOStatusResolver.isCoinbaseMaturing(status)) {
+                    maturingBalance.addAndGet(value);
+                    maturingBalanceUTXOList.add(utxo);
+                } else if (UTXOStatusResolver.isCoinbaseMatured(status) || !utxo.isCoinbase()) {
+                    availableBalance.addAndGet(value);
+                    availableBalanceUTXOList.add(utxo);
+                }
+            }
+            // 花费中 → 待支出
+            else if (UTXOStatusResolver.hasLifecycle(status, PENDING_SPENT)) {
+                pendingSpend.addAndGet(value);
+            }
+            // 已花费
+            else if (UTXOStatusResolver.hasLifecycle(status, SPENT)) {
+                spentBalance.addAndGet(value);
+            }
+            // 被孤立
+            else if (UTXOStatusResolver.hasLifecycle(status, ORPHANED)) {
+                orphanedBalance.addAndGet(value);
+            }
+            // 未知状态
+            else {
+                log.warn("未知的UTXO生命周期状态: {}, UTXOKey: {}",
+                        UTXOStatusResolver.getLifecycleStatus(status),
+                        bytesToHex(utxo.getKey()));
+            }
+        });
+
+        // 5. 计算不可用余额
+        long unavailableBalance = totalBalance.get() - availableBalance.get();
+
+        // 6. 封装结果
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalBalance", totalBalance.get());
+        result.put("availableBalance", availableBalance.get());
+        result.put("availableBalanceUTXOList", availableBalanceUTXOList);
+        result.put("pendingReceive", pendingReceive.get());
+        result.put("pendingReceiveUTXOList", pendingReceiveUTXOList);
+        result.put("pendingSpend", pendingSpend.get());
+        result.put("maturingBalance", maturingBalance.get());
+        result.put("maturingBalanceUTXOList", maturingBalanceUTXOList);
+        result.put("spentBalance", spentBalance.get());
+        result.put("orphanedBalance", orphanedBalance.get());
+        result.put("unavailableBalance", unavailableBalance);
+
+        log.info("地址[{}]UTXO统计完成 - 总余额: {}, 可用: {}, 待到账: {}, 成熟中: {}",
+                address, totalBalance.get(), availableBalance.get(),
+                pendingReceive.get(), maturingBalance.get());
+
+        return result;
+    }
+
 }

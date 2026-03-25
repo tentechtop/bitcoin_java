@@ -63,7 +63,7 @@ public class UTXO {
     public WeakReference<Script> getScriptPubKeyWk() {
         if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
             try {
-                log.info("打印公钥{} 长度{}",bytesToHex(script),script.length);
+                log.debug("打印公钥{} 长度{}",bytesToHex(script),script.length);
                 Script deserialized = Script.deserialize(script);
                 scriptPubKeyWk = new WeakReference<>(deserialized);
             } catch (IOException e) {
