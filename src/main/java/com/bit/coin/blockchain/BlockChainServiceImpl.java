@@ -714,7 +714,12 @@ public class BlockChainServiceImpl implements BlockChainService{
             return true;
         }else {
             //打包失败将交易重新添加回交易池
-            txPool.onBlockFailed(block.getTransactions().toArray(new Transaction[0]));
+            // 过滤掉铸币交易，仅将普通交易放回交易池
+            Transaction[] normalTransactions = block.getTransactions().stream()
+                    .filter(transaction -> !transaction.isCoinbase())
+                    .toArray(Transaction[]::new);
+
+            txPool.onBlockFailed(normalTransactions);
             return false;
         }
     }

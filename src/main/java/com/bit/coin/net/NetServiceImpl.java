@@ -167,8 +167,6 @@ public class NetServiceImpl implements NetService {
 
             // 3. 串行同步当前节点分配的区块
             for (int height = currentAssignHeight; height <= endHeight; height++) {
-                Thread.sleep(100);
-
                 // 下载并验证区块（带重试）
                 Block block = fetchBlockFromPeerWithRetry(peerId, height);
                 if (block == null) {

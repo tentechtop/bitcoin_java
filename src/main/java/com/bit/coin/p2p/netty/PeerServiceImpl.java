@@ -3,6 +3,7 @@ package com.bit.coin.p2p.netty;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.conn.QuicConnection;
 import com.bit.coin.p2p.conn.QuicServiceHandler;
+import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
@@ -24,10 +25,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.security.cert.CertificateException;
 import java.util.List;
+import java.util.Set;
 
 import static com.bit.coin.config.SystemConfig.SelfPeer;
-import static com.bit.coin.p2p.conn.QuicConnectionManager.Global_Channel;
-import static com.bit.coin.p2p.conn.QuicConnectionManager.connectRemoteByAddr;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.*;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
@@ -47,9 +49,13 @@ public class PeerServiceImpl {
     private Bootstrap bootstrap;
 
     @Autowired
+    private RoutingTable routingTable;
+
+    @Autowired
     private TextHandler textHandler;
     @Autowired
     private Text2Handler2 textHandler2;
+
 
 
     @Autowired
@@ -79,7 +85,7 @@ public class PeerServiceImpl {
         protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1,  textHandler);
         protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2,  textHandler2);
 
-
+        protocolRegistry.registerVoidHandler(ProtocolEnum.Handshake_Success_V1, handshakeSuccessHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Find_Node_Req, p2PFindNodeReqHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Broadcast_Simple_Resource,  broadcastResourceHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Get_Resource_Req,  p2PGetResourceReqHandle);
@@ -209,10 +215,13 @@ public class PeerServiceImpl {
     }
 
     public List<Peer> getAllNodes() {
-        return null;
+        List<Peer> all = routingTable.getAll();
+        Set<String> onlinePeerIds = getOnlinePeerIds();//在onlinePeerIds中的all online字段改成true 不在改成false
+        all.forEach(peer -> peer.setOnline(onlinePeerIds.contains(bytesToHex(peer.getId()))));
+        return all;
     }
 
     public List<Peer> getOnlineNodes() {
-        return null;
+        return routingTable.getOnlineNodes();
     }
 }

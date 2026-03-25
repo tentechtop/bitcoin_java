@@ -196,8 +196,9 @@ public class ChainApi {
 
     //开始同步
     @GetMapping("/startSync")
-    public void startSync() throws InterruptedException, IOException {
+    public String startSync() throws InterruptedException, IOException {
         netService.startSyncBlock();
+        return "";
     }
 
     @GetMapping("/getLatestBlcok")
