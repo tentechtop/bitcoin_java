@@ -5,8 +5,7 @@ import com.bit.coin.p2p.conn.QuicConnection;
 import com.bit.coin.p2p.conn.QuicServiceHandler;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
-import com.bit.coin.p2p.protocol.impl.Text2Handler2;
-import com.bit.coin.p2p.protocol.impl.TextHandler;
+import com.bit.coin.p2p.protocol.impl.*;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.*;
@@ -52,11 +51,43 @@ public class PeerServiceImpl {
     private Text2Handler2 textHandler2;
 
 
+    @Autowired
+    private HandshakeSuccessHandle handshakeSuccessHandle;
+    @Autowired
+    private P2PFindNodeReqHandle p2PFindNodeReqHandle;
+    @Autowired
+    private BroadcastResourceHandle broadcastResourceHandle;
+    @Autowired
+    private P2PGetResourceReqHandle p2PGetResourceReqHandle;
+    @Autowired
+    private P2PReceiveBlockHandle p2PReceiveBlockHandle;
+    @Autowired
+    private P2PReceiveTxHandle p2PReceiveTxHandle;
+    @Autowired
+    private P2PQueryBlockByHashHandle p2PQueryBlockByHashHandle;
+    @Autowired
+    private P2PQueryBlockByHeightHandle p2PQueryBlockByHeightHandle;
+    @Autowired
+    private P2PQueryCommonAncestorHandle p2PQueryCommonAncestorHandle;
+
+
+
     @PostConstruct
     public void init() throws IOException, CertificateException, InterruptedException {
         startQuicServer();
         protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1,  textHandler);
         protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2,  textHandler2);
+
+
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Find_Node_Req, p2PFindNodeReqHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Broadcast_Simple_Resource,  broadcastResourceHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Get_Resource_Req,  p2PGetResourceReqHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Block,  p2PReceiveBlockHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Transaction,  p2PReceiveTxHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash,  p2PQueryBlockByHashHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height,  p2PQueryBlockByHeightHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Common_Ancestor,  p2PQueryCommonAncestorHandle);
+
         connectBootstrapNodes();
     }
 

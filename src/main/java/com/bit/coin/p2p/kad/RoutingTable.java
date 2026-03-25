@@ -3,12 +3,14 @@ package com.bit.coin.p2p.kad;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
-import com.bit.coin.p2p.conn.QuicConnection;
-import com.bit.coin.p2p.conn.QuicConnectionManager;
+
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.dto.BroadcastResource;
+import com.bit.coin.p2p.conn.QuicConnection;
+import com.bit.coin.p2p.conn.QuicConnectionManager;
+
 import com.bit.coin.utils.Ed25519Signer;
 import com.bit.coin.utils.KeyInfo;
 import com.bit.coin.utils.MultiAddress;
@@ -20,8 +22,10 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -32,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+
 
 import static com.bit.coin.config.SystemConfig.PEER_KEY;
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
@@ -47,6 +52,7 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 @NoArgsConstructor
 @Component
 @Data
+@Order(1)
 public class RoutingTable {
 
     private int bucketSize=20;
@@ -60,7 +66,7 @@ public class RoutingTable {
     // 定时任务线程池（单线程即可，避免并发冲突）
     private ScheduledExecutorService persistScheduler;
     // 定时检查周期：1分钟（单位：毫秒）
-    private static final long PERSIST_CHECK_PERIOD = 10 * 1000L;
+    private static final long PERSIST_CHECK_PERIOD = 60 * 1000L;
 
     // 路由表刷新相关配置
     // 刷新周期：10分钟（Kademlia 标准）
@@ -107,34 +113,6 @@ public class RoutingTable {
     public void init() throws Exception{
         dataBase = config.getDataBase();
 
-        byte[] bytes = dataBase.get(TableEnum.PEER, PEER_KEY);
-        if (bytes == null) {
-            SystemConfig.SelfPeer = new Peer();
-            SystemConfig.SelfPeer.setAddress("127.0.0.1");
-            SystemConfig.SelfPeer.setPort(config.getQuicPort());
-
-            List<String> mnemonic = generateMnemonic();
-            KeyInfo baseKey = getSolanaKeyPair(mnemonic, 0, 0);
-
-            byte[] alicePrivateKey = baseKey.getPrivateKey();
-            byte[] alicePublicKey =  Ed25519Signer.derivePublicKeyFromPrivateKey(alicePrivateKey);
-
-            SystemConfig.SelfPeer.setId(alicePublicKey);
-            SystemConfig.SelfPeer.setPrivateKey(alicePrivateKey);
-
-            //保存到本地数据库
-            byte[] serialize = SystemConfig.SelfPeer.serialize();
-            dataBase.insert(TableEnum.PEER, PEER_KEY, serialize);
-        } else {
-            //反序列化
-            SystemConfig.SelfPeer = Peer.deserialize(bytes);
-            SystemConfig.SelfPeer.setPort(config.getQuicPort());
-            dataBase.update(TableEnum.PEER, PEER_KEY, SystemConfig.SelfPeer.serialize());
-        }
-        byte[] selfNodeId = SystemConfig.SelfPeer.getId();
-        log.info("本地节点初始化完成，ID: {}, 监听端口: {}", Base58.encode(selfNodeId), SystemConfig.SelfPeer.getPort());
-        log.info("Base58.encode(selfNodeId){}",Base58.encode(selfNodeId).length());
-
         MultiAddress address = MultiAddress.build(
                 "ip4",
                 "127.0.0.1",
@@ -142,10 +120,10 @@ public class RoutingTable {
                 SystemConfig.SelfPeer.getPort(),
                 Base58.encode(SystemConfig.SelfPeer.getId())
         );
-        log.info("地址: {}" ,address.toRawAddress());
+        log.info("解释地址: {}" ,address.toRawAddress());
         log.info("地址: {}" ,address.getPeerIdHex());
 
-        localNodeId = selfNodeId;
+        localNodeId = SystemConfig.SelfPeer.getId();
         buckets = new CopyOnWriteArrayList<>();
         for (int i = 0; i < identifierSize + 1; i++) {
             buckets.add(createBucketOfId(i));
@@ -373,12 +351,27 @@ public class RoutingTable {
      * @param count 要查找的节点数量（最大为findNodeSize=20）
      * @return 按距离升序排列的节点列表
      */
+    /**
+     * 找到与目标ID最近的N个节点（Kad协议find_node）
+     * @param targetId 目标节点ID（32字节）
+     * @param count 要查找的节点数量（最大为findNodeSize=20）
+     * @return 按距离升序排列的节点列表
+     */
     public List<Peer> findClosestPeers(byte[] targetId, int count) {
         if (targetId == null || targetId.length != 32) {
             log.warn("目标ID格式错误，返回空列表");
             return Collections.emptyList();
         }
-        int maxCount = Math.min(count, findNodeSize);
+
+        // ===================== 新增逻辑：在线节点<20则返回全部 =====================
+        int onlineCount = getOnlinePeerCount();
+        int maxCount;
+        if (onlineCount < 20) {
+            maxCount = Integer.MAX_VALUE; // 不限制数量，返回所有节点
+            log.debug("在线节点数{} < 20，查询最近节点时返回全部节点", onlineCount);
+        } else {
+            maxCount = Math.min(count, findNodeSize); // 正常逻辑，限制20个
+        }
 
         // 收集所有桶中的节点，并计算与目标ID的距离
         Map<Peer, byte[]> peerDistanceMap = new HashMap<>();
@@ -394,7 +387,7 @@ public class RoutingTable {
         return peerDistanceMap.entrySet().stream()
                 .sorted((e1, e2) -> compareDistance(e1.getValue(), e2.getValue()))
                 .map(Map.Entry::getKey)
-                .limit(maxCount)
+                .limit(maxCount) // 在线<20时无限制，正常则限制20
                 .collect(Collectors.toList());
     }
 
@@ -607,7 +600,7 @@ public class RoutingTable {
         try {
             byte[] serializedPeers = dataBase.get(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes());
             if (serializedPeers == null || serializedPeers.length == 0) {
-                log.debug("无持久化的路由表节点数据");
+                log.info("无持久化的路由表节点数据");
                 return;
             }
 
@@ -652,13 +645,28 @@ public class RoutingTable {
         new Timer().schedule(new TimerTask() {
             @Override
             public void run() {
-                //连接路由表中的节点
-                for (Peer peer : getAll()) {
-                    log.info("连接其他的节点{}",peer.getMultiaddr());
-                    QuicConnection quicConnection = null;
-                    quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
-                    if (quicConnection!=null){
-                        List<Peer> nodeIterative = findNodeIterative(peer.getId(), localNodeId);
+                int onlineCount = getOnlinePeerCount();
+                List<Peer> peersToConnect;
+
+                // ===================== 核心逻辑：在线<20则连接所有节点 =====================
+                if (onlineCount < 20) {
+                    peersToConnect = getAll();
+                    log.info("在线节点数{} < 20，自动连接路由表中所有节点", onlineCount);
+                } else {
+                    peersToConnect = getAll(); // 原逻辑保留
+                    log.info("在线节点数≥20，正常执行节点连接");
+                }
+
+                // 遍历连接节点
+                for (Peer peer : peersToConnect) {
+                    log.info("连接节点：{}", peer.getMultiaddr());
+                    try {
+                        QuicConnection quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
+                        if (quicConnection != null) {
+                            findNodeIterative(peer.getId(), localNodeId);
+                        }
+                    } catch (Exception e) {
+                        log.error("连接节点{}失败", peer.getMultiaddr(), e);
                     }
                 }
             }
@@ -1514,6 +1522,11 @@ public class RoutingTable {
     }
 
 
-
+    /**
+     * 获取当前在线节点数量
+     */
+    private int getOnlinePeerCount() {
+        return getOnlinePeerIds().size();
+    }
 
 }
