@@ -20,6 +20,7 @@ import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -404,8 +405,18 @@ public class QuicConnectionManager {
             peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
             peer.setChainWork(deserialize.getChainWork());
 
-
-
+            P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
+            byte[] serialize1 = null;
+            try {
+                serialize1 = p2PMessage.serialize();
+                QuicMsg quicMsg = new QuicMsg();
+                quicMsg.setConnectionId(connectionId);
+                quicMsg.setDataId(ID_Generator.nextId());
+                quicMsg.setData(serialize1);
+                pushCompleteMsg(quicMsg);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }).start();
         return quicConnection;
     }
@@ -554,6 +565,18 @@ public class QuicConnectionManager {
                 peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
                 peer.setChainWork(deserialize.getChainWork());
 
+                P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
+                byte[] serialize1 = null;
+                try {
+                    serialize1 = p2PMessage.serialize();
+                    QuicMsg quicMsg = new QuicMsg();
+                    quicMsg.setConnectionId(connectionId);
+                    quicMsg.setDataId(ID_Generator.nextId());
+                    quicMsg.setData(serialize1);
+                    pushCompleteMsg(quicMsg);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }).start();
 
             return quicConnection;

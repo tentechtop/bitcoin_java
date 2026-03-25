@@ -8,7 +8,7 @@ import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
 
-import com.bit.coin.p2p.impl.PeerClient;
+
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockBody;
@@ -64,8 +64,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     @Autowired
     private TxPool txPool;
 
-    @Autowired
-    private PeerClient peerClient;
+
 
     @Autowired
     private RoutingTable routingTable;
