@@ -8,10 +8,8 @@ import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.quic.QuicConnection;
 import com.bit.coin.p2p.quic.QuicConnectionManager;
-import com.bit.coin.utils.SerializeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
-import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,8 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
-import static com.bit.coin.structure.block.HexByteArraySerializer.bytesToHex;
-import static com.bit.coin.structure.block.HexByteArraySerializer.hexToBytes;
+import static com.bit.coin.utils.HexByteArraySerializer.bytesToHex;
 
 @Slf4j
 @RestController

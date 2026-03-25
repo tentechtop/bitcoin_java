@@ -3,7 +3,6 @@ package com.bit.coin.p2p.kad;
 import com.bit.coin.p2p.peer.Peer;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
 
 import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
@@ -200,10 +199,6 @@ public class Bucket {
         // 遍历映射中的所有节点并添加到列表
         nodesList.addAll(nodeMap.values());
         return nodesList;
-    }
-
-    public ConcurrentHashMap<String, Peer> getNodeMap() {
-        return nodeMap;
     }
 
 

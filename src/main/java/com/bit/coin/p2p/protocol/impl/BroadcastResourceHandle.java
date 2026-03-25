@@ -2,8 +2,6 @@ package com.bit.coin.p2p.protocol.impl;
 
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
-import com.bit.coin.config.CommonConfig;
-import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
@@ -16,14 +14,14 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 
 
+import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
 public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHandler{
 
-    @Autowired
-    private PeerClient peerClient;
+
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -60,7 +58,7 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
             //如果需要这个资源就发送 对该资源的请求
             if (need){
                 log.info("需要这个资源 {} ",data.length);
-                peerClient.sendData(bytesToHex(senderId),ProtocolEnum.P2P_Get_Resource_Req,data,5000);
+                staticSendData(bytesToHex(senderId),ProtocolEnum.P2P_Get_Resource_Req,data,5000);
             }else {
                 log.info("不需要这个资源");
             }

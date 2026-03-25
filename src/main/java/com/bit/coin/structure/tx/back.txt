@@ -1,6 +1,6 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.utils.SerializeUtils;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonFormat;

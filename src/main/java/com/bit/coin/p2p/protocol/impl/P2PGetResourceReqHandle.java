@@ -1,7 +1,6 @@
 package com.bit.coin.p2p.protocol.impl;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
-import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
@@ -14,14 +13,14 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
+import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
 public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHandler{
 
-    @Autowired
-    private PeerClient peerClient;
+
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -44,13 +43,13 @@ public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHand
                     //将区块发送给目标节点
                     Block blockByHash = blockChainService.getBlockByHash(broadcastResource.getHash());
                     byte[] serialize = blockByHash.serialize();
-                    peerClient.sendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Block,serialize,5000);
+                    staticSendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Block,serialize,5000);
                     break;
                 case 1:
                     log.info("将交易发送 hash:{}",broadcastResource.getHash());
                     Transaction txByHash = blockChainService.getTxByHash(broadcastResource.getHash());
                     byte[] txSerialize = txByHash.serialize();
-                    peerClient.sendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Transaction,txSerialize,5000);
+                    staticSendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Transaction,txSerialize,5000);
                     break;
                 default:
                     log.info("收到未知资源广播");

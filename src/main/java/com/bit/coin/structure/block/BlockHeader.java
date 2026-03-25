@@ -1,5 +1,6 @@
 package com.bit.coin.structure.block;
 
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
@@ -8,13 +9,10 @@ import tools.jackson.databind.annotation.JsonSerialize;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.Arrays;
 
-import static ch.qos.logback.core.encoder.ByteArrayUtil.hexStringToByteArray;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.littleEndianToInt;
 import static org.bouncycastle.util.Pack.intToLittleEndian;

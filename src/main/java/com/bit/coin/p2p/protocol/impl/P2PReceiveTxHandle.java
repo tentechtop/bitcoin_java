@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
-import static com.bit.coin.config.CommonConfig.EXIST_RESOURCE_CACHE;
+
+import static com.bit.coin.p2p.conn.QuicConstants.EXIST_RESOURCE_CACHE;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j

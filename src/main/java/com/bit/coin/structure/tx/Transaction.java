@@ -1,6 +1,6 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.bit.coin.structure.script.ScriptExecutor;
 import com.bit.coin.utils.Ed25519Signer;

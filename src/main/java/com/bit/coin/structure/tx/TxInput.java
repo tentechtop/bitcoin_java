@@ -1,9 +1,8 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.bit.coin.utils.SerializeUtils;
-import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -18,7 +17,6 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
-import java.util.Arrays;
 
 import static com.bit.coin.structure.tx.Transaction.TX_ID_LENGTH;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;

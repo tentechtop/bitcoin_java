@@ -1,18 +1,16 @@
 package com.bit.coin.p2p.kad;
 
-import com.bit.coin.config.CommonConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
-import com.bit.coin.p2p.impl.PeerClient;
+import com.bit.coin.p2p.conn.QuicConnection;
+import com.bit.coin.p2p.conn.QuicConnectionManager;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.dto.BroadcastResource;
-import com.bit.coin.p2p.quic.QuicConnection;
-import com.bit.coin.p2p.quic.QuicConnectionManager;
-import com.bit.coin.structure.key.KeyInfo;
 import com.bit.coin.utils.Ed25519Signer;
+import com.bit.coin.utils.KeyInfo;
 import com.bit.coin.utils.MultiAddress;
 import com.bit.coin.utils.UInt256;
 import jakarta.annotation.PostConstruct;
@@ -24,7 +22,6 @@ import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -36,9 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
-import static com.bit.coin.config.CommonConfig.*;
+import static com.bit.coin.config.SystemConfig.PEER_KEY;
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.*;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.getOnlinePeerIds;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
+import static com.bit.coin.p2p.conn.QuicConstants.EXIST_RESOURCE_CACHE;
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -82,8 +81,6 @@ public class RoutingTable {
     @Autowired
     private SystemConfig config;
 
-    @Autowired
-    private PeerClient peerClient;
 
     /* 路由表所有者的ID（节点ID）32字节公钥 */
     private byte[] localNodeId;
@@ -112,9 +109,9 @@ public class RoutingTable {
 
         byte[] bytes = dataBase.get(TableEnum.PEER, PEER_KEY);
         if (bytes == null) {
-            self = new Peer();
-            self.setAddress("127.0.0.1");
-            self.setPort(config.getQuicPort());
+            SystemConfig.SelfPeer = new Peer();
+            SystemConfig.SelfPeer.setAddress("127.0.0.1");
+            SystemConfig.SelfPeer.setPort(config.getQuicPort());
 
             List<String> mnemonic = generateMnemonic();
             KeyInfo baseKey = getSolanaKeyPair(mnemonic, 0, 0);
@@ -122,28 +119,28 @@ public class RoutingTable {
             byte[] alicePrivateKey = baseKey.getPrivateKey();
             byte[] alicePublicKey =  Ed25519Signer.derivePublicKeyFromPrivateKey(alicePrivateKey);
 
-            self.setId(alicePublicKey);
-            self.setPrivateKey(alicePrivateKey);
+            SystemConfig.SelfPeer.setId(alicePublicKey);
+            SystemConfig.SelfPeer.setPrivateKey(alicePrivateKey);
 
             //保存到本地数据库
-            byte[] serialize = self.serialize();
+            byte[] serialize = SystemConfig.SelfPeer.serialize();
             dataBase.insert(TableEnum.PEER, PEER_KEY, serialize);
         } else {
             //反序列化
-            self = Peer.deserialize(bytes);
-            self.setPort(config.getQuicPort());
-            dataBase.update(TableEnum.PEER, PEER_KEY, self.serialize());
+            SystemConfig.SelfPeer = Peer.deserialize(bytes);
+            SystemConfig.SelfPeer.setPort(config.getQuicPort());
+            dataBase.update(TableEnum.PEER, PEER_KEY, SystemConfig.SelfPeer.serialize());
         }
-        byte[] selfNodeId = self.getId();
-        log.info("本地节点初始化完成，ID: {}, 监听端口: {}", Base58.encode(selfNodeId), self.getPort());
+        byte[] selfNodeId = SystemConfig.SelfPeer.getId();
+        log.info("本地节点初始化完成，ID: {}, 监听端口: {}", Base58.encode(selfNodeId), SystemConfig.SelfPeer.getPort());
         log.info("Base58.encode(selfNodeId){}",Base58.encode(selfNodeId).length());
 
         MultiAddress address = MultiAddress.build(
                 "ip4",
                 "127.0.0.1",
                 MultiAddress.Protocol.QUIC,
-                self.getPort(),
-                Base58.encode(self.getId())
+                SystemConfig.SelfPeer.getPort(),
+                Base58.encode(SystemConfig.SelfPeer.getId())
         );
         log.info("地址: {}" ,address.toRawAddress());
         log.info("地址: {}" ,address.getPeerIdHex());
@@ -659,19 +656,9 @@ public class RoutingTable {
                 for (Peer peer : getAll()) {
                     log.info("连接其他的节点{}",peer.getMultiaddr());
                     QuicConnection quicConnection = null;
-                    try {
-                        quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
-                        if (quicConnection!=null){
-                            List<Peer> nodeIterative = findNodeIterative(peer.getId(), localNodeId);
-                        }
-                    } catch (ExecutionException e) {
-                        throw new RuntimeException(e);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    } catch (TimeoutException e) {
-                        throw new RuntimeException(e);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
+                    quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
+                    if (quicConnection!=null){
+                        List<Peer> nodeIterative = findNodeIterative(peer.getId(), localNodeId);
                     }
                 }
             }
@@ -763,7 +750,7 @@ public class RoutingTable {
         log.info("广播消息{}",onlineNodes.size());
         for (Peer peer : onlineNodes) {
             log.info("发送消息给节点{}",bytesToHex(peer.getId()));
-            peerClient.sendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Broadcast_Simple_Resource, broadcastResource.toBytes(), 5000);
+            staticSendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Broadcast_Simple_Resource, broadcastResource.toBytes(), 5000);
         }
         log.info("全部发送完毕");
         //将资源加入到已经存在的列表 保持
@@ -890,7 +877,7 @@ public class RoutingTable {
             System.arraycopy(searchId, 0, data, 0, 32);
             System.arraycopy(intToBytes(count), 0, data, 32, 4);
             log.info("请求sendFindNode");
-            byte[] p2pRes = peerClient.sendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
+            byte[] p2pRes = staticSendData(bytesToHex(targetId), ProtocolEnum.P2P_Find_Node_Req, data, 5000);
             P2PMessage deserialize = P2PMessage.deserialize(p2pRes);
             byte[] res = deserialize.getData();
             if (res!=null){
@@ -1217,7 +1204,7 @@ public class RoutingTable {
             System.arraycopy(intToBytes(count), 0, data, 32, 4);
 
             // 发送查询请求
-            byte[] p2pRes = peerClient.sendData(peerIdHex, ProtocolEnum.P2P_Find_Node_Req, data, timeoutMillis);
+            byte[] p2pRes = staticSendData(peerIdHex, ProtocolEnum.P2P_Find_Node_Req, data, timeoutMillis);
             if (p2pRes == null) {
                 log.debug("节点{}无响应", peerIdHex);
                 return Collections.emptyList();

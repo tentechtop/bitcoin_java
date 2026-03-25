@@ -1,21 +1,25 @@
 package com.bit.coin.config;
 
+
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.p2p.peer.Peer;
+import com.bit.coin.utils.Ed25519Signer;
+import com.bit.coin.utils.KeyInfo;
 import jakarta.annotation.PostConstruct;
 import lombok.Data;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import static com.bit.coin.utils.ECCWithAESGCM.generateCurve25519KeyPair;
+import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
+import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
+
 
 @Slf4j
 @Data
@@ -38,29 +42,21 @@ public class SystemConfig {
     //挖矿方式
     private Integer miningType;
 
-
-
-
     //网络参数 MainNetParams TestNet3Params RegressionNetParams
     private String netParams;
 
 
-    public static final byte[] PEER_SECURITY_KEY = "peer_security_key".getBytes();
-    public static byte[][] SelfKey = null;
 
 
-    //网络参数配置
-    private ParamsConfig.Params params;
+    // 本地节点标识
+    public static final byte[] PEER_KEY = "LOCAL_PEER".getBytes();
 
-    // 网络参数映射
-    private static final Map<String, ParamsConfig.Params> NETWORK_MAP = new HashMap<>();
 
-    static {
-        // 初始化网络映射
-        NETWORK_MAP.put("MainNetParams", ParamsConfig.MainNetParams);
-        NETWORK_MAP.put("TestNet3Params", ParamsConfig.TestNet3Params);
-        NETWORK_MAP.put("RegressionNetParams", ParamsConfig.RegressionNetParams);
-    }
+
+    //节点信息
+    @Getter
+    public static Peer SelfPeer;
+
 
 
     @Autowired
@@ -71,77 +67,43 @@ public class SystemConfig {
     public void init() {
         log.info("端口{}",quicPort);
         log.info("系统数据路径:{}",path);
-        // 初始化网络参数
-        initializeNetworkParams();
 
         boolean database = dataBase.createDatabase(this);
         if (!database) {
             throw new RuntimeException("数据库创建失败");
         }
-        byte[] key = dataBase.get(TableEnum.PEER, PEER_SECURITY_KEY);
-        if (key==null){
-            log.info("key是空的");
-            byte[][] bytes = generateCurve25519KeyPair();
-            byte[] privateKey = bytes[0];
-            byte[] publicKey = bytes[1];
-            //拼接成一个 byte[]
-            byte[] saveBytes = new byte[64];
-            System.arraycopy(privateKey, 0, saveBytes, 0, 32);
-            System.arraycopy(publicKey, 0, saveBytes, 32, 32);
-            SelfKey=bytes;
-            //保存
-            dataBase.insert(TableEnum.PEER, PEER_SECURITY_KEY, saveBytes);
-        }else {
-            log.info("key不为空");
-            //切割 32|32
-            //取前32字节
-            byte[] privateKey = Arrays.copyOfRange(key, 0, 32);
-            //取后32字节
-            byte[] publicKey = Arrays.copyOfRange(key, 32, 64);
-            //组合成byte[][]
-            SelfKey = new byte[][]{privateKey, publicKey};
-        }
-    }
 
-    /**
-     * 根据 netParams 配置初始化网络参数
-     */
-    private void initializeNetworkParams() {
-        if (netParams == null || netParams.isEmpty()) {
-            log.warn("未配置网络参数，默认使用主网");
-            this.params = ParamsConfig.MainNetParams;
+        byte[] peerData = dataBase.get(TableEnum.PEER, PEER_KEY);
+        if (peerData == null) {
+            SelfPeer = new Peer();
+            SelfPeer.setAddress("127.0.0.1");
+            SelfPeer.setPort(getQuicPort());
+            List<String> mnemonic = generateMnemonic();
+            KeyInfo baseKey = getSolanaKeyPair(mnemonic, 0, 0);
+            byte[] alicePrivateKey = baseKey.getPrivateKey();
+            byte[] alicePublicKey =  Ed25519Signer.derivePublicKeyFromPrivateKey(alicePrivateKey);
+            SelfPeer.setId(alicePublicKey);
+            SelfPeer.setPrivateKey(alicePrivateKey);
+            //保存到本地数据库
+            byte[] serialize = SelfPeer.serialize();
+            if (serialize==null){
+                //报异常
+                throw new RuntimeException("节点信息序列化失败");
+            }
+            dataBase.insert(TableEnum.PEER, PEER_KEY, serialize);
         } else {
-            this.params = NETWORK_MAP.get(netParams);
-            if (this.params == null) {
-                log.error("未知的网络参数配置: {}，可选值: MainNetParams, TestNet3Params, RegressionNetParams", netParams);
-                throw new IllegalArgumentException("不支持的netParams配置: " + netParams);
+            //反序列化
+            SelfPeer = Peer.deserialize(peerData);
+            if (SelfPeer!=null){
+                SelfPeer.setPort(getQuicPort());
+                dataBase.update(TableEnum.PEER, PEER_KEY, SelfPeer.serialize());
+            }else {
+                //报异常
+                throw new RuntimeException("节点信息反序列化失败");
             }
         }
-        log.info("已配置网络参数: {}", this.params.getName());
-    }
+        log.info("本地节点地址: {}",SelfPeer.getMultiaddr());
 
-    /**
-     * 获取网络参数
-     */
-    public ParamsConfig.Params getParams() {
-        if (this.params == null) {
-            initializeNetworkParams();
-        }
-        return this.params;
-    }
-
-    /**
-     * 快捷方法：获取当前网络的默认端口
-     */
-    public int getDefaultPort() {
-        return Integer.parseInt(getParams().getDefaultPort());
-    }
-
-    /**
-     * 检查是否是主网
-     */
-    public boolean isMainNet() {
-        return "mainnet".equals(getParams().getName());
     }
 
 

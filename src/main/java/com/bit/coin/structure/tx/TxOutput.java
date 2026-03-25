@@ -1,6 +1,6 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;

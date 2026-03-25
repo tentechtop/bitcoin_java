@@ -1,6 +1,6 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
@@ -15,7 +15,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 
-import static com.bit.coin.structure.tx.UTXOStatusResolver.PENDING_SPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j

@@ -1,9 +1,8 @@
 package com.bit.coin.p2p.protocol;
 
-import com.bit.coin.config.CommonConfig;
+
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -15,9 +14,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 public class ProtocolRegistry {
-
-    @Autowired
-    private CommonConfig commonConfig;
 
 
     // 单例模式（P2P节点全局唯一）

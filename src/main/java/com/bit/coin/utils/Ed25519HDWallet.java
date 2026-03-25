@@ -1,7 +1,6 @@
 package com.bit.coin.utils;
 
 
-import com.bit.coin.structure.key.KeyInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.bitcoinj.crypto.MnemonicCode;
