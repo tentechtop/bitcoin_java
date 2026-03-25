@@ -1,5 +1,7 @@
 package com.bit.coin.p2p.conn;
 
+import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.RequestConnect;
@@ -15,6 +17,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.InetSocketAddress;
@@ -25,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.SystemConfig.SelfPeer;
 import static com.bit.coin.p2p.conn.QuicConstants.*;
 import static com.bit.coin.p2p.conn.QuicFrame.ALLOCATOR;
@@ -32,11 +36,15 @@ import static com.bit.coin.p2p.protocol.P2PMessage.newRequestMessage;
 import static com.bit.coin.utils.ECCWithAESGCM.generateCurve25519KeyPair;
 import static com.bit.coin.utils.ECCWithAESGCM.generateSharedSecret;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 
 @Slf4j
 @Component
 public class QuicConnectionManager {
+
+    @Autowired
+    private RoutingTable routingTable;
 
     //节点ID到连接ID
     public static final Map<String, Long> PEER_CONNECTION = new ConcurrentHashMap<>();
@@ -294,6 +302,9 @@ public class QuicConnectionManager {
             reqQuicFrame.setFrameType(QuicFrameEnum.CONNECT_REQUEST_FRAME.getCode());
             RequestConnect requestConnect = new RequestConnect();
             requestConnect.setPeerId(SelfPeer.getId());
+            requestConnect.setLatestHash(mainTipBlock.getHash());
+            requestConnect.setLatestHeight(mainTipBlock.getHeight());
+            requestConnect.setChainWork(mainTipBlock.getChainWork());
             byte[][] AKeys = generateCurve25519KeyPair();
             byte[] aPrivateKey = AKeys[0];
             byte[] aPublicKey = AKeys[1];
@@ -385,8 +396,17 @@ public class QuicConnectionManager {
         CONNECTION_MAP.put(connectionId, quicConnection);
 
         //使用线程
+        new Thread(() -> {
+            Peer peer = new Peer();
+            peer.setInetSocketAddress(remoteAddress);
+            peer.setId(hexToBytes(peerIdHexString));
+            peer.setHeight(deserialize.getLatestHeight());
+            peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
+            peer.setChainWork(deserialize.getChainWork());
 
 
+
+        }).start();
         return quicConnection;
     }
 
@@ -499,12 +519,16 @@ public class QuicConnectionManager {
             PEER_CONNECTION.put(peerIdHexString, connectionId);
             CONNECTION_MAP.put(connectionId, quicConnection);
 
-            //异步执行用虚拟线程
-            Thread.ofVirtual().start(() -> {
+            //使用线程
+            new Thread(() -> {
                 RequestConnect responseConnect = new RequestConnect();
                 responseConnect.setPeerId(SelfPeer.getId());
                 responseConnect.setVersion(1);
+                responseConnect.setLatestHash(mainTipBlock.getHash());
+                responseConnect.setLatestHeight(mainTipBlock.getHeight());
+                responseConnect.setChainWork(mainTipBlock.getChainWork());
                 responseConnect.setSharedSecretPubKey(bPublicKey);
+
                 byte[] signatureData = responseConnect.getSignatureData();
                 //生成签名
                 byte[] signature = Ed25519Signer.fastSign(SelfPeer.getPrivateKey(),signatureData);//签名
@@ -521,7 +545,17 @@ public class QuicConnectionManager {
                 //发送连接确认帧
                 sendFrameWithoutResponse(responseFrame);
                 log.info("成功为PeerId {}（IP：{}）创建连接，连接ID：{}", peerIdHexString, remoteIp, connectionId);
-            });
+
+
+                Peer peer = new Peer();
+                peer.setInetSocketAddress(remoteAddress);
+                peer.setId(hexToBytes(peerIdHexString));
+                peer.setHeight(deserialize.getLatestHeight());
+                peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
+                peer.setChainWork(deserialize.getChainWork());
+
+            }).start();
+
             return quicConnection;
         } catch (Exception e) {
             log.error("处理连接请求失败（IP：{}）", remoteIp, e);
