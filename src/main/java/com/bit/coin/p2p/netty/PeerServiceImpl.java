@@ -3,6 +3,7 @@ package com.bit.coin.p2p.netty;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.conn.QuicConnection;
 import com.bit.coin.p2p.conn.QuicServiceHandler;
+import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
 import com.bit.coin.p2p.protocol.impl.*;
@@ -207,4 +208,11 @@ public class PeerServiceImpl {
         }
     }
 
+    public List<Peer> getAllNodes() {
+        return null;
+    }
+
+    public List<Peer> getOnlineNodes() {
+        return null;
+    }
 }

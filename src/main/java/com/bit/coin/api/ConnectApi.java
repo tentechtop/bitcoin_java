@@ -1,8 +1,8 @@
 package com.bit.coin.api;
 
-import com.bit.coin.p2p.impl.PeerClient;
+
 import com.bit.coin.p2p.protocol.P2PMessage;
-import com.bit.coin.p2p.quic.QuicConnection;
+import com.bit.coin.p2p.conn.QuicConnection;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,9 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import static com.bit.coin.p2p.conn.QuicConnectionManager.*;
 import static com.bit.coin.p2p.protocol.ProtocolEnum.TEXT_V1;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.connectRemoteByAddr;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.disConnectRemoteByPeerId;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -23,8 +22,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @RequestMapping("/connect")
 public class ConnectApi {
 
-    @Autowired
-    private PeerClient peerClient;
+
 
 
     @GetMapping("/connect")
@@ -58,7 +56,7 @@ public class ConnectApi {
         Arrays.fill(mockData, (byte) 'a');
         //发送一百次
         for (int i = 0; i < 1; i++) {
-            byte[] bytes = peerClient.sendData(bytesToHex(decode), TEXT_V1, mockData, 5000);
+            byte[] bytes = staticSendData(bytesToHex(decode), TEXT_V1, mockData, 5000);
             if (bytes!=null){
                 P2PMessage deserialize = P2PMessage.deserialize(bytes);
                 assert deserialize != null;
