@@ -383,6 +383,10 @@ public class QuicConnectionManager {
 
         PEER_CONNECTION.put(peerIdHexString, connectionId);
         CONNECTION_MAP.put(connectionId, quicConnection);
+
+        //使用线程
+
+
         return quicConnection;
     }
 

@@ -38,6 +38,7 @@ public enum ProtocolEnum {
     P2P_Query_Common_Ancestor(15, "/P2P_Query_Common_Ancestor/1.0.0",true),
 
 
+    Handshake_Success_V1(16, "/handshakeSuccess/1.0.0",false),
 
 
     ;
