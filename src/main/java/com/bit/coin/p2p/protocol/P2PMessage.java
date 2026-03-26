@@ -1,30 +1,19 @@
 package com.bit.coin.p2p.protocol;
 
 
-import com.bit.coin.proto.Structure;
 import com.bit.coin.utils.UUIDv7Generator;
-import com.google.protobuf.ByteString;
 import lombok.Data;
 import org.bitcoinj.core.Base58;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.Arrays;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 
 /**
- * Solana P2P网络消息协议实体
+ * P2P网络消息协议实体
  * 核心字段遵循网络字节序（大端序），适配跨节点/跨语言传输
- * 字段规范：
- * - senderId：32字节Solana公钥（Base58编码后为字符串）
- * - messageId：16字节UUID V7（分布式唯一消息ID）
- * - requestId：16字节UUID V7（请求响应关联ID，全零数组代表非请求/响应消息）
- * - reqResFlag：请求/响应标识（0=请求，1=响应，仅当requestId非全零时有效）
- * - type：消息类型（如PING=1, PONG=2, TRANSACTION=3等）
- * - length：data字段长度（protobuf序列化后，避免NPE）
- * - version：协议版本（默认1，最小1，最大Short.MAX_VALUE）
- * - data：protobuf序列化后的业务数据
  */
 @Data
 public class P2PMessage {
@@ -33,8 +22,8 @@ public class P2PMessage {
     public static final short MIN_VERSION = 1;
     /** 最大协议版本号（Short最大值，可根据业务扩展） */
     public static final short MAX_VERSION = Short.MAX_VALUE;
-    /** Solana公钥固定长度（字节） */
-    public static final int SOLANA_PUBKEY_LENGTH = 32;
+    /** 公钥固定长度（字节） */
+    public static final int PUBKEY_LENGTH = 32;
     /** UUID V7固定长度（字节） */
     public static final int UUID_V7_LENGTH = 16;
     /** 请求标识（reqResFlag=0） */
@@ -43,18 +32,17 @@ public class P2PMessage {
     public static final byte RES_FLAG = 0x01;
 
     // ===================== 核心字段 =====================
-    private byte[] senderId;       // 32字节Solana公钥（消息发送者ID）
+    private byte[] senderId;       // 32字节公钥（消息发送者ID）
     private byte[] messageId;      // 16字节UUID V7（分布式消息唯一ID）
     private byte[] requestId;      // 16字节UUID V7（请求响应关联ID，全零=非请求/响应）
     private byte reqResFlag;       // 请求/响应标识：0=请求，1=响应（仅requestId非全零时有效）
     private int type;              // 消息类型（转发至对应处理器）
-    private int length;            // data字段长度（protobuf序列化后）
+    private int length;            // data字段长度
     private short version = 1;     // 协议版本（默认1，防篡改）  //从版本2开始都是密文传输 读取data前需要解密
-    private byte[] data;           // 业务数据（protobuf序列化，JVM数组长度为int）
+    private byte[] data;           // 业务数据
 
 
     // ===================== 非核心字段 无需序列化反序列化 用于转移数据 =====================
-
 
 
     // ===================== 核心逻辑方法（修复+优化） =====================
@@ -84,13 +72,13 @@ public class P2PMessage {
 
     // ===================== 字段设置方法（增强校验） =====================
     /**
-     * 设置发送者ID（Solana公钥），强制校验32字节长度
+     * 设置发送者ID（公钥），强制校验32字节长度
      */
     public void setSenderId(byte[] senderId) {
-        if (senderId != null && senderId.length != SOLANA_PUBKEY_LENGTH) {
+        if (senderId != null && senderId.length != PUBKEY_LENGTH) {
             throw new IllegalArgumentException(
-                    String.format("发送者ID必须为%d字节（Solana公钥），当前长度：%d",
-                            SOLANA_PUBKEY_LENGTH, senderId.length)
+                    String.format("发送者ID必须为%d字节（公钥），当前长度：%d",
+                            PUBKEY_LENGTH, senderId.length)
             );
         }
         this.senderId = senderId;
@@ -169,9 +157,9 @@ public class P2PMessage {
         this.version = version;
     }
 
-    // ===================== 工具方法（适配Solana+调试） =====================
+    // ===================== 工具方法（适配+调试） =====================
     /**
-     * 获取senderId的Base58字符串（Solana生态标准格式）
+     * 获取senderId的Base58字符串（生态标准格式）
      */
     public String getSenderIdBase58() {
         return isValidSenderId() ? Base58.encode(senderId) : null;
@@ -192,10 +180,10 @@ public class P2PMessage {
     }
 
     /**
-     * 校验senderId是否为合法Solana公钥（32字节非空）
+     * 校验senderId是否为合法公钥（32字节非空）
      */
     public boolean isValidSenderId() {
-        return senderId != null && senderId.length == SOLANA_PUBKEY_LENGTH;
+        return senderId != null && senderId.length == PUBKEY_LENGTH;
     }
 
     /**
@@ -296,7 +284,7 @@ public class P2PMessage {
     // ===================== 新增：静态构建方法（简化外部调用） =====================
     /**
      * 构建请求消息（封装核心逻辑，无需手动设置requestId/reqResFlag）
-     * @param senderId 发送者Solana公钥（32字节）
+     * @param senderId 发送者公钥（32字节）
      * @param protocolEnum 消息类型（如PING=1） 协议类型
      * @param data 业务数据（protobuf序列化字节数组）
      * @return 标准化的请求消息
@@ -318,7 +306,7 @@ public class P2PMessage {
 
     /**
      * 构建响应消息（关联原请求ID，自动设置reqResFlag=1）
-     * @param senderId 响应发送者Solana公钥（32字节）
+     * @param senderId 响应发送者公钥（32字节）
      * @param protocolEnum 响应消息类型枚举（如PONG=2）
      * @param reqId 原请求消息（用于关联requestId）
      * @param data 响应业务数据（protobuf序列化字节数组）
@@ -348,7 +336,7 @@ public class P2PMessage {
 
     /**
      * 构建普通消息（非请求/响应，自动设置requestId为全零数组）
-     * @param senderId 发送者Solana公钥（32字节）
+     * @param senderId 发送者公钥（32字节）
      * @param protocolEnum 消息类型枚举（如TRANSACTION=3）
      * @param data 业务数据（protobuf序列化字节数组）
      * @return 标准化的普通消息
@@ -373,82 +361,114 @@ public class P2PMessage {
 
 
     // ===================== 序列化/反序列化核心方法 =====================
-
     /**
-     * 序列化当前对象为字节数组（通过Protobuf）
+     * 序列化当前对象为字节数组（网络字节序/大端序）
+     * 字段顺序：version(2) → senderId(32) → messageId(16) → requestId(16) → reqResFlag(1) → type(4) → length(4) → data(length)
      */
     public byte[] serialize() throws IOException {
-        return toProto().toByteArray();
+        // 前置校验：确保对象字段合法，避免序列化非法数据
+        if (!isValidVersion()) {
+            throw new IllegalStateException("协议版本不合法：" + version);
+        }
+        if (!isValidSenderId()) {
+            throw new IllegalStateException("发送者ID（公钥）不合法，必须是32字节");
+        }
+        if (!isValidMessageId()) {
+            throw new IllegalStateException("消息ID（UUID V7）不合法，必须是16字节");
+        }
+        if (!isLengthConsistent()) {
+            throw new IllegalStateException("data长度与length字段不一致：data长度=" + (data == null ? 0 : data.length) + ", length=" + length);
+        }
+
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             DataOutputStream dos = new DataOutputStream(baos)) {
+
+            // 1. 协议版本（short，2字节，大端）
+            dos.writeShort(version);
+            // 2. 发送者ID（32字节固定长度）
+            dos.write(senderId);
+            // 3. 消息ID（16字节固定长度）
+            dos.write(messageId);
+            // 4. 请求响应ID（16字节固定长度，全零则写全零）
+            dos.write(requestId == null ? new byte[UUID_V7_LENGTH] : requestId);
+            // 5. 请求/响应标识（1字节）
+            dos.writeByte(reqResFlag);
+            // 6. 消息类型（int，4字节，大端）
+            dos.writeInt(type);
+            // 7. data长度（int，4字节，大端）
+            dos.writeInt(length);
+            // 8. 业务数据（变长，长度=length）
+            if (length > 0 && data != null) {
+                dos.write(data);
+            }
+
+            return baos.toByteArray();
+        }
     }
 
     /**
-     * 从字节数组反序列化为P2PMessage（通过Protobuf）
+     * 从字节数组反序列化为P2PMessage（网络字节序/大端序）
+     * @param data 序列化后的字节数组
+     * @return 还原后的P2PMessage对象
+     * @throws IOException 反序列化失败（如字节长度不足、格式错误）
      */
-    public static P2PMessage deserialize(byte[] data)  {
-        try {
-            Structure.ProtoP2pMessage proto = Structure.ProtoP2pMessage.parseFrom(data);
-            return fromProto(proto);
-        }catch (Exception e){
+    public static P2PMessage deserialize(byte[] data) throws IOException {
+        // 前置校验：输入字节数组不能为空
+        if (data == null || data.length < (2 + 32 + 16 + 16 + 1 + 4 + 4)) {
+            throw new IllegalArgumentException("反序列化失败：字节数组为空或长度不足（最小长度需75字节）");
+        }
+
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(data);
+             DataInputStream dis = new DataInputStream(bais)) {
+
+            P2PMessage message = new P2PMessage();
+
+            // 1. 读取协议版本（short，2字节）
+            short version = dis.readShort();
+            message.setVersion(version); // 使用setter做合法性校验
+
+            // 2. 读取发送者ID（32字节）
+            byte[] senderId = new byte[PUBKEY_LENGTH];
+            dis.readFully(senderId); // 强制读取32字节，不足则抛EOFException
+            message.setSenderId(senderId); // 使用setter做合法性校验
+
+            // 3. 读取消息ID（16字节）
+            byte[] messageId = new byte[UUID_V7_LENGTH];
+            dis.readFully(messageId);
+            message.setMessageId(messageId); // 使用setter做合法性校验
+
+            // 4. 读取请求响应ID（16字节）
+            byte[] requestId = new byte[UUID_V7_LENGTH];
+            dis.readFully(requestId);
+            message.setRequestId(requestId); // 使用setter做合法性校验
+
+            // 5. 读取请求/响应标识（1字节）
+            byte reqResFlag = dis.readByte();
+            message.setReqResFlag(reqResFlag); // 使用setter做合法性校验
+
+            // 6. 读取消息类型（int，4字节）
+            int type = dis.readInt();
+            message.setType(type);
+
+            // 7. 读取data长度（int，4字节）
+            int length = dis.readInt();
+            message.setLength(length); // 先设置length，后续设置data时会自动同步
+
+            // 8. 读取业务数据（变长，长度=length）
+            byte[] dataBytes = new byte[length];
+            if (length > 0) {
+                dis.readFully(dataBytes); // 强制读取length字节，不足则抛EOFException
+            }
+            message.setData(dataBytes); // 使用setter自动同步length（双重校验）
+
+            // 最终校验：length与data长度一致性
+            if (!message.isLengthConsistent()) {
+                throw new IOException("反序列化失败：length字段与实际data长度不一致");
+            }
+
+            return message;
+        } catch (IllegalArgumentException e) {
             return null;
         }
     }
-
-    /**
-     * 转换为Protobuf对象
-     */
-    public Structure.ProtoP2pMessage toProto() {
-        Structure.ProtoP2pMessage.Builder builder = Structure.ProtoP2pMessage.newBuilder();
-
-        // 处理字节类型字段
-        if (senderId != null) {
-            builder.setSenderId(ByteString.copyFrom(senderId));
-        }
-        if (messageId != null) {
-            builder.setMessageId(ByteString.copyFrom(messageId));
-        }
-        if (requestId != null) {
-            builder.setRequestId(ByteString.copyFrom(requestId));
-        }
-        if (data != null) {
-            builder.setData(ByteString.copyFrom(data));
-        }
-
-        // 处理数值类型字段（注意protobuf中uint32对应Java的int，reqResFlag转uint32）
-        builder.setReqResFlag((int) reqResFlag) // byte转uint32（兼容protobuf无byte类型）
-                .setType(type)
-                .setLength(length)
-                .setVersion((int) version); // short转uint32（避免符号问题）
-
-        return builder.build();
-    }
-
-    /**
-     * 从Protobuf对象转换为P2PMessage
-     */
-    public static P2PMessage fromProto(Structure.ProtoP2pMessage proto) {
-        P2PMessage message = new P2PMessage();
-
-        // 处理字节类型字段
-        if (!proto.getSenderId().isEmpty()) {
-            message.setSenderId(proto.getSenderId().toByteArray());
-        }
-        if (!proto.getMessageId().isEmpty()) {
-            message.setMessageId(proto.getMessageId().toByteArray());
-        }
-        if (!proto.getRequestId().isEmpty()) {
-            message.setRequestId(proto.getRequestId().toByteArray());
-        }
-        if (!proto.getData().isEmpty()) {
-            message.setData(proto.getData().toByteArray());
-        }
-
-        // 处理数值类型字段（还原类型，注意范围校验）
-        message.setReqResFlag((byte) proto.getReqResFlag()); // uint32转byte（仅0/1，安全）
-        message.setType(proto.getType());
-        message.setLength(proto.getLength());
-        message.setVersion((short) proto.getVersion()); // uint32转short（已校验范围）
-
-        return message;
-    }
-
 }

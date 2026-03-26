@@ -1,36 +1,27 @@
-package com.bit.solana.p2p.impl.handle;
+package com.bit.coin.p2p.conn;
 
-import com.bit.coin.p2p.impl.QuicNodeWrapper;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
-import com.bit.coin.p2p.quic.QuicConnection;
-import com.bit.coin.p2p.quic.QuicConstants;
-import com.bit.coin.p2p.quic.QuicMsg;
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.*;
 
-import static com.bit.coin.config.CommonConfig.RESPONSE_FUTURECACHE;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.PeerConnect;
-import static com.bit.coin.p2p.quic.QuicConnectionManager.getConnection;
-import static com.bit.coin.util.ByteUtils.bytesToHex;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.getConnection;
+import static com.bit.coin.p2p.conn.QuicConstants.MSG_RESPONSE_FUTURECACHE;
+import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
-@Component
 @Slf4j
+@Component
 public class QuicDataProcessor {
 
     @Autowired
@@ -40,11 +31,12 @@ public class QuicDataProcessor {
     private ExecutorService consumerExecutor;
 
     // 线程池核心配置（示例值，根据业务调整）
-    private static final int CORE_POOL_SIZE = 1;    // 核心线程数
-    private static final int MAX_POOL_SIZE = 2;     // 最大线程数
+    private static final int CORE_POOL_SIZE = 6;    // 核心线程数
+    private static final int MAX_POOL_SIZE = 6;     // 最大线程数
     private static final int KEEP_ALIVE_SECONDS = 60; // 空闲线程存活时间
     private static final int QUEUE_CAPACITY = 100;  // 线程池任务队列容量
     private static final String THREAD_PREFIX = "quic-consumer-"; // 线程名前缀
+
 
     /**
      * 初始化：启动消费线程池
@@ -93,11 +85,11 @@ public class QuicDataProcessor {
 
                 // 4. 批量处理消息
                 processBatch(batchMsgs);
-                log.info("本次批量处理完成，共处理{}条消息", batchMsgs.size());
+                log.debug("本次批量处理完成，共处理{}条消息", batchMsgs.size());
 
             } catch (InterruptedException e) {
                 // 线程被中断，优雅退出循环
-                log.info("消费线程被中断，准备退出");
+                log.debug("消费线程被中断，准备退出");
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
@@ -132,43 +124,40 @@ public class QuicDataProcessor {
      */
     private void processSingleMsg(QuicMsg msg, int index) {
         try {
+            log.debug("处理数据时间{}", System.currentTimeMillis());
+
             // 示例逻辑：打印消息长度（实际场景：解析Protobuf/JSON、写入DB、调用RPC等）
-            log.debug("处理第{}条消息，字节长度：{}", index, msg.getData().length);
-
-            // TODO 替换为真实业务逻辑：
-            // 1. 解析二进制消息（如protobuf反序列化）
-            // 2. 业务校验（如签名、长度校验）
-            // 3. 数据入库/转发/计算等
-
-            //回复节点  通过节点ID找到连接 并发送信息  将消息分发到对应的处理器处理即可 处理器如果有返回值 就调用协议返回即可
-
+            log.debug("处理第{}条消息，字节长度：{} ", index, msg.getData().length);
             P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
-            if (deserialize.isRequest()) {
-                log.info("收到请求: {}", deserialize);
-                Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
-                ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
-                if (protocolHandler != null){
-                    byte[] handle = protocolHandler.handle(deserialize);
-                    if (handle != null){
-                        //用原来的流写回
-                        //包装型 ByteBuf 无需释放的底层逻辑
-                        //Unpooled.wrappedBuffer(handle) 创建的 UnpooledHeapByteBuf 有两个关键特性：
-                        //零拷贝：缓冲区不持有新内存，只是对外部 handle 字节数组的 “视图”；
-                        //引用计数无意义：其 release() 方法仅修改引用计数，但不会释放任何内存（因为内存是外部的 byte[]，由 JVM 垃圾回收管理）。
-                        QuicConnection connection = getConnection(msg.getConnectionId());
-                        connection.sendData(handle);
+            if (deserialize != null){
+                if (deserialize.isRequest()) {
+                    Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
+                    ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
+                    if (protocolHandler != null){
+                        byte[] handle = protocolHandler.handle(deserialize);
+                        if (handle != null){
+                            QuicConnection connection = getConnection(msg.getConnectionId());
+                            if (connection!=null){
+                                connection.sendData(handle);
+                            }
+                        }else {
+                            log.debug("处理后为空");
+                        }
+                    }else {
+                        log.info("未注册的协议：{}", deserialize.getType());
+                    }
+                }else if (deserialize.isResponse()) {
+                    log.debug("处理响应时间{}", System.currentTimeMillis());
+                    log.debug("收到响应 时间: {}", System.currentTimeMillis());
+                    CompletableFuture<QuicMsg> ifPresent = MSG_RESPONSE_FUTURECACHE.asMap().remove(bytesToHex(deserialize.getRequestId()));
+                    if (ifPresent != null) {
+                        ifPresent.complete(msg);
                     }
                 }else {
-                    log.info("未注册的协议：{}", deserialize.getType());
-                }
-            }else if (deserialize.isResponse()) {
-                log.info("收到响应: {}", deserialize);
-                CompletableFuture<QuicMsg> ifPresent = RESPONSE_FUTURECACHE.asMap().remove(bytesToHex(deserialize.getRequestId()));
-                if (ifPresent != null) {
-                    ifPresent.complete(msg);
+                    log.info("收到普通消息: {}", deserialize);
                 }
             }else {
-                log.info("收到普通消息: {}", deserialize);
+                log.info("解析失败丢弃");
             }
         }catch (InvalidProtocolBufferException e){
             log.error("解析失败");

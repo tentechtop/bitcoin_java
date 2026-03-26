@@ -1,11 +1,9 @@
-package com.bit.coin.structure.block;
+package com.bit.coin.utils;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.SerializationContext;
 import tools.jackson.databind.ser.std.StdSerializer;
-
-import java.io.IOException;
 
 public class HexByteArraySerializer extends StdSerializer<byte[]> {
 

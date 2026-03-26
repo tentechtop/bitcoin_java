@@ -1,4 +1,4 @@
-package com.bit.coin.structure.key;
+package com.bit.coin.utils;
 
 import lombok.Data;
 

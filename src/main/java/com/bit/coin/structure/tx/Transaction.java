@@ -1,6 +1,6 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.bit.coin.structure.script.ScriptExecutor;
 import com.bit.coin.utils.Ed25519Signer;
@@ -20,17 +20,19 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.bit.coin.config.SystemConfig.TX_TIME_FORMATTER;
 import static com.bit.coin.structure.script.ScriptExecutor.combineScripts;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs"})  // 按指定顺序输出
+@JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs","time","timeStr","height"})  // 按指定顺序输出
 public class Transaction {
     /**
      * 交易特征
@@ -84,21 +86,45 @@ public class Transaction {
     /**
      * 区块时间
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Long time;
+
+    private String timeStr;
+    public String getTimeStr() {
+        // 校验：时间戳非空 且 为有效正整数
+        if (time != null && time > 0) {
+            // 秒级时间戳 → 转换为Instant → 格式化为字符串
+            return TX_TIME_FORMATTER.format(Instant.ofEpochSecond(time));
+        }
+        // 无时间时返回空字符串
+        return "";
+    }
+
 
     /**
      * 区块高度
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Integer height;
 
     /**
      * 区块Hash
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] hash;
+
+
+    /**
+     * 加入交易池时间
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Long joinTime;
+
+    /**
+     * 最近一次的广播时间
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Long broadcastTime;
+
+
 
 
     /**
@@ -492,16 +518,16 @@ public class Transaction {
         try{
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
-            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, version);
-            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, inputs.size());
+            SerializeUtils.writeLittleEndianInt(dos, version);
+            SerializeUtils.writeVarInt(dos, inputs.size());
             for (TxInput input : inputs) {
                 dos.write(input.serialize());
             }
-            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, outputs.size());
+            SerializeUtils.writeVarInt(dos, outputs.size());
             for (TxOutput output : outputs) {
                 dos.write(output.serialize());
             }
-            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, (int) lockTime);
+            SerializeUtils.writeLittleEndianInt(dos, (int) lockTime);
             dos.close();
             return baos.toByteArray();
         }catch (Exception e){
@@ -523,17 +549,17 @@ public class Transaction {
         // 读取版本号（小端字节序）
         byte[] versionBytes = new byte[4];
         dis.readFully(versionBytes);
-        tx.setVersion(com.bit.coin.utils.SerializeUtils.littleEndianToInt(versionBytes));
+        tx.setVersion(SerializeUtils.littleEndianToInt(versionBytes));
 
         // 读取输入数量
-        int inputCount = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        int inputCount = SerializeUtils.readVarInt(dis);
         for (int i = 0; i < inputCount; i++) {
             TxInput input = TxInput.deserialize(dis);
             tx.getInputs().add(input);
         }
 
         // 读取输出数量
-        int outputCount = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        int outputCount = SerializeUtils.readVarInt(dis);
         for (int i = 0; i < outputCount; i++) {
             TxOutput output = TxOutput.deserialize(dis);
             tx.getOutputs().add(output);
@@ -542,7 +568,7 @@ public class Transaction {
         // 读取锁定时间（小端字节序）
         byte[] lockTimeBytes = new byte[4];
         dis.readFully(lockTimeBytes);
-        tx.setLockTime(com.bit.coin.utils.SerializeUtils.littleEndianToInt(lockTimeBytes) & 0xFFFFFFFFL);
+        tx.setLockTime(SerializeUtils.littleEndianToInt(lockTimeBytes) & 0xFFFFFFFFL);
 
         dis.close();
         return tx;
@@ -757,7 +783,7 @@ public class Transaction {
         byte[] serialized = tx1.serializeWithOutTxId();
         System.out.println("序列化后字节长度: " + serialized.length + " 字节");
         System.out.println("序列化结果（前64字节）: " + bytesToHex(
-            serialized.length > 64 ? java.util.Arrays.copyOf(serialized, 64) : serialized));
+            serialized.length > 64 ? Arrays.copyOf(serialized, 64) : serialized));
 
         // 反序列化
         System.out.println("\n=== 反序列化交易 ===");
@@ -775,9 +801,9 @@ public class Transaction {
             TxInput originalInput = tx1.getInputs().get(i);
             TxInput deserializedInput = tx2.getInputs().get(i);
             System.out.println("输入 " + i + ":");
-            System.out.println("  交易ID匹配: " + java.util.Arrays.equals(originalInput.getTxId(), deserializedInput.getTxId()));
+            System.out.println("  交易ID匹配: " + Arrays.equals(originalInput.getTxId(), deserializedInput.getTxId()));
             System.out.println("  索引匹配: " + (originalInput.getIndex() == deserializedInput.getIndex()));
-            System.out.println("  脚本匹配: " + java.util.Arrays.equals(originalInput.getScriptSig(), deserializedInput.getScriptSig()));
+            System.out.println("  脚本匹配: " + Arrays.equals(originalInput.getScriptSig(), deserializedInput.getScriptSig()));
         }
 
         // 验证输出
@@ -787,19 +813,19 @@ public class Transaction {
             TxOutput deserializedOutput = tx2.getOutputs().get(i);
             System.out.println("输出 " + i + ":");
             System.out.println("  金额匹配: " + (originalOutput.getValue() == deserializedOutput.getValue()));
-            System.out.println("  脚本匹配: " + java.util.Arrays.equals(originalOutput.getScriptPubKey(), deserializedOutput.getScriptPubKey()));
+            System.out.println("  脚本匹配: " + Arrays.equals(originalOutput.getScriptPubKey(), deserializedOutput.getScriptPubKey()));
         }
 
         // 再次序列化反序列化以验证一致性
         System.out.println("\n=== 一致性验证 ===");
         byte[] serialized2 = tx2.serializeWithOutTxId();
         System.out.println("第二次序列化长度: " + serialized2.length + " (匹配: " + (serialized2.length == serialized.length) + ")");
-        System.out.println("第二次序列化内容匹配: " + java.util.Arrays.equals(serialized, serialized2));
+        System.out.println("第二次序列化内容匹配: " + Arrays.equals(serialized, serialized2));
 
         Transaction tx3 = deserializeWithOutTxId(serialized2);
         byte[] serialize3 = tx3.serializeWithOutTxId();
         System.out.println("第三次序列化长度: " + serialize3.length + " (匹配: " + (serialize3.length == serialized.length) + ")");
-        System.out.println("第三次序列化内容匹配: " + java.util.Arrays.equals(serialized, serialize3));
+        System.out.println("第三次序列化内容匹配: " + Arrays.equals(serialized, serialize3));
 
         System.out.println("\n===== 测试完成 =====");
     }
@@ -839,7 +865,7 @@ public class Transaction {
      * @return 包含区块哈希和交易索引的Map
      */
     @JsonIgnore
-    public static java.util.Map<String, Object> parseBlockIndex(byte[] blockIndex) {
+    public static Map<String, Object> parseBlockIndex(byte[] blockIndex) {
         if (blockIndex == null || blockIndex.length != 36) {
             throw new IllegalArgumentException("区块索引必须为36字节");
         }
@@ -855,7 +881,7 @@ public class Transaction {
                 ((blockIndex[35] & 0xFF) << 24);
 
         // 返回包含两者的Map
-        java.util.Map<String, Object> result = new java.util.HashMap<>();
+        Map<String, Object> result = new java.util.HashMap<>();
         result.put("hash", hash);
         result.put("index", index);
 

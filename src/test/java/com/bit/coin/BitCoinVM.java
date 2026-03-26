@@ -2584,7 +2584,7 @@ public class BitCoinVM {
         System.out.println("计算: (1 + 2) * 3");
 
         // 使用汇编器生成字节码
-        BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
+        Assembler asm = new Assembler();
         byte[] code = asm.push(1)    // 压入1
                 .push(2)    // 压入2
                 .add()      // 相加 → 3
@@ -2598,7 +2598,7 @@ public class BitCoinVM {
                 .toByteArray();
 
         // 创建VM并执行
-        BitCoinVM.VM vm = new BitCoinVM.VM();
+        VM vm = new VM();
         vm.executeAndPrint(code, BigInteger.valueOf(100000));
         System.out.println();
     }
@@ -2611,7 +2611,7 @@ public class BitCoinVM {
         System.out.println("2. 存储操作合约演示");
         System.out.println("存储值到slot 0，然后读取");
 
-        BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
+        Assembler asm = new Assembler();
         byte[] code = asm.push(42)           // 要存储的值
                 .push(0)            // 存储slot 0
                 .sstore()           // 存储到状态
@@ -2624,7 +2624,7 @@ public class BitCoinVM {
                 ._return()
                 .toByteArray();
 
-        BitCoinVM.VM vm = new BitCoinVM.VM();
+        VM vm = new VM();
         vm.executeAndPrint(code, BigInteger.valueOf(100000));
         System.out.println();
     }
@@ -2637,7 +2637,7 @@ public class BitCoinVM {
         System.out.println("3. 条件跳转合约演示");
         System.out.println("模拟条件判断逻辑");
 
-        BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
+        Assembler asm = new Assembler();
 
         // 将 "true_branch" 改为有效的十六进制标签
         // 使用 jumpiTo 方法而不是手动 push + jumpi
@@ -2664,7 +2664,7 @@ public class BitCoinVM {
                 ._return()
                 .toByteArray();
 
-        BitCoinVM.VM vm = new BitCoinVM.VM();
+        VM vm = new VM();
         vm.executeAndPrint(code, BigInteger.valueOf(100000));
         System.out.println();
     }
@@ -2677,7 +2677,7 @@ public class BitCoinVM {
         System.out.println("4. 复杂合约演示");
         System.out.println("完整合约流程包括：环境信息、计算、返回");
 
-        BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
+        Assembler asm = new Assembler();
 
         byte[] code = asm
                 .comment("=== 修复后的复杂合约示例 ===")
@@ -2717,7 +2717,7 @@ public class BitCoinVM {
             System.out.println("字节码十六进制: " + truncatedHex);
         }
 
-        BitCoinVM.VM vm = new BitCoinVM.VM();
+        VM vm = new VM();
         vm.executeAndPrint(code, BigInteger.valueOf(200000));
         System.out.println();
     }
@@ -2735,18 +2735,18 @@ public class BitCoinVM {
 
         // 测试几个常见操作码的Gas消耗
         int[] testOpcodes = {
-                BitCoinVM.OpCode.ADD,
-                BitCoinVM.OpCode.MUL,
-                BitCoinVM.OpCode.SSTORE,
-                BitCoinVM.OpCode.SLOAD,
-                BitCoinVM.OpCode.SHA3,
-                BitCoinVM.OpCode.CALL
+                OpCode.ADD,
+                OpCode.MUL,
+                OpCode.SSTORE,
+                OpCode.SLOAD,
+                OpCode.SHA3,
+                OpCode.CALL
         };
 
         System.out.println("操作码Gas消耗测试:");
         for (int opcode : testOpcodes) {
-            BigInteger gasCost = BitCoinVM.OpCode.getGasCost(opcode, gasContext);
-            String opcodeName = BitCoinVM.OpCode.getName(opcode);
+            BigInteger gasCost = OpCode.getGasCost(opcode, gasContext);
+            String opcodeName = OpCode.getName(opcode);
             System.out.printf("  %-12s: %s gas%n", opcodeName, gasCost);
         }
         System.out.println();
@@ -2770,12 +2770,12 @@ public class BitCoinVM {
         System.out.println("6. 错误处理演示");
 
         // 创建会导致栈下溢的无效代码
-        BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
+        Assembler asm = new Assembler();
         byte[] invalidCode = asm.pop()  // 空栈执行pop会导致错误
                 .toByteArray();
 
-        BitCoinVM.VM vm = new BitCoinVM.VM();
-        BitCoinVM.ExecutionResult result = vm.executeSimple(invalidCode, BigInteger.valueOf(10000));
+        VM vm = new VM();
+        ExecutionResult result = vm.executeSimple(invalidCode, BigInteger.valueOf(10000));
 
         System.out.println("错误合约执行结果:");
         System.out.println("  成功: " + result.success);

@@ -1,11 +1,8 @@
 package com.bit.coin.p2p.protocol.dto;
 
 import lombok.Data;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+
+import java.io.*;
 
 @Data
 public class BroadcastResource {

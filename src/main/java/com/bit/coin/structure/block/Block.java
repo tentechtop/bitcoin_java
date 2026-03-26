@@ -4,13 +4,13 @@ import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.TxInput;
 import com.bit.coin.structure.tx.TxOutput;
 import com.bit.coin.structure.tx.UTXO;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.TransactionOutput;
 import tools.jackson.databind.annotation.JsonSerialize;
 
 
@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
-import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @JsonPropertyOrder({
         "hash",           // 区块哈希

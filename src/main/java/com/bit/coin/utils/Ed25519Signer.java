@@ -1,6 +1,5 @@
 package com.bit.coin.utils;
 
-import com.bit.coin.structure.key.KeyInfo;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import lombok.extern.slf4j.Slf4j;

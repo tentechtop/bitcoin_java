@@ -210,12 +210,12 @@ public final class Structure {
       return Structure.internal_static_ProtoBlockHeader_descriptor;
     }
 
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+    @Override
+    protected FieldAccessorTable
         internalGetFieldAccessorTable() {
       return Structure.internal_static_ProtoBlockHeader_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              Structure.ProtoBlockHeader.class, Structure.ProtoBlockHeader.Builder.class);
+              ProtoBlockHeader.class, Builder.class);
     }
 
     public static final int PREVIOUS_BLOCK_HASH_FIELD_NUMBER = 1;
@@ -228,7 +228,7 @@ public final class Structure {
      * <code>bytes previous_block_hash = 1;</code>
      * @return The previousBlockHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getPreviousBlockHash() {
       return previousBlockHash_;
     }
@@ -243,7 +243,7 @@ public final class Structure {
      * <code>bytes state_root_hash = 2;</code>
      * @return The stateRootHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getStateRootHash() {
       return stateRootHash_;
     }
@@ -258,7 +258,7 @@ public final class Structure {
      * <code>uint64 block_time = 3;</code>
      * @return The blockTime.
      */
-    @java.lang.Override
+    @Override
     public long getBlockTime() {
       return blockTime_;
     }
@@ -273,7 +273,7 @@ public final class Structure {
      * <code>bytes poh_hash = 4;</code>
      * @return The pohHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getPohHash() {
       return pohHash_;
     }
@@ -288,7 +288,7 @@ public final class Structure {
      * <code>uint64 poh_height = 5;</code>
      * @return The pohHeight.
      */
-    @java.lang.Override
+    @Override
     public long getPohHeight() {
       return pohHeight_;
     }
@@ -303,7 +303,7 @@ public final class Structure {
      * <code>uint64 version = 6;</code>
      * @return The version.
      */
-    @java.lang.Override
+    @Override
     public long getVersion() {
       return version_;
     }
@@ -318,7 +318,7 @@ public final class Structure {
      * <code>uint64 slot = 7;</code>
      * @return The slot.
      */
-    @java.lang.Override
+    @Override
     public long getSlot() {
       return slot_;
     }
@@ -333,7 +333,7 @@ public final class Structure {
      * <code>uint64 parent_slot = 8;</code>
      * @return The parentSlot.
      */
-    @java.lang.Override
+    @Override
     public long getParentSlot() {
       return parentSlot_;
     }
@@ -348,7 +348,7 @@ public final class Structure {
      * <code>bytes recent_votes_hash = 9;</code>
      * @return The recentVotesHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getRecentVotesHash() {
       return recentVotesHash_;
     }
@@ -363,7 +363,7 @@ public final class Structure {
      * <code>uint64 leader_schedule_epoch = 10;</code>
      * @return The leaderScheduleEpoch.
      */
-    @java.lang.Override
+    @Override
     public long getLeaderScheduleEpoch() {
       return leaderScheduleEpoch_;
     }
@@ -378,7 +378,7 @@ public final class Structure {
      * <code>uint64 transactions_count = 11;</code>
      * @return The transactionsCount.
      */
-    @java.lang.Override
+    @Override
     public long getTransactionsCount() {
       return transactionsCount_;
     }
@@ -393,7 +393,7 @@ public final class Structure {
      * <code>bytes fee_calculator_hash = 12;</code>
      * @return The feeCalculatorHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getFeeCalculatorHash() {
       return feeCalculatorHash_;
     }
@@ -408,7 +408,7 @@ public final class Structure {
      * <code>bytes tx_bloom_filter = 13;</code>
      * @return The txBloomFilter.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getTxBloomFilter() {
       return txBloomFilter_;
     }
@@ -423,13 +423,13 @@ public final class Structure {
      * <code>bytes log_bloom_filter = 14;</code>
      * @return The logBloomFilter.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getLogBloomFilter() {
       return logBloomFilter_;
     }
 
     private byte memoizedIsInitialized = -1;
-    @java.lang.Override
+    @Override
     public final boolean isInitialized() {
       byte isInitialized = memoizedIsInitialized;
       if (isInitialized == 1) return true;
@@ -439,7 +439,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (!previousBlockHash_.isEmpty()) {
@@ -487,7 +487,7 @@ public final class Structure {
       getUnknownFields().writeTo(output);
     }
 
-    @java.lang.Override
+    @Override
     public int getSerializedSize() {
       int size = memoizedSize;
       if (size != -1) return size;
@@ -554,15 +554,15 @@ public final class Structure {
       return size;
     }
 
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
+    @Override
+    public boolean equals(final Object obj) {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof Structure.ProtoBlockHeader)) {
+      if (!(obj instanceof ProtoBlockHeader)) {
         return super.equals(obj);
       }
-      Structure.ProtoBlockHeader other = (Structure.ProtoBlockHeader) obj;
+      ProtoBlockHeader other = (ProtoBlockHeader) obj;
 
       if (!getPreviousBlockHash()
           .equals(other.getPreviousBlockHash())) return false;
@@ -596,7 +596,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public int hashCode() {
       if (memoizedHashCode != 0) {
         return memoizedHashCode;
@@ -643,44 +643,44 @@ public final class Structure {
       return hash;
     }
 
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlockHeader parseFrom(byte[] data)
+    public static ProtoBlockHeader parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlockHeader parseFrom(java.io.InputStream input)
+    public static ProtoBlockHeader parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -688,26 +688,26 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static Structure.ProtoBlockHeader parseDelimitedFrom(java.io.InputStream input)
+    public static ProtoBlockHeader parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static Structure.ProtoBlockHeader parseDelimitedFrom(
+    public static ProtoBlockHeader parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoBlockHeader parseFrom(
+    public static ProtoBlockHeader parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -715,23 +715,23 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    @java.lang.Override
+    @Override
     public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(Structure.ProtoBlockHeader prototype) {
+    public static Builder newBuilder(ProtoBlockHeader prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
-    @java.lang.Override
+    @Override
     public Builder toBuilder() {
       return this == DEFAULT_INSTANCE
           ? new Builder() : new Builder().mergeFrom(this);
     }
 
-    @java.lang.Override
+    @Override
     protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        BuilderParent parent) {
       Builder builder = new Builder(parent);
       return builder;
     }
@@ -747,18 +747,18 @@ public final class Structure {
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
         // @@protoc_insertion_point(builder_implements:ProtoBlockHeader)
-        Structure.ProtoBlockHeaderOrBuilder {
+        ProtoBlockHeaderOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
         return Structure.internal_static_ProtoBlockHeader_descriptor;
       }
 
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      @Override
+      protected FieldAccessorTable
           internalGetFieldAccessorTable() {
         return Structure.internal_static_ProtoBlockHeader_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                Structure.ProtoBlockHeader.class, Structure.ProtoBlockHeader.Builder.class);
+                ProtoBlockHeader.class, Builder.class);
       }
 
       // Construct using Structure.ProtoBlockHeader.newBuilder()
@@ -767,11 +767,11 @@ public final class Structure {
       }
 
       private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+          BuilderParent parent) {
         super(parent);
 
       }
-      @java.lang.Override
+      @Override
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
@@ -792,35 +792,35 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
         return Structure.internal_static_ProtoBlockHeader_descriptor;
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlockHeader getDefaultInstanceForType() {
-        return Structure.ProtoBlockHeader.getDefaultInstance();
+      @Override
+      public ProtoBlockHeader getDefaultInstanceForType() {
+        return ProtoBlockHeader.getDefaultInstance();
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlockHeader build() {
-        Structure.ProtoBlockHeader result = buildPartial();
+      @Override
+      public ProtoBlockHeader build() {
+        ProtoBlockHeader result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlockHeader buildPartial() {
-        Structure.ProtoBlockHeader result = new Structure.ProtoBlockHeader(this);
+      @Override
+      public ProtoBlockHeader buildPartial() {
+        ProtoBlockHeader result = new ProtoBlockHeader(this);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartial0(Structure.ProtoBlockHeader result) {
+      private void buildPartial0(ProtoBlockHeader result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.previousBlockHash_ = previousBlockHash_;
@@ -866,18 +866,18 @@ public final class Structure {
         }
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof Structure.ProtoBlockHeader) {
-          return mergeFrom((Structure.ProtoBlockHeader)other);
+        if (other instanceof ProtoBlockHeader) {
+          return mergeFrom((ProtoBlockHeader)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(Structure.ProtoBlockHeader other) {
-        if (other == Structure.ProtoBlockHeader.getDefaultInstance()) return this;
+      public Builder mergeFrom(ProtoBlockHeader other) {
+        if (other == ProtoBlockHeader.getDefaultInstance()) return this;
         if (!other.getPreviousBlockHash().isEmpty()) {
           setPreviousBlockHash(other.getPreviousBlockHash());
         }
@@ -925,18 +925,18 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public final boolean isInitialized() {
         return true;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
         if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
+          throw new NullPointerException();
         }
         try {
           boolean done = false;
@@ -1042,7 +1042,7 @@ public final class Structure {
        * <code>bytes previous_block_hash = 1;</code>
        * @return The previousBlockHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getPreviousBlockHash() {
         return previousBlockHash_;
       }
@@ -1086,7 +1086,7 @@ public final class Structure {
        * <code>bytes state_root_hash = 2;</code>
        * @return The stateRootHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getStateRootHash() {
         return stateRootHash_;
       }
@@ -1130,7 +1130,7 @@ public final class Structure {
        * <code>uint64 block_time = 3;</code>
        * @return The blockTime.
        */
-      @java.lang.Override
+      @Override
       public long getBlockTime() {
         return blockTime_;
       }
@@ -1174,7 +1174,7 @@ public final class Structure {
        * <code>bytes poh_hash = 4;</code>
        * @return The pohHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getPohHash() {
         return pohHash_;
       }
@@ -1218,7 +1218,7 @@ public final class Structure {
        * <code>uint64 poh_height = 5;</code>
        * @return The pohHeight.
        */
-      @java.lang.Override
+      @Override
       public long getPohHeight() {
         return pohHeight_;
       }
@@ -1262,7 +1262,7 @@ public final class Structure {
        * <code>uint64 version = 6;</code>
        * @return The version.
        */
-      @java.lang.Override
+      @Override
       public long getVersion() {
         return version_;
       }
@@ -1306,7 +1306,7 @@ public final class Structure {
        * <code>uint64 slot = 7;</code>
        * @return The slot.
        */
-      @java.lang.Override
+      @Override
       public long getSlot() {
         return slot_;
       }
@@ -1350,7 +1350,7 @@ public final class Structure {
        * <code>uint64 parent_slot = 8;</code>
        * @return The parentSlot.
        */
-      @java.lang.Override
+      @Override
       public long getParentSlot() {
         return parentSlot_;
       }
@@ -1394,7 +1394,7 @@ public final class Structure {
        * <code>bytes recent_votes_hash = 9;</code>
        * @return The recentVotesHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getRecentVotesHash() {
         return recentVotesHash_;
       }
@@ -1438,7 +1438,7 @@ public final class Structure {
        * <code>uint64 leader_schedule_epoch = 10;</code>
        * @return The leaderScheduleEpoch.
        */
-      @java.lang.Override
+      @Override
       public long getLeaderScheduleEpoch() {
         return leaderScheduleEpoch_;
       }
@@ -1482,7 +1482,7 @@ public final class Structure {
        * <code>uint64 transactions_count = 11;</code>
        * @return The transactionsCount.
        */
-      @java.lang.Override
+      @Override
       public long getTransactionsCount() {
         return transactionsCount_;
       }
@@ -1526,7 +1526,7 @@ public final class Structure {
        * <code>bytes fee_calculator_hash = 12;</code>
        * @return The feeCalculatorHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getFeeCalculatorHash() {
         return feeCalculatorHash_;
       }
@@ -1570,7 +1570,7 @@ public final class Structure {
        * <code>bytes tx_bloom_filter = 13;</code>
        * @return The txBloomFilter.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getTxBloomFilter() {
         return txBloomFilter_;
       }
@@ -1614,7 +1614,7 @@ public final class Structure {
        * <code>bytes log_bloom_filter = 14;</code>
        * @return The logBloomFilter.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getLogBloomFilter() {
         return logBloomFilter_;
       }
@@ -1653,18 +1653,18 @@ public final class Structure {
     }
 
     // @@protoc_insertion_point(class_scope:ProtoBlockHeader)
-    private static final Structure.ProtoBlockHeader DEFAULT_INSTANCE;
+    private static final ProtoBlockHeader DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new Structure.ProtoBlockHeader();
+      DEFAULT_INSTANCE = new ProtoBlockHeader();
     }
 
-    public static Structure.ProtoBlockHeader getDefaultInstance() {
+    public static ProtoBlockHeader getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
     private static final com.google.protobuf.Parser<ProtoBlockHeader>
         PARSER = new com.google.protobuf.AbstractParser<ProtoBlockHeader>() {
-      @java.lang.Override
+      @Override
       public ProtoBlockHeader parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
@@ -1688,13 +1688,13 @@ public final class Structure {
       return PARSER;
     }
 
-    @java.lang.Override
+    @Override
     public com.google.protobuf.Parser<ProtoBlockHeader> getParserForType() {
       return PARSER;
     }
 
-    @java.lang.Override
-    public Structure.ProtoBlockHeader getDefaultInstanceForType() {
+    @Override
+    public ProtoBlockHeader getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -1713,11 +1713,11 @@ public final class Structure {
      * <code>.ProtoBlockHeader header = 1;</code>
      * @return The header.
      */
-    Structure.ProtoBlockHeader getHeader();
+    ProtoBlockHeader getHeader();
     /**
      * <code>.ProtoBlockHeader header = 1;</code>
      */
-    Structure.ProtoBlockHeaderOrBuilder getHeaderOrBuilder();
+    ProtoBlockHeaderOrBuilder getHeaderOrBuilder();
   }
   /**
    * Protobuf type {@code ProtoBlock}
@@ -1748,22 +1748,22 @@ public final class Structure {
       return Structure.internal_static_ProtoBlock_descriptor;
     }
 
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+    @Override
+    protected FieldAccessorTable
         internalGetFieldAccessorTable() {
       return Structure.internal_static_ProtoBlock_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              Structure.ProtoBlock.class, Structure.ProtoBlock.Builder.class);
+              ProtoBlock.class, Builder.class);
     }
 
     private int bitField0_;
     public static final int HEADER_FIELD_NUMBER = 1;
-    private Structure.ProtoBlockHeader header_;
+    private ProtoBlockHeader header_;
     /**
      * <code>.ProtoBlockHeader header = 1;</code>
      * @return Whether the header field is set.
      */
-    @java.lang.Override
+    @Override
     public boolean hasHeader() {
       return ((bitField0_ & 0x00000001) != 0);
     }
@@ -1771,20 +1771,20 @@ public final class Structure {
      * <code>.ProtoBlockHeader header = 1;</code>
      * @return The header.
      */
-    @java.lang.Override
-    public Structure.ProtoBlockHeader getHeader() {
-      return header_ == null ? Structure.ProtoBlockHeader.getDefaultInstance() : header_;
+    @Override
+    public ProtoBlockHeader getHeader() {
+      return header_ == null ? ProtoBlockHeader.getDefaultInstance() : header_;
     }
     /**
      * <code>.ProtoBlockHeader header = 1;</code>
      */
-    @java.lang.Override
-    public Structure.ProtoBlockHeaderOrBuilder getHeaderOrBuilder() {
-      return header_ == null ? Structure.ProtoBlockHeader.getDefaultInstance() : header_;
+    @Override
+    public ProtoBlockHeaderOrBuilder getHeaderOrBuilder() {
+      return header_ == null ? ProtoBlockHeader.getDefaultInstance() : header_;
     }
 
     private byte memoizedIsInitialized = -1;
-    @java.lang.Override
+    @Override
     public final boolean isInitialized() {
       byte isInitialized = memoizedIsInitialized;
       if (isInitialized == 1) return true;
@@ -1794,7 +1794,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (((bitField0_ & 0x00000001) != 0)) {
@@ -1803,7 +1803,7 @@ public final class Structure {
       getUnknownFields().writeTo(output);
     }
 
-    @java.lang.Override
+    @Override
     public int getSerializedSize() {
       int size = memoizedSize;
       if (size != -1) return size;
@@ -1818,15 +1818,15 @@ public final class Structure {
       return size;
     }
 
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
+    @Override
+    public boolean equals(final Object obj) {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof Structure.ProtoBlock)) {
+      if (!(obj instanceof ProtoBlock)) {
         return super.equals(obj);
       }
-      Structure.ProtoBlock other = (Structure.ProtoBlock) obj;
+      ProtoBlock other = (ProtoBlock) obj;
 
       if (hasHeader() != other.hasHeader()) return false;
       if (hasHeader()) {
@@ -1837,7 +1837,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public int hashCode() {
       if (memoizedHashCode != 0) {
         return memoizedHashCode;
@@ -1853,44 +1853,44 @@ public final class Structure {
       return hash;
     }
 
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlock parseFrom(byte[] data)
+    public static ProtoBlock parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoBlock parseFrom(java.io.InputStream input)
+    public static ProtoBlock parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -1898,26 +1898,26 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static Structure.ProtoBlock parseDelimitedFrom(java.io.InputStream input)
+    public static ProtoBlock parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static Structure.ProtoBlock parseDelimitedFrom(
+    public static ProtoBlock parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoBlock parseFrom(
+    public static ProtoBlock parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -1925,23 +1925,23 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    @java.lang.Override
+    @Override
     public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(Structure.ProtoBlock prototype) {
+    public static Builder newBuilder(ProtoBlock prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
-    @java.lang.Override
+    @Override
     public Builder toBuilder() {
       return this == DEFAULT_INSTANCE
           ? new Builder() : new Builder().mergeFrom(this);
     }
 
-    @java.lang.Override
+    @Override
     protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        BuilderParent parent) {
       Builder builder = new Builder(parent);
       return builder;
     }
@@ -1951,18 +1951,18 @@ public final class Structure {
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
         // @@protoc_insertion_point(builder_implements:ProtoBlock)
-        Structure.ProtoBlockOrBuilder {
+        ProtoBlockOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
         return Structure.internal_static_ProtoBlock_descriptor;
       }
 
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      @Override
+      protected FieldAccessorTable
           internalGetFieldAccessorTable() {
         return Structure.internal_static_ProtoBlock_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                Structure.ProtoBlock.class, Structure.ProtoBlock.Builder.class);
+                ProtoBlock.class, Builder.class);
       }
 
       // Construct using Structure.ProtoBlock.newBuilder()
@@ -1971,7 +1971,7 @@ public final class Structure {
       }
 
       private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+          BuilderParent parent) {
         super(parent);
         maybeForceBuilderInitialization();
       }
@@ -1981,7 +1981,7 @@ public final class Structure {
           internalGetHeaderFieldBuilder();
         }
       }
-      @java.lang.Override
+      @Override
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
@@ -1993,35 +1993,35 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
         return Structure.internal_static_ProtoBlock_descriptor;
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlock getDefaultInstanceForType() {
-        return Structure.ProtoBlock.getDefaultInstance();
+      @Override
+      public ProtoBlock getDefaultInstanceForType() {
+        return ProtoBlock.getDefaultInstance();
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlock build() {
-        Structure.ProtoBlock result = buildPartial();
+      @Override
+      public ProtoBlock build() {
+        ProtoBlock result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      @java.lang.Override
-      public Structure.ProtoBlock buildPartial() {
-        Structure.ProtoBlock result = new Structure.ProtoBlock(this);
+      @Override
+      public ProtoBlock buildPartial() {
+        ProtoBlock result = new ProtoBlock(this);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartial0(Structure.ProtoBlock result) {
+      private void buildPartial0(ProtoBlock result) {
         int from_bitField0_ = bitField0_;
         int to_bitField0_ = 0;
         if (((from_bitField0_ & 0x00000001) != 0)) {
@@ -2033,18 +2033,18 @@ public final class Structure {
         result.bitField0_ |= to_bitField0_;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof Structure.ProtoBlock) {
-          return mergeFrom((Structure.ProtoBlock)other);
+        if (other instanceof ProtoBlock) {
+          return mergeFrom((ProtoBlock)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(Structure.ProtoBlock other) {
-        if (other == Structure.ProtoBlock.getDefaultInstance()) return this;
+      public Builder mergeFrom(ProtoBlock other) {
+        if (other == ProtoBlock.getDefaultInstance()) return this;
         if (other.hasHeader()) {
           mergeHeader(other.getHeader());
         }
@@ -2053,18 +2053,18 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public final boolean isInitialized() {
         return true;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
         if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
+          throw new NullPointerException();
         }
         try {
           boolean done = false;
@@ -2098,9 +2098,9 @@ public final class Structure {
       }
       private int bitField0_;
 
-      private Structure.ProtoBlockHeader header_;
+      private ProtoBlockHeader header_;
       private com.google.protobuf.SingleFieldBuilder<
-          Structure.ProtoBlockHeader, Structure.ProtoBlockHeader.Builder, Structure.ProtoBlockHeaderOrBuilder> headerBuilder_;
+          ProtoBlockHeader, ProtoBlockHeader.Builder, ProtoBlockHeaderOrBuilder> headerBuilder_;
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        * @return Whether the header field is set.
@@ -2112,9 +2112,9 @@ public final class Structure {
        * <code>.ProtoBlockHeader header = 1;</code>
        * @return The header.
        */
-      public Structure.ProtoBlockHeader getHeader() {
+      public ProtoBlockHeader getHeader() {
         if (headerBuilder_ == null) {
-          return header_ == null ? Structure.ProtoBlockHeader.getDefaultInstance() : header_;
+          return header_ == null ? ProtoBlockHeader.getDefaultInstance() : header_;
         } else {
           return headerBuilder_.getMessage();
         }
@@ -2122,7 +2122,7 @@ public final class Structure {
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        */
-      public Builder setHeader(Structure.ProtoBlockHeader value) {
+      public Builder setHeader(ProtoBlockHeader value) {
         if (headerBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
@@ -2139,7 +2139,7 @@ public final class Structure {
        * <code>.ProtoBlockHeader header = 1;</code>
        */
       public Builder setHeader(
-          Structure.ProtoBlockHeader.Builder builderForValue) {
+          ProtoBlockHeader.Builder builderForValue) {
         if (headerBuilder_ == null) {
           header_ = builderForValue.build();
         } else {
@@ -2152,11 +2152,11 @@ public final class Structure {
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        */
-      public Builder mergeHeader(Structure.ProtoBlockHeader value) {
+      public Builder mergeHeader(ProtoBlockHeader value) {
         if (headerBuilder_ == null) {
           if (((bitField0_ & 0x00000001) != 0) &&
             header_ != null &&
-            header_ != Structure.ProtoBlockHeader.getDefaultInstance()) {
+            header_ != ProtoBlockHeader.getDefaultInstance()) {
             getHeaderBuilder().mergeFrom(value);
           } else {
             header_ = value;
@@ -2186,7 +2186,7 @@ public final class Structure {
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        */
-      public Structure.ProtoBlockHeader.Builder getHeaderBuilder() {
+      public ProtoBlockHeader.Builder getHeaderBuilder() {
         bitField0_ |= 0x00000001;
         onChanged();
         return internalGetHeaderFieldBuilder().getBuilder();
@@ -2194,23 +2194,23 @@ public final class Structure {
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        */
-      public Structure.ProtoBlockHeaderOrBuilder getHeaderOrBuilder() {
+      public ProtoBlockHeaderOrBuilder getHeaderOrBuilder() {
         if (headerBuilder_ != null) {
           return headerBuilder_.getMessageOrBuilder();
         } else {
           return header_ == null ?
-              Structure.ProtoBlockHeader.getDefaultInstance() : header_;
+              ProtoBlockHeader.getDefaultInstance() : header_;
         }
       }
       /**
        * <code>.ProtoBlockHeader header = 1;</code>
        */
       private com.google.protobuf.SingleFieldBuilder<
-          Structure.ProtoBlockHeader, Structure.ProtoBlockHeader.Builder, Structure.ProtoBlockHeaderOrBuilder> 
+          ProtoBlockHeader, ProtoBlockHeader.Builder, ProtoBlockHeaderOrBuilder>
           internalGetHeaderFieldBuilder() {
         if (headerBuilder_ == null) {
           headerBuilder_ = new com.google.protobuf.SingleFieldBuilder<
-              Structure.ProtoBlockHeader, Structure.ProtoBlockHeader.Builder, Structure.ProtoBlockHeaderOrBuilder>(
+              ProtoBlockHeader, ProtoBlockHeader.Builder, ProtoBlockHeaderOrBuilder>(
                   getHeader(),
                   getParentForChildren(),
                   isClean());
@@ -2223,18 +2223,18 @@ public final class Structure {
     }
 
     // @@protoc_insertion_point(class_scope:ProtoBlock)
-    private static final Structure.ProtoBlock DEFAULT_INSTANCE;
+    private static final ProtoBlock DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new Structure.ProtoBlock();
+      DEFAULT_INSTANCE = new ProtoBlock();
     }
 
-    public static Structure.ProtoBlock getDefaultInstance() {
+    public static ProtoBlock getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
     private static final com.google.protobuf.Parser<ProtoBlock>
         PARSER = new com.google.protobuf.AbstractParser<ProtoBlock>() {
-      @java.lang.Override
+      @Override
       public ProtoBlock parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
@@ -2258,13 +2258,13 @@ public final class Structure {
       return PARSER;
     }
 
-    @java.lang.Override
+    @Override
     public com.google.protobuf.Parser<ProtoBlock> getParserForType() {
       return PARSER;
     }
 
-    @java.lang.Override
-    public Structure.ProtoBlock getDefaultInstanceForType() {
+    @Override
+    public ProtoBlock getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -2387,12 +2387,12 @@ public final class Structure {
       return Structure.internal_static_ProtoP2pMessage_descriptor;
     }
 
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+    @Override
+    protected FieldAccessorTable
         internalGetFieldAccessorTable() {
       return Structure.internal_static_ProtoP2pMessage_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              Structure.ProtoP2pMessage.class, Structure.ProtoP2pMessage.Builder.class);
+              ProtoP2pMessage.class, Builder.class);
     }
 
     public static final int SENDER_ID_FIELD_NUMBER = 1;
@@ -2405,7 +2405,7 @@ public final class Structure {
      * <code>bytes sender_id = 1;</code>
      * @return The senderId.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getSenderId() {
       return senderId_;
     }
@@ -2420,7 +2420,7 @@ public final class Structure {
      * <code>bytes message_id = 2;</code>
      * @return The messageId.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getMessageId() {
       return messageId_;
     }
@@ -2435,7 +2435,7 @@ public final class Structure {
      * <code>bytes request_id = 3;</code>
      * @return The requestId.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getRequestId() {
       return requestId_;
     }
@@ -2450,7 +2450,7 @@ public final class Structure {
      * <code>uint32 req_res_flag = 4;</code>
      * @return The reqResFlag.
      */
-    @java.lang.Override
+    @Override
     public int getReqResFlag() {
       return reqResFlag_;
     }
@@ -2465,7 +2465,7 @@ public final class Structure {
      * <code>uint32 type = 5;</code>
      * @return The type.
      */
-    @java.lang.Override
+    @Override
     public int getType() {
       return type_;
     }
@@ -2480,7 +2480,7 @@ public final class Structure {
      * <code>uint32 length = 6;</code>
      * @return The length.
      */
-    @java.lang.Override
+    @Override
     public int getLength() {
       return length_;
     }
@@ -2495,7 +2495,7 @@ public final class Structure {
      * <code>uint32 version = 7;</code>
      * @return The version.
      */
-    @java.lang.Override
+    @Override
     public int getVersion() {
       return version_;
     }
@@ -2510,13 +2510,13 @@ public final class Structure {
      * <code>bytes data = 8;</code>
      * @return The data.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getData() {
       return data_;
     }
 
     private byte memoizedIsInitialized = -1;
-    @java.lang.Override
+    @Override
     public final boolean isInitialized() {
       byte isInitialized = memoizedIsInitialized;
       if (isInitialized == 1) return true;
@@ -2526,7 +2526,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (!senderId_.isEmpty()) {
@@ -2556,7 +2556,7 @@ public final class Structure {
       getUnknownFields().writeTo(output);
     }
 
-    @java.lang.Override
+    @Override
     public int getSerializedSize() {
       int size = memoizedSize;
       if (size != -1) return size;
@@ -2599,15 +2599,15 @@ public final class Structure {
       return size;
     }
 
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
+    @Override
+    public boolean equals(final Object obj) {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof Structure.ProtoP2pMessage)) {
+      if (!(obj instanceof ProtoP2pMessage)) {
         return super.equals(obj);
       }
-      Structure.ProtoP2pMessage other = (Structure.ProtoP2pMessage) obj;
+      ProtoP2pMessage other = (ProtoP2pMessage) obj;
 
       if (!getSenderId()
           .equals(other.getSenderId())) return false;
@@ -2629,7 +2629,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public int hashCode() {
       if (memoizedHashCode != 0) {
         return memoizedHashCode;
@@ -2657,44 +2657,44 @@ public final class Structure {
       return hash;
     }
 
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoP2pMessage parseFrom(byte[] data)
+    public static ProtoP2pMessage parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoP2pMessage parseFrom(java.io.InputStream input)
+    public static ProtoP2pMessage parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -2702,26 +2702,26 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static Structure.ProtoP2pMessage parseDelimitedFrom(java.io.InputStream input)
+    public static ProtoP2pMessage parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static Structure.ProtoP2pMessage parseDelimitedFrom(
+    public static ProtoP2pMessage parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoP2pMessage parseFrom(
+    public static ProtoP2pMessage parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -2729,23 +2729,23 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    @java.lang.Override
+    @Override
     public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(Structure.ProtoP2pMessage prototype) {
+    public static Builder newBuilder(ProtoP2pMessage prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
-    @java.lang.Override
+    @Override
     public Builder toBuilder() {
       return this == DEFAULT_INSTANCE
           ? new Builder() : new Builder().mergeFrom(this);
     }
 
-    @java.lang.Override
+    @Override
     protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        BuilderParent parent) {
       Builder builder = new Builder(parent);
       return builder;
     }
@@ -2755,18 +2755,18 @@ public final class Structure {
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
         // @@protoc_insertion_point(builder_implements:ProtoP2pMessage)
-        Structure.ProtoP2pMessageOrBuilder {
+        ProtoP2pMessageOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
         return Structure.internal_static_ProtoP2pMessage_descriptor;
       }
 
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      @Override
+      protected FieldAccessorTable
           internalGetFieldAccessorTable() {
         return Structure.internal_static_ProtoP2pMessage_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                Structure.ProtoP2pMessage.class, Structure.ProtoP2pMessage.Builder.class);
+                ProtoP2pMessage.class, Builder.class);
       }
 
       // Construct using Structure.ProtoP2pMessage.newBuilder()
@@ -2775,11 +2775,11 @@ public final class Structure {
       }
 
       private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+          BuilderParent parent) {
         super(parent);
 
       }
-      @java.lang.Override
+      @Override
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
@@ -2794,35 +2794,35 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
         return Structure.internal_static_ProtoP2pMessage_descriptor;
       }
 
-      @java.lang.Override
-      public Structure.ProtoP2pMessage getDefaultInstanceForType() {
-        return Structure.ProtoP2pMessage.getDefaultInstance();
+      @Override
+      public ProtoP2pMessage getDefaultInstanceForType() {
+        return ProtoP2pMessage.getDefaultInstance();
       }
 
-      @java.lang.Override
-      public Structure.ProtoP2pMessage build() {
-        Structure.ProtoP2pMessage result = buildPartial();
+      @Override
+      public ProtoP2pMessage build() {
+        ProtoP2pMessage result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      @java.lang.Override
-      public Structure.ProtoP2pMessage buildPartial() {
-        Structure.ProtoP2pMessage result = new Structure.ProtoP2pMessage(this);
+      @Override
+      public ProtoP2pMessage buildPartial() {
+        ProtoP2pMessage result = new ProtoP2pMessage(this);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartial0(Structure.ProtoP2pMessage result) {
+      private void buildPartial0(ProtoP2pMessage result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.senderId_ = senderId_;
@@ -2850,18 +2850,18 @@ public final class Structure {
         }
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof Structure.ProtoP2pMessage) {
-          return mergeFrom((Structure.ProtoP2pMessage)other);
+        if (other instanceof ProtoP2pMessage) {
+          return mergeFrom((ProtoP2pMessage)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(Structure.ProtoP2pMessage other) {
-        if (other == Structure.ProtoP2pMessage.getDefaultInstance()) return this;
+      public Builder mergeFrom(ProtoP2pMessage other) {
+        if (other == ProtoP2pMessage.getDefaultInstance()) return this;
         if (!other.getSenderId().isEmpty()) {
           setSenderId(other.getSenderId());
         }
@@ -2891,18 +2891,18 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public final boolean isInitialized() {
         return true;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
         if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
+          throw new NullPointerException();
         }
         try {
           boolean done = false;
@@ -2978,7 +2978,7 @@ public final class Structure {
        * <code>bytes sender_id = 1;</code>
        * @return The senderId.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getSenderId() {
         return senderId_;
       }
@@ -3022,7 +3022,7 @@ public final class Structure {
        * <code>bytes message_id = 2;</code>
        * @return The messageId.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getMessageId() {
         return messageId_;
       }
@@ -3066,7 +3066,7 @@ public final class Structure {
        * <code>bytes request_id = 3;</code>
        * @return The requestId.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getRequestId() {
         return requestId_;
       }
@@ -3110,7 +3110,7 @@ public final class Structure {
        * <code>uint32 req_res_flag = 4;</code>
        * @return The reqResFlag.
        */
-      @java.lang.Override
+      @Override
       public int getReqResFlag() {
         return reqResFlag_;
       }
@@ -3154,7 +3154,7 @@ public final class Structure {
        * <code>uint32 type = 5;</code>
        * @return The type.
        */
-      @java.lang.Override
+      @Override
       public int getType() {
         return type_;
       }
@@ -3198,7 +3198,7 @@ public final class Structure {
        * <code>uint32 length = 6;</code>
        * @return The length.
        */
-      @java.lang.Override
+      @Override
       public int getLength() {
         return length_;
       }
@@ -3242,7 +3242,7 @@ public final class Structure {
        * <code>uint32 version = 7;</code>
        * @return The version.
        */
-      @java.lang.Override
+      @Override
       public int getVersion() {
         return version_;
       }
@@ -3286,7 +3286,7 @@ public final class Structure {
        * <code>bytes data = 8;</code>
        * @return The data.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getData() {
         return data_;
       }
@@ -3325,18 +3325,18 @@ public final class Structure {
     }
 
     // @@protoc_insertion_point(class_scope:ProtoP2pMessage)
-    private static final Structure.ProtoP2pMessage DEFAULT_INSTANCE;
+    private static final ProtoP2pMessage DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new Structure.ProtoP2pMessage();
+      DEFAULT_INSTANCE = new ProtoP2pMessage();
     }
 
-    public static Structure.ProtoP2pMessage getDefaultInstance() {
+    public static ProtoP2pMessage getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
     private static final com.google.protobuf.Parser<ProtoP2pMessage>
         PARSER = new com.google.protobuf.AbstractParser<ProtoP2pMessage>() {
-      @java.lang.Override
+      @Override
       public ProtoP2pMessage parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
@@ -3360,13 +3360,13 @@ public final class Structure {
       return PARSER;
     }
 
-    @java.lang.Override
+    @Override
     public com.google.protobuf.Parser<ProtoP2pMessage> getParserForType() {
       return PARSER;
     }
 
-    @java.lang.Override
-    public Structure.ProtoP2pMessage getDefaultInstanceForType() {
+    @Override
+    public ProtoP2pMessage getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -3404,7 +3404,7 @@ public final class Structure {
      * <code>string address = 3;</code>
      * @return The address.
      */
-    java.lang.String getAddress();
+    String getAddress();
     /**
      * <pre>
      * 网络信息
@@ -3434,7 +3434,7 @@ public final class Structure {
      * <code>string multiaddr = 5;</code>
      * @return The multiaddr.
      */
-    java.lang.String getMultiaddr();
+    String getMultiaddr();
     /**
      * <pre>
      * 多地址（Multiaddr格式）
@@ -3454,7 +3454,7 @@ public final class Structure {
      * <code>string protocol_version = 6;</code>
      * @return The protocolVersion.
      */
-    java.lang.String getProtocolVersion();
+    String getProtocolVersion();
     /**
      * <pre>
      * 通信协议版本
@@ -3554,7 +3554,7 @@ public final class Structure {
      * <code>string latest_hash = 15;</code>
      * @return The latestHash.
      */
-    java.lang.String getLatestHash();
+    String getLatestHash();
     /**
      * <pre>
      * 最新hash 字符串
@@ -3612,12 +3612,12 @@ public final class Structure {
       return Structure.internal_static_ProtoPeer_descriptor;
     }
 
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+    @Override
+    protected FieldAccessorTable
         internalGetFieldAccessorTable() {
       return Structure.internal_static_ProtoPeer_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              Structure.ProtoPeer.class, Structure.ProtoPeer.Builder.class);
+              ProtoPeer.class, Builder.class);
     }
 
     public static final int ID_FIELD_NUMBER = 1;
@@ -3630,7 +3630,7 @@ public final class Structure {
      * <code>bytes id = 1;</code>
      * @return The id.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getId() {
       return id_;
     }
@@ -3645,14 +3645,14 @@ public final class Structure {
      * <code>bytes private_key = 2;</code>
      * @return The privateKey.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getPrivateKey() {
       return privateKey_;
     }
 
     public static final int ADDRESS_FIELD_NUMBER = 3;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object address_ = "";
+    private volatile Object address_ = "";
     /**
      * <pre>
      * 网络信息
@@ -3661,15 +3661,15 @@ public final class Structure {
      * <code>string address = 3;</code>
      * @return The address.
      */
-    @java.lang.Override
-    public java.lang.String getAddress() {
-      java.lang.Object ref = address_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getAddress() {
+      Object ref = address_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         address_ = s;
         return s;
       }
@@ -3682,14 +3682,14 @@ public final class Structure {
      * <code>string address = 3;</code>
      * @return The bytes for address.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getAddressBytes() {
-      java.lang.Object ref = address_;
-      if (ref instanceof java.lang.String) {
+      Object ref = address_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         address_ = b;
         return b;
       } else {
@@ -3707,14 +3707,14 @@ public final class Structure {
      * <code>int32 port = 4;</code>
      * @return The port.
      */
-    @java.lang.Override
+    @Override
     public int getPort() {
       return port_;
     }
 
     public static final int MULTIADDR_FIELD_NUMBER = 5;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object multiaddr_ = "";
+    private volatile Object multiaddr_ = "";
     /**
      * <pre>
      * 多地址（Multiaddr格式）
@@ -3723,15 +3723,15 @@ public final class Structure {
      * <code>string multiaddr = 5;</code>
      * @return The multiaddr.
      */
-    @java.lang.Override
-    public java.lang.String getMultiaddr() {
-      java.lang.Object ref = multiaddr_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getMultiaddr() {
+      Object ref = multiaddr_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         multiaddr_ = s;
         return s;
       }
@@ -3744,14 +3744,14 @@ public final class Structure {
      * <code>string multiaddr = 5;</code>
      * @return The bytes for multiaddr.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getMultiaddrBytes() {
-      java.lang.Object ref = multiaddr_;
-      if (ref instanceof java.lang.String) {
+      Object ref = multiaddr_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         multiaddr_ = b;
         return b;
       } else {
@@ -3761,7 +3761,7 @@ public final class Structure {
 
     public static final int PROTOCOL_VERSION_FIELD_NUMBER = 6;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object protocolVersion_ = "";
+    private volatile Object protocolVersion_ = "";
     /**
      * <pre>
      * 通信协议版本
@@ -3770,15 +3770,15 @@ public final class Structure {
      * <code>string protocol_version = 6;</code>
      * @return The protocolVersion.
      */
-    @java.lang.Override
-    public java.lang.String getProtocolVersion() {
-      java.lang.Object ref = protocolVersion_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getProtocolVersion() {
+      Object ref = protocolVersion_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         protocolVersion_ = s;
         return s;
       }
@@ -3791,14 +3791,14 @@ public final class Structure {
      * <code>string protocol_version = 6;</code>
      * @return The bytes for protocolVersion.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getProtocolVersionBytes() {
-      java.lang.Object ref = protocolVersion_;
-      if (ref instanceof java.lang.String) {
+      Object ref = protocolVersion_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         protocolVersion_ = b;
         return b;
       } else {
@@ -3816,7 +3816,7 @@ public final class Structure {
      * <code>int32 node_type = 7;</code>
      * @return The nodeType.
      */
-    @java.lang.Override
+    @Override
     public int getNodeType() {
       return nodeType_;
     }
@@ -3831,7 +3831,7 @@ public final class Structure {
      * <code>bool is_online = 8;</code>
      * @return The isOnline.
      */
-    @java.lang.Override
+    @Override
     public boolean getIsOnline() {
       return isOnline_;
     }
@@ -3846,7 +3846,7 @@ public final class Structure {
      * <code>uint64 latest_slot = 9;</code>
      * @return The latestSlot.
      */
-    @java.lang.Override
+    @Override
     public long getLatestSlot() {
       return latestSlot_;
     }
@@ -3861,7 +3861,7 @@ public final class Structure {
      * <code>bool is_validator = 10;</code>
      * @return The isValidator.
      */
-    @java.lang.Override
+    @Override
     public boolean getIsValidator() {
       return isValidator_;
     }
@@ -3876,7 +3876,7 @@ public final class Structure {
      * <code>double stake_amount = 11;</code>
      * @return The stakeAmount.
      */
-    @java.lang.Override
+    @Override
     public double getStakeAmount() {
       return stakeAmount_;
     }
@@ -3891,7 +3891,7 @@ public final class Structure {
      * <code>int32 software_version = 12;</code>
      * @return The softwareVersion.
      */
-    @java.lang.Override
+    @Override
     public int getSoftwareVersion() {
       return softwareVersion_;
     }
@@ -3906,7 +3906,7 @@ public final class Structure {
      * <code>uint64 last_seen = 13;</code>
      * @return The lastSeen.
      */
-    @java.lang.Override
+    @Override
     public long getLastSeen() {
       return lastSeen_;
     }
@@ -3921,14 +3921,14 @@ public final class Structure {
      * <code>uint32 height = 14;</code>
      * @return The height.
      */
-    @java.lang.Override
+    @Override
     public int getHeight() {
       return height_;
     }
 
     public static final int LATEST_HASH_FIELD_NUMBER = 15;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object latestHash_ = "";
+    private volatile Object latestHash_ = "";
     /**
      * <pre>
      * 最新hash 字符串
@@ -3937,15 +3937,15 @@ public final class Structure {
      * <code>string latest_hash = 15;</code>
      * @return The latestHash.
      */
-    @java.lang.Override
-    public java.lang.String getLatestHash() {
-      java.lang.Object ref = latestHash_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getLatestHash() {
+      Object ref = latestHash_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         latestHash_ = s;
         return s;
       }
@@ -3958,14 +3958,14 @@ public final class Structure {
      * <code>string latest_hash = 15;</code>
      * @return The bytes for latestHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getLatestHashBytes() {
-      java.lang.Object ref = latestHash_;
-      if (ref instanceof java.lang.String) {
+      Object ref = latestHash_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         latestHash_ = b;
         return b;
       } else {
@@ -3983,13 +3983,13 @@ public final class Structure {
      * <code>bytes total_work = 16;</code>
      * @return The totalWork.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getTotalWork() {
       return totalWork_;
     }
 
     private byte memoizedIsInitialized = -1;
-    @java.lang.Override
+    @Override
     public final boolean isInitialized() {
       byte isInitialized = memoizedIsInitialized;
       if (isInitialized == 1) return true;
@@ -3999,7 +3999,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (!id_.isEmpty()) {
@@ -4032,7 +4032,7 @@ public final class Structure {
       if (isValidator_ != false) {
         output.writeBool(10, isValidator_);
       }
-      if (java.lang.Double.doubleToRawLongBits(stakeAmount_) != 0) {
+      if (Double.doubleToRawLongBits(stakeAmount_) != 0) {
         output.writeDouble(11, stakeAmount_);
       }
       if (softwareVersion_ != 0) {
@@ -4053,7 +4053,7 @@ public final class Structure {
       getUnknownFields().writeTo(output);
     }
 
-    @java.lang.Override
+    @Override
     public int getSerializedSize() {
       int size = memoizedSize;
       if (size != -1) return size;
@@ -4096,7 +4096,7 @@ public final class Structure {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(10, isValidator_);
       }
-      if (java.lang.Double.doubleToRawLongBits(stakeAmount_) != 0) {
+      if (Double.doubleToRawLongBits(stakeAmount_) != 0) {
         size += com.google.protobuf.CodedOutputStream
           .computeDoubleSize(11, stakeAmount_);
       }
@@ -4124,15 +4124,15 @@ public final class Structure {
       return size;
     }
 
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
+    @Override
+    public boolean equals(final Object obj) {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof Structure.ProtoPeer)) {
+      if (!(obj instanceof ProtoPeer)) {
         return super.equals(obj);
       }
-      Structure.ProtoPeer other = (Structure.ProtoPeer) obj;
+      ProtoPeer other = (ProtoPeer) obj;
 
       if (!getId()
           .equals(other.getId())) return false;
@@ -4154,8 +4154,8 @@ public final class Structure {
           != other.getLatestSlot()) return false;
       if (getIsValidator()
           != other.getIsValidator()) return false;
-      if (java.lang.Double.doubleToLongBits(getStakeAmount())
-          != java.lang.Double.doubleToLongBits(
+      if (Double.doubleToLongBits(getStakeAmount())
+          != Double.doubleToLongBits(
               other.getStakeAmount())) return false;
       if (getSoftwareVersion()
           != other.getSoftwareVersion()) return false;
@@ -4171,7 +4171,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public int hashCode() {
       if (memoizedHashCode != 0) {
         return memoizedHashCode;
@@ -4203,7 +4203,7 @@ public final class Structure {
           getIsValidator());
       hash = (37 * hash) + STAKE_AMOUNT_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          java.lang.Double.doubleToLongBits(getStakeAmount()));
+          Double.doubleToLongBits(getStakeAmount()));
       hash = (37 * hash) + SOFTWARE_VERSION_FIELD_NUMBER;
       hash = (53 * hash) + getSoftwareVersion();
       hash = (37 * hash) + LAST_SEEN_FIELD_NUMBER;
@@ -4220,44 +4220,44 @@ public final class Structure {
       return hash;
     }
 
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoPeer parseFrom(byte[] data)
+    public static ProtoPeer parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoPeer parseFrom(java.io.InputStream input)
+    public static ProtoPeer parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -4265,26 +4265,26 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static Structure.ProtoPeer parseDelimitedFrom(java.io.InputStream input)
+    public static ProtoPeer parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static Structure.ProtoPeer parseDelimitedFrom(
+    public static ProtoPeer parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoPeer parseFrom(
+    public static ProtoPeer parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -4292,23 +4292,23 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    @java.lang.Override
+    @Override
     public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(Structure.ProtoPeer prototype) {
+    public static Builder newBuilder(ProtoPeer prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
-    @java.lang.Override
+    @Override
     public Builder toBuilder() {
       return this == DEFAULT_INSTANCE
           ? new Builder() : new Builder().mergeFrom(this);
     }
 
-    @java.lang.Override
+    @Override
     protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        BuilderParent parent) {
       Builder builder = new Builder(parent);
       return builder;
     }
@@ -4318,18 +4318,18 @@ public final class Structure {
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
         // @@protoc_insertion_point(builder_implements:ProtoPeer)
-        Structure.ProtoPeerOrBuilder {
+        ProtoPeerOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
         return Structure.internal_static_ProtoPeer_descriptor;
       }
 
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      @Override
+      protected FieldAccessorTable
           internalGetFieldAccessorTable() {
         return Structure.internal_static_ProtoPeer_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                Structure.ProtoPeer.class, Structure.ProtoPeer.Builder.class);
+                ProtoPeer.class, Builder.class);
       }
 
       // Construct using Structure.ProtoPeer.newBuilder()
@@ -4338,11 +4338,11 @@ public final class Structure {
       }
 
       private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+          BuilderParent parent) {
         super(parent);
 
       }
-      @java.lang.Override
+      @Override
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
@@ -4365,35 +4365,35 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
         return Structure.internal_static_ProtoPeer_descriptor;
       }
 
-      @java.lang.Override
-      public Structure.ProtoPeer getDefaultInstanceForType() {
-        return Structure.ProtoPeer.getDefaultInstance();
+      @Override
+      public ProtoPeer getDefaultInstanceForType() {
+        return ProtoPeer.getDefaultInstance();
       }
 
-      @java.lang.Override
-      public Structure.ProtoPeer build() {
-        Structure.ProtoPeer result = buildPartial();
+      @Override
+      public ProtoPeer build() {
+        ProtoPeer result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      @java.lang.Override
-      public Structure.ProtoPeer buildPartial() {
-        Structure.ProtoPeer result = new Structure.ProtoPeer(this);
+      @Override
+      public ProtoPeer buildPartial() {
+        ProtoPeer result = new ProtoPeer(this);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartial0(Structure.ProtoPeer result) {
+      private void buildPartial0(ProtoPeer result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.id_ = id_;
@@ -4445,18 +4445,18 @@ public final class Structure {
         }
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof Structure.ProtoPeer) {
-          return mergeFrom((Structure.ProtoPeer)other);
+        if (other instanceof ProtoPeer) {
+          return mergeFrom((ProtoPeer)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(Structure.ProtoPeer other) {
-        if (other == Structure.ProtoPeer.getDefaultInstance()) return this;
+      public Builder mergeFrom(ProtoPeer other) {
+        if (other == ProtoPeer.getDefaultInstance()) return this;
         if (!other.getId().isEmpty()) {
           setId(other.getId());
         }
@@ -4493,7 +4493,7 @@ public final class Structure {
         if (other.getIsValidator() != false) {
           setIsValidator(other.getIsValidator());
         }
-        if (java.lang.Double.doubleToRawLongBits(other.getStakeAmount()) != 0) {
+        if (Double.doubleToRawLongBits(other.getStakeAmount()) != 0) {
           setStakeAmount(other.getStakeAmount());
         }
         if (other.getSoftwareVersion() != 0) {
@@ -4518,18 +4518,18 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public final boolean isInitialized() {
         return true;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
         if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
+          throw new NullPointerException();
         }
         try {
           boolean done = false;
@@ -4645,7 +4645,7 @@ public final class Structure {
        * <code>bytes id = 1;</code>
        * @return The id.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getId() {
         return id_;
       }
@@ -4689,7 +4689,7 @@ public final class Structure {
        * <code>bytes private_key = 2;</code>
        * @return The privateKey.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getPrivateKey() {
         return privateKey_;
       }
@@ -4724,7 +4724,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object address_ = "";
+      private Object address_ = "";
       /**
        * <pre>
        * 网络信息
@@ -4733,16 +4733,16 @@ public final class Structure {
        * <code>string address = 3;</code>
        * @return The address.
        */
-      public java.lang.String getAddress() {
-        java.lang.Object ref = address_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getAddress() {
+        Object ref = address_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           address_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -4755,11 +4755,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getAddressBytes() {
-        java.lang.Object ref = address_;
+        Object ref = address_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           address_ = b;
           return b;
         } else {
@@ -4776,7 +4776,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setAddress(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         address_ = value;
         bitField0_ |= 0x00000004;
@@ -4825,7 +4825,7 @@ public final class Structure {
        * <code>int32 port = 4;</code>
        * @return The port.
        */
-      @java.lang.Override
+      @Override
       public int getPort() {
         return port_;
       }
@@ -4860,7 +4860,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object multiaddr_ = "";
+      private Object multiaddr_ = "";
       /**
        * <pre>
        * 多地址（Multiaddr格式）
@@ -4869,16 +4869,16 @@ public final class Structure {
        * <code>string multiaddr = 5;</code>
        * @return The multiaddr.
        */
-      public java.lang.String getMultiaddr() {
-        java.lang.Object ref = multiaddr_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getMultiaddr() {
+        Object ref = multiaddr_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           multiaddr_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -4891,11 +4891,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getMultiaddrBytes() {
-        java.lang.Object ref = multiaddr_;
+        Object ref = multiaddr_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           multiaddr_ = b;
           return b;
         } else {
@@ -4912,7 +4912,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setMultiaddr(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         multiaddr_ = value;
         bitField0_ |= 0x00000010;
@@ -4952,7 +4952,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object protocolVersion_ = "";
+      private Object protocolVersion_ = "";
       /**
        * <pre>
        * 通信协议版本
@@ -4961,16 +4961,16 @@ public final class Structure {
        * <code>string protocol_version = 6;</code>
        * @return The protocolVersion.
        */
-      public java.lang.String getProtocolVersion() {
-        java.lang.Object ref = protocolVersion_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getProtocolVersion() {
+        Object ref = protocolVersion_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           protocolVersion_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -4983,11 +4983,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getProtocolVersionBytes() {
-        java.lang.Object ref = protocolVersion_;
+        Object ref = protocolVersion_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           protocolVersion_ = b;
           return b;
         } else {
@@ -5004,7 +5004,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setProtocolVersion(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         protocolVersion_ = value;
         bitField0_ |= 0x00000020;
@@ -5053,7 +5053,7 @@ public final class Structure {
        * <code>int32 node_type = 7;</code>
        * @return The nodeType.
        */
-      @java.lang.Override
+      @Override
       public int getNodeType() {
         return nodeType_;
       }
@@ -5097,7 +5097,7 @@ public final class Structure {
        * <code>bool is_online = 8;</code>
        * @return The isOnline.
        */
-      @java.lang.Override
+      @Override
       public boolean getIsOnline() {
         return isOnline_;
       }
@@ -5141,7 +5141,7 @@ public final class Structure {
        * <code>uint64 latest_slot = 9;</code>
        * @return The latestSlot.
        */
-      @java.lang.Override
+      @Override
       public long getLatestSlot() {
         return latestSlot_;
       }
@@ -5185,7 +5185,7 @@ public final class Structure {
        * <code>bool is_validator = 10;</code>
        * @return The isValidator.
        */
-      @java.lang.Override
+      @Override
       public boolean getIsValidator() {
         return isValidator_;
       }
@@ -5229,7 +5229,7 @@ public final class Structure {
        * <code>double stake_amount = 11;</code>
        * @return The stakeAmount.
        */
-      @java.lang.Override
+      @Override
       public double getStakeAmount() {
         return stakeAmount_;
       }
@@ -5273,7 +5273,7 @@ public final class Structure {
        * <code>int32 software_version = 12;</code>
        * @return The softwareVersion.
        */
-      @java.lang.Override
+      @Override
       public int getSoftwareVersion() {
         return softwareVersion_;
       }
@@ -5317,7 +5317,7 @@ public final class Structure {
        * <code>uint64 last_seen = 13;</code>
        * @return The lastSeen.
        */
-      @java.lang.Override
+      @Override
       public long getLastSeen() {
         return lastSeen_;
       }
@@ -5361,7 +5361,7 @@ public final class Structure {
        * <code>uint32 height = 14;</code>
        * @return The height.
        */
-      @java.lang.Override
+      @Override
       public int getHeight() {
         return height_;
       }
@@ -5396,7 +5396,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object latestHash_ = "";
+      private Object latestHash_ = "";
       /**
        * <pre>
        * 最新hash 字符串
@@ -5405,16 +5405,16 @@ public final class Structure {
        * <code>string latest_hash = 15;</code>
        * @return The latestHash.
        */
-      public java.lang.String getLatestHash() {
-        java.lang.Object ref = latestHash_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getLatestHash() {
+        Object ref = latestHash_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           latestHash_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -5427,11 +5427,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getLatestHashBytes() {
-        java.lang.Object ref = latestHash_;
+        Object ref = latestHash_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           latestHash_ = b;
           return b;
         } else {
@@ -5448,7 +5448,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setLatestHash(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         latestHash_ = value;
         bitField0_ |= 0x00004000;
@@ -5497,7 +5497,7 @@ public final class Structure {
        * <code>bytes total_work = 16;</code>
        * @return The totalWork.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getTotalWork() {
         return totalWork_;
       }
@@ -5536,18 +5536,18 @@ public final class Structure {
     }
 
     // @@protoc_insertion_point(class_scope:ProtoPeer)
-    private static final Structure.ProtoPeer DEFAULT_INSTANCE;
+    private static final ProtoPeer DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new Structure.ProtoPeer();
+      DEFAULT_INSTANCE = new ProtoPeer();
     }
 
-    public static Structure.ProtoPeer getDefaultInstance() {
+    public static ProtoPeer getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
     private static final com.google.protobuf.Parser<ProtoPeer>
         PARSER = new com.google.protobuf.AbstractParser<ProtoPeer>() {
-      @java.lang.Override
+      @Override
       public ProtoPeer parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
@@ -5571,13 +5571,13 @@ public final class Structure {
       return PARSER;
     }
 
-    @java.lang.Override
+    @Override
     public com.google.protobuf.Parser<ProtoPeer> getParserForType() {
       return PARSER;
     }
 
-    @java.lang.Override
-    public Structure.ProtoPeer getDefaultInstanceForType() {
+    @Override
+    public ProtoPeer getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -5605,7 +5605,7 @@ public final class Structure {
      * <code>string hardware_info = 2;</code>
      * @return The hardwareInfo.
      */
-    java.lang.String getHardwareInfo();
+    String getHardwareInfo();
     /**
      * <pre>
      * 节点硬件标识（可选，如CPU核心数/内存大小）
@@ -5645,7 +5645,7 @@ public final class Structure {
      * <code>string node_version = 5;</code>
      * @return The nodeVersion.
      */
-    java.lang.String getNodeVersion();
+    String getNodeVersion();
     /**
      * <pre>
      * 节点版本（如"1.18.17"）
@@ -5749,12 +5749,12 @@ public final class Structure {
       return Structure.internal_static_ProtoNetworkHandshake_descriptor;
     }
 
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+    @Override
+    protected FieldAccessorTable
         internalGetFieldAccessorTable() {
       return Structure.internal_static_ProtoNetworkHandshake_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              Structure.ProtoNetworkHandshake.class, Structure.ProtoNetworkHandshake.Builder.class);
+              ProtoNetworkHandshake.class, Builder.class);
     }
 
     public static final int NETWORK_MAGIC_FIELD_NUMBER = 1;
@@ -5767,14 +5767,14 @@ public final class Structure {
      * <code>bytes network_magic = 1;</code>
      * @return The networkMagic.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getNetworkMagic() {
       return networkMagic_;
     }
 
     public static final int HARDWARE_INFO_FIELD_NUMBER = 2;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object hardwareInfo_ = "";
+    private volatile Object hardwareInfo_ = "";
     /**
      * <pre>
      * 节点硬件标识（可选，如CPU核心数/内存大小）
@@ -5783,15 +5783,15 @@ public final class Structure {
      * <code>string hardware_info = 2;</code>
      * @return The hardwareInfo.
      */
-    @java.lang.Override
-    public java.lang.String getHardwareInfo() {
-      java.lang.Object ref = hardwareInfo_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getHardwareInfo() {
+      Object ref = hardwareInfo_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         hardwareInfo_ = s;
         return s;
       }
@@ -5804,14 +5804,14 @@ public final class Structure {
      * <code>string hardware_info = 2;</code>
      * @return The bytes for hardwareInfo.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getHardwareInfoBytes() {
-      java.lang.Object ref = hardwareInfo_;
-      if (ref instanceof java.lang.String) {
+      Object ref = hardwareInfo_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         hardwareInfo_ = b;
         return b;
       } else {
@@ -5829,7 +5829,7 @@ public final class Structure {
      * <code>bytes node_id = 3;</code>
      * @return The nodeId.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getNodeId() {
       return nodeId_;
     }
@@ -5844,14 +5844,14 @@ public final class Structure {
      * <code>bytes nonce_id = 4;</code>
      * @return The nonceId.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getNonceId() {
       return nonceId_;
     }
 
     public static final int NODE_VERSION_FIELD_NUMBER = 5;
     @SuppressWarnings("serial")
-    private volatile java.lang.Object nodeVersion_ = "";
+    private volatile Object nodeVersion_ = "";
     /**
      * <pre>
      * 节点版本（如"1.18.17"）
@@ -5860,15 +5860,15 @@ public final class Structure {
      * <code>string node_version = 5;</code>
      * @return The nodeVersion.
      */
-    @java.lang.Override
-    public java.lang.String getNodeVersion() {
-      java.lang.Object ref = nodeVersion_;
-      if (ref instanceof java.lang.String) {
-        return (java.lang.String) ref;
+    @Override
+    public String getNodeVersion() {
+      Object ref = nodeVersion_;
+      if (ref instanceof String) {
+        return (String) ref;
       } else {
         com.google.protobuf.ByteString bs = 
             (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
+        String s = bs.toStringUtf8();
         nodeVersion_ = s;
         return s;
       }
@@ -5881,14 +5881,14 @@ public final class Structure {
      * <code>string node_version = 5;</code>
      * @return The bytes for nodeVersion.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString
         getNodeVersionBytes() {
-      java.lang.Object ref = nodeVersion_;
-      if (ref instanceof java.lang.String) {
+      Object ref = nodeVersion_;
+      if (ref instanceof String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
+                (String) ref);
         nodeVersion_ = b;
         return b;
       } else {
@@ -5906,7 +5906,7 @@ public final class Structure {
      * <code>bytes signature = 6;</code>
      * @return The signature.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getSignature() {
       return signature_;
     }
@@ -5921,7 +5921,7 @@ public final class Structure {
      * <code>bytes shared_secret = 7;</code>
      * @return The sharedSecret.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getSharedSecret() {
       return sharedSecret_;
     }
@@ -5936,7 +5936,7 @@ public final class Structure {
      * <code>bytes latest_hash = 8;</code>
      * @return The latestHash.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getLatestHash() {
       return latestHash_;
     }
@@ -5951,7 +5951,7 @@ public final class Structure {
      * <code>uint32 latest_height = 9;</code>
      * @return The latestHeight.
      */
-    @java.lang.Override
+    @Override
     public int getLatestHeight() {
       return latestHeight_;
     }
@@ -5966,13 +5966,13 @@ public final class Structure {
      * <code>bytes total_work = 10;</code>
      * @return The totalWork.
      */
-    @java.lang.Override
+    @Override
     public com.google.protobuf.ByteString getTotalWork() {
       return totalWork_;
     }
 
     private byte memoizedIsInitialized = -1;
-    @java.lang.Override
+    @Override
     public final boolean isInitialized() {
       byte isInitialized = memoizedIsInitialized;
       if (isInitialized == 1) return true;
@@ -5982,7 +5982,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (!networkMagic_.isEmpty()) {
@@ -6018,7 +6018,7 @@ public final class Structure {
       getUnknownFields().writeTo(output);
     }
 
-    @java.lang.Override
+    @Override
     public int getSerializedSize() {
       int size = memoizedSize;
       if (size != -1) return size;
@@ -6067,15 +6067,15 @@ public final class Structure {
       return size;
     }
 
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
+    @Override
+    public boolean equals(final Object obj) {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof Structure.ProtoNetworkHandshake)) {
+      if (!(obj instanceof ProtoNetworkHandshake)) {
         return super.equals(obj);
       }
-      Structure.ProtoNetworkHandshake other = (Structure.ProtoNetworkHandshake) obj;
+      ProtoNetworkHandshake other = (ProtoNetworkHandshake) obj;
 
       if (!getNetworkMagic()
           .equals(other.getNetworkMagic())) return false;
@@ -6101,7 +6101,7 @@ public final class Structure {
       return true;
     }
 
-    @java.lang.Override
+    @Override
     public int hashCode() {
       if (memoizedHashCode != 0) {
         return memoizedHashCode;
@@ -6133,44 +6133,44 @@ public final class Structure {
       return hash;
     }
 
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(byte[] data)
+    public static ProtoNetworkHandshake parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(java.io.InputStream input)
+    public static ProtoNetworkHandshake parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -6178,26 +6178,26 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    public static Structure.ProtoNetworkHandshake parseDelimitedFrom(java.io.InputStream input)
+    public static ProtoNetworkHandshake parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input);
     }
 
-    public static Structure.ProtoNetworkHandshake parseDelimitedFrom(
+    public static ProtoNetworkHandshake parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessage
           .parseWithIOException(PARSER, input);
     }
-    public static Structure.ProtoNetworkHandshake parseFrom(
+    public static ProtoNetworkHandshake parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -6205,23 +6205,23 @@ public final class Structure {
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
 
-    @java.lang.Override
+    @Override
     public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(Structure.ProtoNetworkHandshake prototype) {
+    public static Builder newBuilder(ProtoNetworkHandshake prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
-    @java.lang.Override
+    @Override
     public Builder toBuilder() {
       return this == DEFAULT_INSTANCE
           ? new Builder() : new Builder().mergeFrom(this);
     }
 
-    @java.lang.Override
+    @Override
     protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        BuilderParent parent) {
       Builder builder = new Builder(parent);
       return builder;
     }
@@ -6235,18 +6235,18 @@ public final class Structure {
     public static final class Builder extends
         com.google.protobuf.GeneratedMessage.Builder<Builder> implements
         // @@protoc_insertion_point(builder_implements:ProtoNetworkHandshake)
-        Structure.ProtoNetworkHandshakeOrBuilder {
+        ProtoNetworkHandshakeOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
         return Structure.internal_static_ProtoNetworkHandshake_descriptor;
       }
 
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      @Override
+      protected FieldAccessorTable
           internalGetFieldAccessorTable() {
         return Structure.internal_static_ProtoNetworkHandshake_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                Structure.ProtoNetworkHandshake.class, Structure.ProtoNetworkHandshake.Builder.class);
+                ProtoNetworkHandshake.class, Builder.class);
       }
 
       // Construct using Structure.ProtoNetworkHandshake.newBuilder()
@@ -6255,11 +6255,11 @@ public final class Structure {
       }
 
       private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+          BuilderParent parent) {
         super(parent);
 
       }
-      @java.lang.Override
+      @Override
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
@@ -6276,35 +6276,35 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
         return Structure.internal_static_ProtoNetworkHandshake_descriptor;
       }
 
-      @java.lang.Override
-      public Structure.ProtoNetworkHandshake getDefaultInstanceForType() {
-        return Structure.ProtoNetworkHandshake.getDefaultInstance();
+      @Override
+      public ProtoNetworkHandshake getDefaultInstanceForType() {
+        return ProtoNetworkHandshake.getDefaultInstance();
       }
 
-      @java.lang.Override
-      public Structure.ProtoNetworkHandshake build() {
-        Structure.ProtoNetworkHandshake result = buildPartial();
+      @Override
+      public ProtoNetworkHandshake build() {
+        ProtoNetworkHandshake result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      @java.lang.Override
-      public Structure.ProtoNetworkHandshake buildPartial() {
-        Structure.ProtoNetworkHandshake result = new Structure.ProtoNetworkHandshake(this);
+      @Override
+      public ProtoNetworkHandshake buildPartial() {
+        ProtoNetworkHandshake result = new ProtoNetworkHandshake(this);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
       }
 
-      private void buildPartial0(Structure.ProtoNetworkHandshake result) {
+      private void buildPartial0(ProtoNetworkHandshake result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
           result.networkMagic_ = networkMagic_;
@@ -6338,18 +6338,18 @@ public final class Structure {
         }
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof Structure.ProtoNetworkHandshake) {
-          return mergeFrom((Structure.ProtoNetworkHandshake)other);
+        if (other instanceof ProtoNetworkHandshake) {
+          return mergeFrom((ProtoNetworkHandshake)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(Structure.ProtoNetworkHandshake other) {
-        if (other == Structure.ProtoNetworkHandshake.getDefaultInstance()) return this;
+      public Builder mergeFrom(ProtoNetworkHandshake other) {
+        if (other == ProtoNetworkHandshake.getDefaultInstance()) return this;
         if (!other.getNetworkMagic().isEmpty()) {
           setNetworkMagic(other.getNetworkMagic());
         }
@@ -6389,18 +6389,18 @@ public final class Structure {
         return this;
       }
 
-      @java.lang.Override
+      @Override
       public final boolean isInitialized() {
         return true;
       }
 
-      @java.lang.Override
+      @Override
       public Builder mergeFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
         if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
+          throw new NullPointerException();
         }
         try {
           boolean done = false;
@@ -6486,7 +6486,7 @@ public final class Structure {
        * <code>bytes network_magic = 1;</code>
        * @return The networkMagic.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getNetworkMagic() {
         return networkMagic_;
       }
@@ -6521,7 +6521,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object hardwareInfo_ = "";
+      private Object hardwareInfo_ = "";
       /**
        * <pre>
        * 节点硬件标识（可选，如CPU核心数/内存大小）
@@ -6530,16 +6530,16 @@ public final class Structure {
        * <code>string hardware_info = 2;</code>
        * @return The hardwareInfo.
        */
-      public java.lang.String getHardwareInfo() {
-        java.lang.Object ref = hardwareInfo_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getHardwareInfo() {
+        Object ref = hardwareInfo_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           hardwareInfo_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -6552,11 +6552,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getHardwareInfoBytes() {
-        java.lang.Object ref = hardwareInfo_;
+        Object ref = hardwareInfo_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           hardwareInfo_ = b;
           return b;
         } else {
@@ -6573,7 +6573,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setHardwareInfo(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         hardwareInfo_ = value;
         bitField0_ |= 0x00000002;
@@ -6622,7 +6622,7 @@ public final class Structure {
        * <code>bytes node_id = 3;</code>
        * @return The nodeId.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getNodeId() {
         return nodeId_;
       }
@@ -6666,7 +6666,7 @@ public final class Structure {
        * <code>bytes nonce_id = 4;</code>
        * @return The nonceId.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getNonceId() {
         return nonceId_;
       }
@@ -6701,7 +6701,7 @@ public final class Structure {
         return this;
       }
 
-      private java.lang.Object nodeVersion_ = "";
+      private Object nodeVersion_ = "";
       /**
        * <pre>
        * 节点版本（如"1.18.17"）
@@ -6710,16 +6710,16 @@ public final class Structure {
        * <code>string node_version = 5;</code>
        * @return The nodeVersion.
        */
-      public java.lang.String getNodeVersion() {
-        java.lang.Object ref = nodeVersion_;
-        if (!(ref instanceof java.lang.String)) {
+      public String getNodeVersion() {
+        Object ref = nodeVersion_;
+        if (!(ref instanceof String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
-          java.lang.String s = bs.toStringUtf8();
+          String s = bs.toStringUtf8();
           nodeVersion_ = s;
           return s;
         } else {
-          return (java.lang.String) ref;
+          return (String) ref;
         }
       }
       /**
@@ -6732,11 +6732,11 @@ public final class Structure {
        */
       public com.google.protobuf.ByteString
           getNodeVersionBytes() {
-        java.lang.Object ref = nodeVersion_;
+        Object ref = nodeVersion_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
-                  (java.lang.String) ref);
+                  (String) ref);
           nodeVersion_ = b;
           return b;
         } else {
@@ -6753,7 +6753,7 @@ public final class Structure {
        * @return This builder for chaining.
        */
       public Builder setNodeVersion(
-          java.lang.String value) {
+          String value) {
         if (value == null) { throw new NullPointerException(); }
         nodeVersion_ = value;
         bitField0_ |= 0x00000010;
@@ -6802,7 +6802,7 @@ public final class Structure {
        * <code>bytes signature = 6;</code>
        * @return The signature.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getSignature() {
         return signature_;
       }
@@ -6846,7 +6846,7 @@ public final class Structure {
        * <code>bytes shared_secret = 7;</code>
        * @return The sharedSecret.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getSharedSecret() {
         return sharedSecret_;
       }
@@ -6890,7 +6890,7 @@ public final class Structure {
        * <code>bytes latest_hash = 8;</code>
        * @return The latestHash.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getLatestHash() {
         return latestHash_;
       }
@@ -6934,7 +6934,7 @@ public final class Structure {
        * <code>uint32 latest_height = 9;</code>
        * @return The latestHeight.
        */
-      @java.lang.Override
+      @Override
       public int getLatestHeight() {
         return latestHeight_;
       }
@@ -6978,7 +6978,7 @@ public final class Structure {
        * <code>bytes total_work = 10;</code>
        * @return The totalWork.
        */
-      @java.lang.Override
+      @Override
       public com.google.protobuf.ByteString getTotalWork() {
         return totalWork_;
       }
@@ -7017,18 +7017,18 @@ public final class Structure {
     }
 
     // @@protoc_insertion_point(class_scope:ProtoNetworkHandshake)
-    private static final Structure.ProtoNetworkHandshake DEFAULT_INSTANCE;
+    private static final ProtoNetworkHandshake DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new Structure.ProtoNetworkHandshake();
+      DEFAULT_INSTANCE = new ProtoNetworkHandshake();
     }
 
-    public static Structure.ProtoNetworkHandshake getDefaultInstance() {
+    public static ProtoNetworkHandshake getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
     private static final com.google.protobuf.Parser<ProtoNetworkHandshake>
         PARSER = new com.google.protobuf.AbstractParser<ProtoNetworkHandshake>() {
-      @java.lang.Override
+      @Override
       public ProtoNetworkHandshake parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
@@ -7052,13 +7052,13 @@ public final class Structure {
       return PARSER;
     }
 
-    @java.lang.Override
+    @Override
     public com.google.protobuf.Parser<ProtoNetworkHandshake> getParserForType() {
       return PARSER;
     }
 
-    @java.lang.Override
-    public Structure.ProtoNetworkHandshake getDefaultInstanceForType() {
+    @Override
+    public ProtoNetworkHandshake getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -7097,7 +7097,7 @@ public final class Structure {
   private static  com.google.protobuf.Descriptors.FileDescriptor
       descriptor;
   static {
-    java.lang.String[] descriptorData = {
+    String[] descriptorData = {
       "\n\017structure.proto\"\334\002\n\020ProtoBlockHeader\022\033" +
       "\n\023previous_block_hash\030\001 \001(\014\022\027\n\017state_roo" +
       "t_hash\030\002 \001(\014\022\022\n\nblock_time\030\003 \001(\004\022\020\n\010poh_" +
@@ -7137,31 +7137,31 @@ public final class Structure {
     internal_static_ProtoBlockHeader_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoBlockHeader_descriptor,
-        new java.lang.String[] { "PreviousBlockHash", "StateRootHash", "BlockTime", "PohHash", "PohHeight", "Version", "Slot", "ParentSlot", "RecentVotesHash", "LeaderScheduleEpoch", "TransactionsCount", "FeeCalculatorHash", "TxBloomFilter", "LogBloomFilter", });
+        new String[] { "PreviousBlockHash", "StateRootHash", "BlockTime", "PohHash", "PohHeight", "Version", "Slot", "ParentSlot", "RecentVotesHash", "LeaderScheduleEpoch", "TransactionsCount", "FeeCalculatorHash", "TxBloomFilter", "LogBloomFilter", });
     internal_static_ProtoBlock_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_ProtoBlock_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoBlock_descriptor,
-        new java.lang.String[] { "Header", });
+        new String[] { "Header", });
     internal_static_ProtoP2pMessage_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_ProtoP2pMessage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoP2pMessage_descriptor,
-        new java.lang.String[] { "SenderId", "MessageId", "RequestId", "ReqResFlag", "Type", "Length", "Version", "Data", });
+        new String[] { "SenderId", "MessageId", "RequestId", "ReqResFlag", "Type", "Length", "Version", "Data", });
     internal_static_ProtoPeer_descriptor =
       getDescriptor().getMessageTypes().get(3);
     internal_static_ProtoPeer_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoPeer_descriptor,
-        new java.lang.String[] { "Id", "PrivateKey", "Address", "Port", "Multiaddr", "ProtocolVersion", "NodeType", "IsOnline", "LatestSlot", "IsValidator", "StakeAmount", "SoftwareVersion", "LastSeen", "Height", "LatestHash", "TotalWork", });
+        new String[] { "Id", "PrivateKey", "Address", "Port", "Multiaddr", "ProtocolVersion", "NodeType", "IsOnline", "LatestSlot", "IsValidator", "StakeAmount", "SoftwareVersion", "LastSeen", "Height", "LatestHash", "TotalWork", });
     internal_static_ProtoNetworkHandshake_descriptor =
       getDescriptor().getMessageTypes().get(4);
     internal_static_ProtoNetworkHandshake_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_ProtoNetworkHandshake_descriptor,
-        new java.lang.String[] { "NetworkMagic", "HardwareInfo", "NodeId", "NonceId", "NodeVersion", "Signature", "SharedSecret", "LatestHash", "LatestHeight", "TotalWork", });
+        new String[] { "NetworkMagic", "HardwareInfo", "NodeId", "NonceId", "NodeVersion", "Signature", "SharedSecret", "LatestHash", "LatestHeight", "TotalWork", });
     descriptor.resolveAllFeaturesImmutable();
   }
 

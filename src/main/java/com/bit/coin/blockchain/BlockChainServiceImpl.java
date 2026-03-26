@@ -8,7 +8,7 @@ import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
 
-import com.bit.coin.p2p.impl.PeerClient;
+
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockBody;
@@ -64,8 +64,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     @Autowired
     private TxPool txPool;
 
-    @Autowired
-    private PeerClient peerClient;
+
 
     @Autowired
     private RoutingTable routingTable;
@@ -715,7 +714,12 @@ public class BlockChainServiceImpl implements BlockChainService{
             return true;
         }else {
             //打包失败将交易重新添加回交易池
-            txPool.onBlockFailed(block.getTransactions().toArray(new Transaction[0]));
+            // 过滤掉铸币交易，仅将普通交易放回交易池
+            Transaction[] normalTransactions = block.getTransactions().stream()
+                    .filter(transaction -> !transaction.isCoinbase())
+                    .toArray(Transaction[]::new);
+
+            txPool.onBlockFailed(normalTransactions);
             return false;
         }
     }
@@ -2052,6 +2056,12 @@ public class BlockChainServiceImpl implements BlockChainService{
                 //将交易状态都设置为已经确认
                 for (Transaction tx : blockTxs) {
                     tx.setStatus(TransactionStatusResolver.CONFIRMED);
+                    //区块Hash
+                    tx.setHash(block.getHash());
+                    //区块高度
+                    tx.setHeight(block.getHeight());
+                    //区块时间
+                    tx.setTime(block.getBlockHeader().getTime());
                 }
 
                 totalTransactions += blockTxs.size();
@@ -2158,8 +2168,18 @@ public class BlockChainServiceImpl implements BlockChainService{
 
                 boolean isMainBlock = isMainBlock(blockHashHex);
 
+
+
                 // 查询区块体数据
                 byte[] blockHashBytes = hexToBytes(blockHashHex);
+                //获取区块头
+                BlockHeader blockHeaderByHash = getBlockHeaderByHash(blockHashBytes);
+                if (blockHeaderByHash == null){
+                    log.warn("区块Hash[{}]未找到对应的区块头", blockHashHex);
+                    continue;
+                }
+
+
                 byte[] blockBody = dataBase.get(TBLOCK_BODY, blockHashBytes);
                 if (blockBody == null) {
                     log.warn("区块Hash[{}]未找到对应的区块数据", blockHashHex);
@@ -2172,6 +2192,9 @@ public class BlockChainServiceImpl implements BlockChainService{
                     log.warn("区块[{}]反序列化失败或无交易数据", blockHashHex);
                     continue;
                 }
+
+
+
                 List<Transaction> blockTxs = deserialize.getTransactions();
 
                 // 关键优化：通过索引直接获取交易，无需遍历所有交易
@@ -2207,6 +2230,13 @@ public class BlockChainServiceImpl implements BlockChainService{
                             status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
                         }
                         targetTx.setStatus(status);
+                        //区块Hash
+                        targetTx.setHash(blockHashBytes);
+                        //区块高度
+                        targetTx.setHeight(deserialize.getHeight());
+                        //区块时间
+                        targetTx.setTime(blockHeaderByHash.getTime());
+
                         transactionList.add(targetTx);
                     } else {
                         log.warn("区块[{}]索引[{}]的交易ID不匹配，预期[{}]，实际[{}]",

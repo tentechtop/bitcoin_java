@@ -1,4 +1,4 @@
-package com.bit.coin.structure.block;
+package com.bit.coin.utils;
 
 import com.bit.coin.exception.JsonParseException;
 import tools.jackson.core.JacksonException;

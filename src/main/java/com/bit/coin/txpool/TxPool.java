@@ -6,6 +6,7 @@ import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
 
 import java.util.List;
+import java.util.Map;
 
 public interface TxPool {
 
@@ -65,4 +66,5 @@ public interface TxPool {
     void broadcastTxPool();
 
 
+    Map<String, Object> getUTXOsAvailableBalance(String address);
 }

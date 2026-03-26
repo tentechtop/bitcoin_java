@@ -1,8 +1,6 @@
 package com.bit.coin.structure.tx.transfer;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
 import lombok.Data;
-import tools.jackson.databind.annotation.JsonSerialize;
 
 @Data
 public class TxInputDTO {

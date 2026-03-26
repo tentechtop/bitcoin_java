@@ -1,7 +1,7 @@
 package com.bit.coin.blockchain;
 
-import com.bit.coin.structure.block.HexByteArrayDeserializer;
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArrayDeserializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import lombok.Data;
 import tools.jackson.databind.annotation.JsonDeserialize;
 import tools.jackson.databind.annotation.JsonSerialize;

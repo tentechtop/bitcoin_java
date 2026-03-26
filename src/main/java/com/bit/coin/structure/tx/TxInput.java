@@ -1,9 +1,8 @@
 package com.bit.coin.structure.tx;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.structure.script.Script;
 import com.bit.coin.utils.SerializeUtils;
-import com.bit.coin.utils.Sha;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -18,7 +17,6 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
-import java.util.Arrays;
 
 import static com.bit.coin.structure.tx.Transaction.TX_ID_LENGTH;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
@@ -236,10 +234,10 @@ public class TxInput {
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
-            com.bit.coin.utils.SerializeUtils.writeFixedBytes(dos, txId, TX_ID_LENGTH);
-            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, index);
-            com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, (int)sequence);
-            com.bit.coin.utils.SerializeUtils.writeVarInt(dos, scriptSig.length);
+            SerializeUtils.writeFixedBytes(dos, txId, TX_ID_LENGTH);
+            SerializeUtils.writeLittleEndianInt(dos, index);
+            SerializeUtils.writeLittleEndianInt(dos, (int)sequence);
+            SerializeUtils.writeVarInt(dos, scriptSig.length);
             if (scriptSig.length > 0) {
                 dos.write(scriptSig);
             }
@@ -261,11 +259,11 @@ public class TxInput {
         TxInput input = new TxInput();
 
         // 1. 读取交易ID (32字节)
-        byte[] txId = com.bit.coin.utils.SerializeUtils.readFixedBytes(dis, TX_ID_LENGTH);
+        byte[] txId = SerializeUtils.readFixedBytes(dis, TX_ID_LENGTH);
         input.setTxId(txId);
 
         // 读取输出索引 (4字节，小端)
-        int index = com.bit.coin.utils.SerializeUtils.readLittleEndianInt(dis);
+        int index = SerializeUtils.readLittleEndianInt(dis);
         input.setIndex(index);
 
         // 读取序列号 (4字节，小端)
@@ -273,7 +271,7 @@ public class TxInput {
         // 转换为无符号long
         long sequence = sequenceInt & 0xFFFFFFFFL;
         input.setSequence(sequence);
-        long scriptSigLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        long scriptSigLength = SerializeUtils.readVarInt(dis);
         if (scriptSigLength > 0) {
             byte[] scriptSig = new byte[(int) scriptSigLength];
             dis.readFully(scriptSig);

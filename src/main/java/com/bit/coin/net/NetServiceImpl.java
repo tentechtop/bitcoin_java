@@ -3,7 +3,6 @@ package com.bit.coin.net;
 import com.bit.coin.blockchain.BlockChainServiceImpl;
 import com.bit.coin.blockchain.Landmark;
 import com.bit.coin.database.rocksDb.RocksDb;
-import com.bit.coin.p2p.impl.PeerClient;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
@@ -15,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -32,8 +33,7 @@ public class NetServiceImpl implements NetService {
     @Autowired
     private RoutingTable routingTable;
 
-    @Autowired
-    private PeerClient peerClient;
+
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -80,7 +80,7 @@ public class NetServiceImpl implements NetService {
 
 
 
-    public void startSyncBlock() throws InterruptedException {
+    public void startSyncBlock() throws InterruptedException, IOException {
         int localHeight = getCurrentLocalHeight();
         int networkHeight = getBestNetworkHeight();
 
@@ -109,7 +109,7 @@ public class NetServiceImpl implements NetService {
         List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
         // 找到共同祖先节点（使用第一个最优节点）
         Peer firstPeer = optimalPeers.getFirst();
-        byte[] bytes = peerClient.sendData(bytesToHex(firstPeer.getId()),
+        byte[] bytes = staticSendData(bytesToHex(firstPeer.getId()),
                 ProtocolEnum.P2P_Query_Common_Ancestor,
                 Landmark.serializeList(localLandmarks), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
 
@@ -167,8 +167,6 @@ public class NetServiceImpl implements NetService {
 
             // 3. 串行同步当前节点分配的区块
             for (int height = currentAssignHeight; height <= endHeight; height++) {
-                Thread.sleep(100);
-
                 // 下载并验证区块（带重试）
                 Block block = fetchBlockFromPeerWithRetry(peerId, height);
                 if (block == null) {
@@ -245,7 +243,7 @@ public class NetServiceImpl implements NetService {
      */
     private Block fetchBlockFromPeer(String peerId, int height) {
         try {
-            byte[] bytes = peerClient.sendData(peerId,
+            byte[] bytes = staticSendData(peerId,
                     ProtocolEnum.P2P_Query_Block_By_Height,
                     RocksDb.intToBytes(height), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
             if (bytes == null || bytes.length == 0) {

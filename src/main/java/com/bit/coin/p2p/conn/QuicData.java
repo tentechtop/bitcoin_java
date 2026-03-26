@@ -1,10 +1,9 @@
-package com.bit.coin.p2p.quic;
+package com.bit.coin.p2p.conn;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.InetSocketAddress;
-
 
 @Slf4j
 @Data
@@ -15,6 +14,18 @@ public class QuicData {
     private int size;//字节数量
     private QuicFrame[] frameArray;//帧数据按照序列号存入
     private InetSocketAddress remoteAddress;
+
+
+    public int getSize(){
+        //通过分析frameArray 给出大小
+        int size = 0;
+        for (QuicFrame frame : frameArray) {
+            if (frame != null) {
+                size += frame.getPayload().length;
+            }
+        }
+        return size;
+    }
 
 
 
@@ -81,7 +92,6 @@ public class QuicData {
         }
     }
 
-
     /**
      * 根据序列号获取帧数据
      *
@@ -102,23 +112,4 @@ public class QuicData {
         }
         return frameArray[sequence];
     }
-
-    /**
-     * 释放QuicData关联的所有帧资源
-     * （使用完QuicData后建议调用，避免内存泄漏）
-     */
-    public void release() {
-        if (frameArray != null) {
-            for (QuicFrame frame : frameArray) {
-                if (frame != null) {
-                    frame.release();
-                }
-            }
-            frameArray = null;
-        }
-        total = 0;
-        dataId = 0;
-        connectionId = 0;
-    }
-
 }

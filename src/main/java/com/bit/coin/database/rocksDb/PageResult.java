@@ -1,6 +1,6 @@
 package com.bit.coin.database.rocksDb;
 
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import lombok.Getter;
 import lombok.Setter;
 import tools.jackson.databind.annotation.JsonSerialize;

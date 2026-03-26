@@ -17,6 +17,7 @@ import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -195,7 +196,7 @@ public class ChainApi {
 
     //开始同步
     @GetMapping("/startSync")
-    public void startSync() throws InterruptedException {
+    public void startSync() throws InterruptedException, IOException {
         netService.startSyncBlock();
     }
 

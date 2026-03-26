@@ -65,4 +65,7 @@ public interface UTXOCache {
     Map<String, Object> getBalance(String address);
 
     Map<String, Object> getUTXOsByAddressAndCount(String address);
+
+
+    Map<String, Object> getUTXOsByAddressAndCountAndUTXO(String address);
 }

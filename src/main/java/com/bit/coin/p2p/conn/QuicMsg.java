@@ -1,4 +1,4 @@
-package com.bit.coin.p2p.quic;
+package com.bit.coin.p2p.conn;
 
 import lombok.Data;
 

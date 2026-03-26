@@ -1,27 +1,22 @@
 package com.bit.coin.p2p.peer;
 
 
-import com.bit.coin.proto.Structure;
-import com.bit.coin.structure.block.HexByteArraySerializer;
+import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.utils.MultiAddress;
 import com.bit.coin.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.google.protobuf.ByteString;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import tools.jackson.databind.annotation.JsonSerialize;
 
-import java.io.IOException;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-/**
- * 节点信息  按 8 字节对齐：180 ÷ 8 = 22.5 → 补 2 字节，最终Peer 对象本身占 182 字节（对齐后 184 字节）。
- * 5120个节点大约占用 2-3M内存
- */
 @Slf4j
 @Data
 @AllArgsConstructor
@@ -166,112 +161,213 @@ public class Peer {
 
 
     // ==================== 序列化/反序列化 ====================
+    // -------------------------- 序列化/反序列化核心实现 --------------------------
     /**
-     * 序列化当前Peer对象为字节数组（基于Protobuf）
+     * 序列化当前Peer对象为字节数组
+     * 采用BigEndian字节序，保证跨平台兼容性
      */
-    public byte[] serialize() throws IOException {
-        return toProto().toByteArray();
+    public byte[] serialize() {
+        try {
+            // 1. 先计算序列化总长度，初始化ByteBuffer
+            int totalSize = getSerializedSize();
+            ByteBuffer buffer = ByteBuffer.allocate(totalSize);
+            buffer.order(java.nio.ByteOrder.BIG_ENDIAN);
+
+            // 2. 序列化核心标识字段
+            // id: int(长度) + byte[]，null则长度为-1
+            serializeByteArray(buffer, id);
+            // privateKey: int(长度) + byte[]
+            serializeByteArray(buffer, privateKey);
+
+            // 3. 序列化网络信息字段
+            // address: int(长度) + UTF-8字节数组
+            serializeString(buffer, address);
+            // port: int
+            buffer.putInt(port);
+            // protocolVersion: int(长度) + UTF-8字节数组
+            serializeString(buffer, protocolVersion);
+
+            // 4. 序列化节点状态字段
+            // nodeType: int
+            buffer.putInt(nodeType);
+            // isOnline: boolean (1字节，true=1, false=0)
+            buffer.put(isOnline ? (byte) 1 : (byte) 0);
+            // latestSlot: long
+            buffer.putLong(latestSlot);
+
+            // 5. 序列化能力与属性字段
+            // isValidator: boolean
+            buffer.put(isValidator ? (byte) 1 : (byte) 0);
+            // stakeAmount: double
+            buffer.putDouble(stakeAmount);
+            // softwareVersion: int
+            buffer.putInt(softwareVersion);
+            // lastSeen: long
+            buffer.putLong(lastSeen);
+
+            // 6. 序列化其他字段
+            // hashHex: int(长度) + UTF-8字节数组
+            serializeString(buffer, hashHex);
+            // height: int
+            buffer.putInt(height);
+            // chainWork: 固定32字节（UInt256）
+            buffer.put(chainWork != null ? chainWork.toBytes() : UInt256.fromLong(0L).toBytes());
+
+            // 7. 重置缓冲区指针，返回字节数组
+            buffer.flip();
+            byte[] result = new byte[buffer.remaining()];
+            buffer.get(result);
+            return result;
+        }catch (Exception e){
+            log.error("序列化Peer对象失败",e);
+            return null;
+        }
     }
 
     /**
-     * 从字节数组反序列化为Peer对象（基于Protobuf）
+     * 从字节数组反序列化为Peer对象
      */
-    public static Peer deserialize(byte[] data) throws IOException {
-        Structure.ProtoPeer protoPeer = Structure.ProtoPeer.parseFrom(data);
-        return fromProto(protoPeer);
-    }
+    public static Peer deserialize(byte[] data){
+        try {
+            if (data == null || data.length == 0) {
+                throw new IllegalArgumentException("反序列化数据不能为空");
+            }
 
-    // ==================== Proto转换 ====================
-    /**
-     * 转换为Protobuf对象
-     */
-    public Structure.ProtoPeer toProto() {
-        Structure.ProtoPeer.Builder builder = Structure.ProtoPeer.newBuilder();
-        // 核心标识字段
-        if (id != null) {
-            builder.setId(ByteString.copyFrom(id));
+            // 1. 初始化ByteBuffer
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            buffer.order(java.nio.ByteOrder.BIG_ENDIAN);
+
+            // 2. 构建Peer对象
+            Peer peer = new Peer();
+
+            // 3. 反序列化核心标识字段
+            peer.setId(deserializeByteArray(buffer));
+            peer.setPrivateKey(deserializeByteArray(buffer));
+
+            // 4. 反序列化网络信息字段
+            peer.setAddress(deserializeString(buffer));
+            peer.setPort(buffer.getInt());
+            peer.setProtocolVersion(deserializeString(buffer));
+
+            // 5. 反序列化节点状态字段
+            peer.setNodeType(buffer.getInt());
+            peer.setOnline(buffer.get() == 1);
+            peer.setLatestSlot(buffer.getLong());
+
+            // 6. 反序列化能力与属性字段
+            peer.setValidator(buffer.get() == 1);
+            peer.setStakeAmount(buffer.getDouble());
+            peer.setSoftwareVersion(buffer.getInt());
+            peer.setLastSeen(buffer.getLong());
+
+            // 7. 反序列化其他字段
+            peer.setHashHex(deserializeString(buffer));
+            peer.setHeight(buffer.getInt());
+            // 反序列化UInt256（固定32字节）
+            byte[] chainWorkBytes = new byte[32];
+            buffer.get(chainWorkBytes);
+            peer.setChainWork(UInt256.fromBytes(chainWorkBytes));
+
+            // 8. 衍生字段初始化（inetSocketAddress由address+port构建）
+            if (peer.getAddress() != null && peer.getPort() > 0) {
+                peer.setInetSocketAddress(new InetSocketAddress(peer.getAddress(), peer.getPort()));
+            }
+
+            return peer;
+        }catch (Exception e){
+            log.error("反序列化Peer对象失败",e);
+            return null;
         }
-        if (privateKey != null) {
-            builder.setPrivateKey(ByteString.copyFrom(privateKey));
-        }
-        // 网络信息字段
-        if (address != null) {
-            builder.setAddress(address);
-        }
-        builder.setPort(port);
-        if (multiaddr != null) {
-            builder.setMultiaddr(multiaddr);
-        }
-        if (protocolVersion != null) {
-            builder.setProtocolVersion(protocolVersion);
-        }
-
-        // 节点状态字段
-        builder.setNodeType(nodeType);
-        builder.setIsOnline(isOnline);
-        builder.setLatestSlot(latestSlot);
-
-        // 能力与属性字段
-        builder.setIsValidator(isValidator);
-        builder.setStakeAmount(stakeAmount);
-        builder.setSoftwareVersion(softwareVersion);
-        builder.setLastSeen(lastSeen);
-
-        if (hashHex!=null){
-            builder.setLatestHash(hashHex);
-        }
-
-        builder.setHeight(height);
-        builder.setTotalWork(ByteString.copyFrom(chainWork.toBytes()));
-        return builder.build();
-    }
-
-    /**
-     * 从Protobuf对象转换为Peer对象
-     */
-    public static Peer fromProto(Structure.ProtoPeer protoPeer) {
-        Peer peer = new Peer();
-
-        // 核心标识字段
-        if (!protoPeer.getId().isEmpty()) {
-            peer.setId(protoPeer.getId().toByteArray());
-        }
-
-        if (!protoPeer.getPrivateKey().isEmpty()) {
-            peer.setPrivateKey(protoPeer.getPrivateKey().toByteArray());
-        }
-        // 网络信息字段
-        peer.setAddress(protoPeer.getAddress());
-        peer.setPort(protoPeer.getPort());
-        peer.setMultiaddr(protoPeer.getMultiaddr());
-        peer.setProtocolVersion(protoPeer.getProtocolVersion());
-
-        // 节点状态字段
-        peer.setNodeType(protoPeer.getNodeType());
-        peer.setOnline(protoPeer.getIsOnline());
-        peer.setLatestSlot(protoPeer.getLatestSlot());
-
-        // 能力与属性字段
-        peer.setValidator(protoPeer.getIsValidator());
-        peer.setStakeAmount(protoPeer.getStakeAmount());
-        peer.setSoftwareVersion(protoPeer.getSoftwareVersion());
-        peer.setLastSeen(protoPeer.getLastSeen());
-
-
-
-        //最新hash
-        peer.setHashHex(protoPeer.getLatestHash());
-        peer.setHeight(protoPeer.getHeight());
-        peer.setChainWork(UInt256.fromBytes(protoPeer.getTotalWork().toByteArray()));
-
-        // 衍生字段inetSocketAddress不序列化，调用get时自动构建
-        return peer;
     }
 
     /**
      * 计算Peer对象序列化后的字节大小（用于内存/网络传输预估）
      */
     public int getSerializedSize() {
-        return toProto().getSerializedSize();
+        int size = 0;
+
+        // 核心标识字段：byte[] = int(4字节) + 数组长度
+        size += 4 + (id != null ? id.length : 0);
+        size += 4 + (privateKey != null ? privateKey.length : 0);
+
+        // 网络信息字段：String = int(4字节) + 字节长度；int=4字节
+        size += 4 + (address != null ? address.getBytes(StandardCharsets.UTF_8).length : 0);
+        size += 4; // port (int)
+        size += 4 + (protocolVersion != null ? protocolVersion.getBytes(StandardCharsets.UTF_8).length : 0);
+
+        // 节点状态字段：int=4, boolean=1, long=8
+        size += 4; // nodeType
+        size += 1; // isOnline
+        size += 8; // latestSlot
+
+        // 能力与属性字段：boolean=1, double=8, int=4, long=8
+        size += 1; // isValidator
+        size += 8; // stakeAmount
+        size += 4; // softwareVersion
+        size += 8; // lastSeen
+
+        // 其他字段：String=4+长度, int=4, UInt256=32
+        size += 4 + (hashHex != null ? hashHex.getBytes(StandardCharsets.UTF_8).length : 0);
+        size += 4; // height
+        size += 32; // chainWork (UInt256固定32字节)
+
+        return size;
     }
+
+    // -------------------------- 私有辅助方法 --------------------------
+    /**
+     * 辅助方法：序列化byte[]到ByteBuffer（长度+字节数组）
+     * @param buffer ByteBuffer
+     * @param array  要序列化的字节数组（null则长度写-1）
+     */
+    private void serializeByteArray(ByteBuffer buffer, byte[] array) {
+        if (array == null) {
+            buffer.putInt(-1);
+            return;
+        }
+        buffer.putInt(array.length);
+        buffer.put(array);
+    }
+
+    /**
+     * 辅助方法：序列化String到ByteBuffer（长度+UTF-8字节数组）
+     * @param buffer ByteBuffer
+     * @param str    要序列化的字符串（null则长度写-1）
+     */
+    private void serializeString(ByteBuffer buffer, String str) {
+        if (str == null) {
+            buffer.putInt(-1);
+            return;
+        }
+        byte[] strBytes = str.getBytes(StandardCharsets.UTF_8);
+        buffer.putInt(strBytes.length);
+        buffer.put(strBytes);
+    }
+
+    /**
+     * 辅助方法：从ByteBuffer反序列化byte[]
+     */
+    private static byte[] deserializeByteArray(ByteBuffer buffer) {
+        int length = buffer.getInt();
+        if (length == -1) {
+            return null;
+        }
+        byte[] array = new byte[length];
+        buffer.get(array);
+        return array;
+    }
+
+    /**
+     * 辅助方法：从ByteBuffer反序列化String
+     */
+    private static String deserializeString(ByteBuffer buffer) {
+        int length = buffer.getInt();
+        if (length == -1) {
+            return null;
+        }
+        byte[] strBytes = new byte[length];
+        buffer.get(strBytes);
+        return new String(strBytes, StandardCharsets.UTF_8);
+    }
+
 }

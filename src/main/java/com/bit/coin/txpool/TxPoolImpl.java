@@ -8,6 +8,7 @@ import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
 import com.bit.coin.utils.Sha;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import static com.bit.coin.api.TxApi.filterUtxoExcludePool;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.COINBASE_MATURED;
+import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -59,6 +63,92 @@ public class TxPoolImpl implements TxPool{
     Set<String> processingSet = ConcurrentHashMap.newKeySet();
 
 
+    // 初始化定时任务（Spring容器启动后执行）
+    @PostConstruct
+    public void initScheduledTasks() {
+        // 10分钟重广播未确认交易
+        ScheduledExecutorService rebroadcastExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "tx-pool-rebroadcast");
+            t.setDaemon(true); // 守护线程，应用关闭时自动退出
+            return t;
+        });
+
+        // 延迟1分钟启动，之后每10分钟执行一次
+        rebroadcastExecutor.scheduleAtFixedRate(
+                this::rebroadcastUnconfirmedTxs,
+                1,  // 初始延迟（分钟）
+                10, // 间隔（分钟）
+                TimeUnit.MINUTES
+        );
+    }
+
+
+    /**
+     * 重广播交易池中未确认的交易（核心逻辑）
+     */
+    private void rebroadcastUnconfirmedTxs() {
+        try {
+            // 过滤出需要重广播的交易：未确认、未打包、最后广播时间超过5分钟
+            List<Transaction> toRebroadcast = mempool.values().stream()
+                    .filter(tx -> !tx.isCoinbase())
+                    .filter(tx -> {
+                        // 只处理「在池中等确认」的交易
+                        long status = tx.getStatus();
+                        return TransactionStatusResolver.getLifecycleStatus(status) == TransactionStatusResolver.IN_POOL
+                                && !TransactionStatusResolver.hasFlag(status, TransactionStatusResolver.MEMPOOL_LOCKED);
+                    })
+                    .filter(tx -> {
+                        // 避免过于频繁广播（至少间隔5分钟）
+                        Long lastBroadcast = tx.getBroadcastTime();
+                        return lastBroadcast == null || System.currentTimeMillis() - lastBroadcast > 5 * 60 * 1000;
+                    })
+                    .collect(Collectors.toList());
+
+            if (toRebroadcast.isEmpty()) {
+                log.debug("暂无需要重广播的交易，交易池当前大小：{}", mempool.size());
+                return;
+            }
+
+            log.info("开始重广播未确认交易，数量：{}", toRebroadcast.size());
+            // 复用你已有的广播逻辑（间隔10ms，避免网络拥塞）
+            broadcastTxList(toRebroadcast);
+
+            // 更新最后广播时间
+            toRebroadcast.forEach(tx -> tx.setBroadcastTime(System.currentTimeMillis()));
+            log.info("重广播完成，已更新 {} 笔交易的广播时间", toRebroadcast.size());
+
+        } catch (Exception e) {
+            log.error("定时重广播交易失败", e);
+        }
+    }
+
+    /**
+     * 复用的批量广播逻辑（抽离原broadcastTxPool的逻辑）
+     */
+    private void broadcastTxList(List<Transaction> txList) {
+        if (txList.isEmpty()) return;
+
+        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        AtomicInteger index = new AtomicInteger(0);
+
+        executor.scheduleAtFixedRate(() -> {
+            int i = index.getAndIncrement();
+            if (i >= txList.size()) {
+                executor.shutdown();
+                return;
+            }
+
+            Transaction tx = txList.get(i);
+            try {
+                routingTable.BroadcastResource(1, tx.getTxId());
+                log.debug("重广播交易成功：{}", bytesToHex(tx.getTxId()));
+            } catch (Exception e) {
+                log.error("重广播交易 {} 失败", bytesToHex(tx.getTxId()), e);
+            }
+        }, 0, 10, TimeUnit.MILLISECONDS);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    }
 
 
     @Override
@@ -944,6 +1034,34 @@ public class TxPoolImpl implements TxPool{
 
         // 优雅关闭（可选）
         Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    }
+
+    @Override
+    public Map<String, Object> getUTXOsAvailableBalance(String address) {
+        // 1. 获取地址下 已确认未花费 + 币基成熟 的所有UTXO
+        Map<String, Object> utxOsMap = utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED);
+        List<UTXO> utxos = (List<UTXO>) utxOsMap.get("utxos");
+
+        // 空值防护：避免空指针异常
+        if (utxos == null) {
+            utxos = new ArrayList<>();
+        }
+
+        // 2. 获取交易池中锁定的UTXO，并过滤掉这些锁定的UTXO
+        List<UTXO> utxoInPool = getUTXOInPool();
+        List<UTXO> availableUTXOs = filterUtxoExcludePool(utxos, utxoInPool);
+
+        // 3. 计算可用总余额：遍历可用UTXO，累加value（UTXO的金额字段）
+        long availableBalance = 0L;
+        for (UTXO utxo : availableUTXOs) {
+            availableBalance += utxo.getValue();
+        }
+
+        // 4. 封装返回结果：包含可用UTXO列表、可用总余额
+        return Map.of(
+                "availableUTXOs", availableUTXOs,   // 可用UTXO列表
+                "availableBalance", availableBalance // 可用总余额（单位：聪/最小货币单位）
+        );
     }
 
     /**
