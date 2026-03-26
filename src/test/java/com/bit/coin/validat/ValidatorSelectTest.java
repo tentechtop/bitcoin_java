@@ -6,6 +6,10 @@ import java.util.List;
 
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
+/**
+ * 如果验证者没有在当前slot出块 则降低权重 顺延到下一个验证者
+ * 如果下一个验证者也没有出块  继续顺延
+ */
 public class ValidatorSelectTest {
     public static void main(String[] args) {
         // 1. 构造测试验证者列表（3个验证者，32字节ID）
@@ -43,6 +47,17 @@ public class ValidatorSelectTest {
         currentSlot = 5001L;
         Validator v4 = ValidatorSelector.selectUniqueValidator(validatorList, prevHeight, prevHash, currentSlot);
         System.out.println("修改槽位后选中：" + v4);
+
+
+
+        System.out.println("===== 开始 slot " + currentSlot + " 顺延出块 =====");
+        try {
+            // 自动顺延：未出块→惩罚→下一个→循环
+            Validator finalProducer = ValidatorSelector.selectInOrderUntilProduce(validatorList, prevHeight, prevHash, currentSlot);
+            System.out.println("\n最终出块验证者：" + finalProducer);
+        } catch (Exception e) {
+            System.out.println("\n异常：" + e.getMessage());
+        }
     }
 
     // 生成随机32字节ID（测试用）
