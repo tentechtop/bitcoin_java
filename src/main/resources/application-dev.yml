@@ -5,7 +5,7 @@ server:
 system:
   mining-type: 2 # 1CPU 2GPU
   miner-address-list:
-    - 'FyECdz2Xugx12kANWNyuVUhKozLPVoredDPXC9ka5V2g'
+    - '4qYT7uiNECBYLozRLPugyFkGhbWLxwC4QonbfCBCjjXb'
   net-params: 'MainNetParams'
   #数据存储路径 按照网络前缀分类
   path: "/bitcoin/devdb"
