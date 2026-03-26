@@ -103,6 +103,15 @@ public class BlockChainServiceImpl implements BlockChainService{
             deserialize.setHeight(bytesToInt(tipHeight));
             deserialize.setHash(tipHash);
             mainTipBlock=deserialize;
+            //设置区块中交易
+            deserialize.getTransactions().forEach(tx -> {
+                //区块Hash
+                tx.setHash(deserialize.getBlockHeader().getHash());
+                //区块高度
+                tx.setHeight(deserialize.getHeight());
+                //区块时间
+                tx.setTime(deserialize.getBlockHeader().getTime());
+            });
             log.info("最新区块高度{} 最新Hash{}",deserialize.getHeight(),bytesToHex(tipHash));
         }
     }
@@ -853,7 +862,6 @@ public class BlockChainServiceImpl implements BlockChainService{
 
         for (int i = 0; i < transactions.size(); i++) {
             Transaction tx = transactions.get(i);
-
             // 验证交易ID唯一性
             String txIdHex = bytesToHex(tx.getTxId());
             if (txIdSet.contains(txIdHex)) {
