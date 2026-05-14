@@ -663,9 +663,13 @@ public class RoutingTable {
                     try {
                         QuicConnection quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
                         if (quicConnection != null) {
+                            peer.setOnline(true);
                             findNodeIterative(peer.getId(), localNodeId);
+                        } else {
+                            peer.setOnline(false);
                         }
                     } catch (Exception e) {
+                        peer.setOnline(false);
                         log.error("连接节点{}失败", peer.getMultiaddr(), e);
                     }
                 }
@@ -768,11 +772,11 @@ public class RoutingTable {
     public List<Peer> getOnlineNodes() {
         List<Peer> all = getAll();
         Set<String> onlinePeerIds = getOnlinePeerIds();//all的id一定要在onlinePeerIds中
+        all.forEach(peer -> peer.setOnline(onlinePeerIds.contains(bytesToHex(peer.getId()))));
         List<Peer> onlineNodes = all.stream()
                 .filter(peer -> onlinePeerIds.contains(bytesToHex(peer.getId())))
                 .toList();
         //onlineNodes中的online字段改成true
-        onlineNodes.forEach(peer -> peer.setOnline(true));
         return onlineNodes;
     }
 

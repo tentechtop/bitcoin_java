@@ -8,6 +8,7 @@ import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.conn.QuicConnection;
 import com.bit.coin.p2p.conn.QuicConnectionManager;
+import com.bit.coin.p2p.conn.QuicConnectionStats;
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,11 @@ public class PeerApi {
     }
 
     //查询节点 参数是base58编码的节点地址
+    @RequestMapping("/getConnectionStats")
+    public List<QuicConnectionStats> getConnectionStats(){
+        return QuicConnectionManager.getConnectionStats();
+    }
+
     @RequestMapping("/queryNode")
     public Peer queryNode(String nodeId){
         return routingTable.getNodeByBase58Id(nodeId);

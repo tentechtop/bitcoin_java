@@ -26,6 +26,9 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
         //握手成功后将节点加入到路由表
         byte[] data = requestParams.getData();
         Peer deserialize = Peer.deserialize(data);
+        if (deserialize != null) {
+            deserialize.setOnline(true);
+        }
         routingTable.addPeer(deserialize);
     }
 }

@@ -16,6 +16,8 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Slf4j
 public class BoundedFrameSendQueue {
+    private static final long MAX_PENDING_QUEUE_BYTES = 32L * 1024 * 1024;
+
     // ========== 核心存储 ==========
     // 待发送队列（优先级：重传帧 > 新帧）
     private final PriorityBlockingQueue<FrameQueueElement> pendingQueue = new PriorityBlockingQueue<>();
@@ -57,6 +59,10 @@ public class BoundedFrameSendQueue {
 
         // 【修复点1】入队前检查：如果dataId已过期/全量ACK，直接丢弃
         SendQuicData sendQuicData = unAckedDataMap.get(dataId);
+        if (sendQuicData == null) {
+            log.debug("[帧入队] 丢弃不存在dataId的帧，dataId={}, sequence={}", dataId, sequence);
+            return false;
+        }
         if (sendQuicData.isExpired()) {
             log.debug("[帧入队] 丢弃已过期dataId的帧，dataId={}, sequence={}", dataId, sequence);
             return false;
@@ -77,7 +83,13 @@ public class BoundedFrameSendQueue {
 
         pendingLock.lock();
         try {
-            // 2. 直接入队（移除容量管控逻辑）
+            if (pendingTotalSize.get() + frameSize > MAX_PENDING_QUEUE_BYTES) {
+                log.warn("[帧入队] 待发送队列容量不足，dataId={}, sequence={}, frameSize={}B, pending={}MB, limit={}MB",
+                        dataId, sequence, frameSize,
+                        pendingTotalSize.get() / 1024.0 / 1024.0,
+                        MAX_PENDING_QUEUE_BYTES / 1024 / 1024);
+                return false;
+            }
             pendingQueue.add(element);
             pendingExistedFrames.add(element);
             pendingTotalSize.addAndGet(frameSize);
@@ -113,6 +125,10 @@ public class BoundedFrameSendQueue {
 
             // 【修复点2】批量预校验时检查：如果dataId已过期/全量ACK，直接失败
             SendQuicData sendQuicData = unAckedDataMap.get(meta.getDataId());
+            if (sendQuicData == null) {
+                log.error("[批量帧入队] 第{}帧所属dataId={}不存在，批量入队失败", i, meta.getDataId());
+                return false;
+            }
             if (sendQuicData.isExpired()) {
                 log.error("[批量帧入队] 第{}帧所属dataId={}已过期，批量入队失败", i, meta.getDataId());
                 return false;
@@ -137,7 +153,13 @@ public class BoundedFrameSendQueue {
         pendingLock.lock();
         List<FrameQueueElement> enqueuedElements = new ArrayList<>();
         try {
-            // 直接批量入队（无容量限制）
+            if (pendingTotalSize.get() + totalFrameSize > MAX_PENDING_QUEUE_BYTES) {
+                log.warn("[批量帧入队] 待发送队列容量不足，新增{}B，pending={}MB, limit={}MB",
+                        totalFrameSize,
+                        pendingTotalSize.get() / 1024.0 / 1024.0,
+                        MAX_PENDING_QUEUE_BYTES / 1024 / 1024);
+                return false;
+            }
             for (FrameQueueElement element : elements) {
                 try {
                     pendingQueue.add(element);
@@ -436,7 +458,7 @@ public class BoundedFrameSendQueue {
     }
 
 
-    public void ackFrame(long dataId, int sequence) {
+    public int ackFrame(long dataId, int sequence) {
         sentUnAckedLock.lock();
         try {
             long cleanSize = 0;
@@ -463,6 +485,7 @@ public class BoundedFrameSendQueue {
                 log.debug("[ACK确认帧] dataId={}, sequence={}，清理{}B，已发送未确认队列剩余{}MB",
                         dataId, sequence, cleanSize, sentUnAckedTotalSize.get() / 1024.0 / 1024.0);
             }
+            return (int) Math.min(cleanSize, Integer.MAX_VALUE);
         } finally {
             sentUnAckedLock.unlock();
         }
@@ -590,12 +613,20 @@ public class BoundedFrameSendQueue {
             for (FrameQueueElement element : elements) {
                 // 【修复点5】加入已发送队列前检查：如果dataId已过期/全量ACK，直接丢弃
                 SendQuicData sendQuicData = unAckedDataMap.get(element.getDataId());
+                if (sendQuicData == null) {
+                    droppedCount++;
+                    log.debug("[添加已发送帧] 丢弃不存在dataId的帧 | dataId={}, seq={}",
+                            element.getDataId(), element.getSequence());
+                    continue;
+                }
                 if (sendQuicData.isExpired()) {
+                    droppedCount++;
                     log.debug("[添加已发送帧] 丢弃已过期dataId的帧 | dataId={}, seq={}",
                             element.getDataId(), element.getSequence());
                     continue;
                 }
                 if (sendQuicData.isCompleted()) {
+                    droppedCount++;
                     log.debug("[添加已发送帧] 丢弃已完成dataId的帧 | dataId={}, seq={}",
                             element.getDataId(), element.getSequence());
                     continue;
@@ -603,20 +634,23 @@ public class BoundedFrameSendQueue {
 
 
                 element.setSendTime(currentTime);
-                sentUnAckedMap.put(element.getUniqueKey(), element);
+                FrameQueueElement previous = sentUnAckedMap.put(element.getUniqueKey(), element);
+                if (previous != null) {
+                    sentUnAckedTotalSize.addAndGet(-previous.getFrameSize());
+                }
+                sentUnAckedTotalSize.addAndGet(element.getFrameSize());
+                totalAddSize += element.getFrameSize();
 
                 if (element.getPriority() == FrameQueueElement.PRIORITY_RETRY) {
                     retransCount++;
-                    log.debug("[重传帧已发送] 不计入内存统计 | dataId={}, seq={}, size={}B",
+                    log.debug("[重传帧已发送] dataId={}, seq={}, size={}B",
                             element.getDataId(), element.getSequence(), element.getFrameSize());
                 } else {
-                    sentUnAckedTotalSize.addAndGet(element.getFrameSize());
-                    totalAddSize += element.getFrameSize();
                     newFrameCount++;
                 }
             }
-            log.debug("[添加已发送帧] 新帧{}个(+{}B)，重传帧{}个(不计)，当前已发送未确认总大小{}MB",
-                    newFrameCount, totalAddSize, retransCount,
+            log.debug("[添加已发送帧] 新帧{}个，重传帧{}个，丢弃{}个，新增在途{}B，当前已发送未确认总大小{}MB",
+                    newFrameCount, retransCount, droppedCount, totalAddSize,
                     sentUnAckedTotalSize.get() / 1024.0 / 1024.0);
         } finally {
             sentUnAckedLock.unlock();

@@ -39,6 +39,12 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
                 //找到连接
                 QuicConnection quicConnection = getConnection(quicFrame.getConnectionId());
                 if (quicConnection != null) {
+                    if (!quicConnection.isExpectedRemoteAddress(remote)) {
+                        log.warn("[quic frame rejected] connectionId={} expectedRemote={} actualRemote={}",
+                                quicFrame.getConnectionId(), quicConnection.getRemoteAddress(), remote);
+                        return;
+                    }
+                    quicConnection.recordFrameReceived(quicFrame.getFrameTotalLength());
                     //必须有连接才能处理帧 防止攻击
                     quicConnection.handleFrame(quicFrame);
                 }
