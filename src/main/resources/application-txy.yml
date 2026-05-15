@@ -23,6 +23,7 @@ system:
     - ''
   bootstrap:
     - '/ip4/127.0.0.1/quic/8334/p2p/7BBnkRzL4ubKXRJgetRnknCMS7GV1LspLQmBSmrmeia7'
+    - '/ip4/127.0.0.1/quic/8333/p2p/ttfyrD2jVDxxJYCfqyH1XgkMc1k5gxgUCxo1MPSp3UN'
 
 
 

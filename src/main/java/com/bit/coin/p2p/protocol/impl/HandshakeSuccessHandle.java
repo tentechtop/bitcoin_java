@@ -5,6 +5,8 @@ import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.NetworkHandshake;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
+import com.bit.coin.p2p.protocol.SmartUpdateService;
+import com.bit.coin.p2p.protocol.message.NodeStatusPayload;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -20,6 +22,8 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
 
     @Autowired
     private RoutingTable routingTable;
+    @Autowired
+    private SmartUpdateService smartUpdateService;
 
     @Override
     public void handleVoid(P2PMessage requestParams) throws IOException {
@@ -28,7 +32,11 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
         Peer deserialize = Peer.deserialize(data);
         if (deserialize != null) {
             deserialize.setOnline(true);
+            routingTable.addPeer(deserialize);
+            smartUpdateService.announceCurrentStateToPeer(
+                    bytesToHex(deserialize.getId()),
+                    NodeStatusPayload.REASON_HANDSHAKE
+            );
         }
-        routingTable.addPeer(deserialize);
     }
 }

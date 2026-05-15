@@ -789,7 +789,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
         // 5. 链接关系处理（主链延续、孤块、分叉）
         if (handleBlockConnection(block)){
-            routingTable.BroadcastResource(0,block.getHash());
+            routingTable.BroadcastResource(0, block.getHash(), block.getHeight(), block.getChainWork());
             return true;
         }else {
             //打包失败将交易重新添加回交易池

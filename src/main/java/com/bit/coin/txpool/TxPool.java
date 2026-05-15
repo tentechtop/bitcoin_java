@@ -36,6 +36,10 @@ public interface TxPool {
 
     Transaction getTx(byte[] txHash);
 
+    Transaction[] getAllTxs();
+
+    TxPoolStatusSnapshot getStatusSnapshot();
+
     //RBF 通过手续费替换交易
     boolean replaceTx(Transaction tx);
 

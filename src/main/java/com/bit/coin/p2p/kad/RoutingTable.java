@@ -1365,9 +1365,25 @@ public class RoutingTable {
     }
 
     public void BroadcastResource(int i, byte[] hash) {
+        UInt256 chainWork = UInt256.ZERO;
+        int height = BroadcastResource.UNKNOWN_HEIGHT;
+        if (i == BroadcastResource.TYPE_BLOCK && hash != null) {
+            byte[] heightBytes = dataBase.get(TableEnum.HASH_TO_HEIGHT, hash);
+            if (heightBytes != null && heightBytes.length == 4) {
+                height = ByteBuffer.wrap(heightBytes).getInt();
+            }
+            chainWork = UInt256.fromBytes(dataBase.get(TableEnum.HASH_TO_CHAIN_WORK, hash));
+        }
+        BroadcastResource(i, hash, height, chainWork);
+    }
+
+    public void BroadcastResource(int i, byte[] hash, int height, UInt256 chainWork) {
         BroadcastResource broadcastResource = new BroadcastResource();
         broadcastResource.setHash(hash);
         broadcastResource.setType(i);
+        broadcastResource.setHeight(height);
+        broadcastResource.setChainWork(chainWork == null ? UInt256.ZERO : chainWork);
+        broadcastResource.setTimestampMillis(System.currentTimeMillis());
         //将这个消息广播给所有的在线节点
         List<Peer> onlineNodes = getOnlineNodes();
         log.info("广播消息{}",onlineNodes.size());
@@ -1435,10 +1451,13 @@ public class RoutingTable {
         Peer peer = getNodeByHexId(peerId);
         if (peer!=null){
             //如果当前高度大于过去记录的高度就更新
-            if (height>peer.getHeight()){
+            UInt256 safeChainWork = chainWork == null ? UInt256.ZERO : chainWork;
+            boolean higherWorkAtSameHeight = height == peer.getHeight()
+                    && safeChainWork.compareTo(peer.getChainWork() == null ? UInt256.ZERO : peer.getChainWork()) > 0;
+            if (height>peer.getHeight() || higherWorkAtSameHeight){
                 peer.setHashHex(hashHex);
                 peer.setHeight(height);
-                peer.setChainWork(chainWork);
+                peer.setChainWork(safeChainWork);
             }
             addPeer(peer);
         }
