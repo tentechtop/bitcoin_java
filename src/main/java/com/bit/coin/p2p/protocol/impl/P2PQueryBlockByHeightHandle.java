@@ -15,20 +15,23 @@ import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
 
 @Slf4j
 @Component
-public class P2PQueryBlockByHeightHandle implements ProtocolHandler.ResultProtocolHandler{
+public class P2PQueryBlockByHeightHandle implements ProtocolHandler.ResultProtocolHandler {
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
 
     @Override
     public byte[] handleResult(P2PMessage requestParams) throws Exception {
-        byte[] data = requestParams.getData();//4字节height
-        //发送者
-        byte[] senderId = requestParams.getSenderId();
-        Block blockByHash = blockChainService.getBlockByHeight(RocksDb.bytesToInt(data));
-        log.info("根据高度查询区块请求 {}",blockByHash.toString());
-        byte[] serialize = blockByHash.serialize();
-        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Height,requestParams.getRequestId(), serialize);
-        return p2PMessage.serialize();
+        byte[] data = requestParams.getData();
+        Block block = blockChainService.getBlockByHeight(RocksDb.bytesToInt(data));
+        log.info("Query block by height result {}", block == null ? "null" : block.toString());
+        byte[] payload = block == null ? new byte[0] : block.serialize();
+        P2PMessage response = newResponseMessage(
+                SelfPeer.getId(),
+                ProtocolEnum.P2P_Query_Block_By_Height,
+                requestParams.getRequestId(),
+                payload
+        );
+        return response.serialize();
     }
 }

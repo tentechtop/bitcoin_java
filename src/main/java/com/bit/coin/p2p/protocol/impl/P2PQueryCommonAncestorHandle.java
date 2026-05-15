@@ -27,7 +27,7 @@ public class P2PQueryCommonAncestorHandle implements ProtocolHandler.ResultProto
         //解析为List<Landmark>
         List<Landmark> landmarks = Landmark.deserializeList(data);//远程路标
         Landmark commonAncestorByLandmark = blockChainService.findCommonAncestorByLandmark(landmarks);
-        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Height,requestParams.getRequestId(), commonAncestorByLandmark.serialize());
+        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Common_Ancestor,requestParams.getRequestId(), commonAncestorByLandmark.serialize());
         return p2PMessage.serialize();
     }
 }

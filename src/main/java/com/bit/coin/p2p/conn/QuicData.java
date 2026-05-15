@@ -18,10 +18,13 @@ public class QuicData {
 
     public int getSize(){
         //通过分析frameArray 给出大小
+        if (frameArray == null) {
+            return 0;
+        }
         int size = 0;
         for (QuicFrame frame : frameArray) {
             if (frame != null) {
-                size += frame.getPayload().length;
+                size += frame.getPayload() == null ? 0 : frame.getPayload().length;
             }
         }
         return size;
@@ -33,23 +36,26 @@ public class QuicData {
         // 校验帧数组是否存在
         if (frameArray == null || frameArray.length == 0) {
             log.warn("帧数组为空，无法合并数据 connectionId={}, dataId={}", connectionId, dataId);
-            return new byte[0];
+            return null;
         }
 
         // 校验总帧数与数组长度一致性
         if (total != frameArray.length) {
             log.error("总帧数与帧数组长度不一致，合并失败 connectionId={}, dataId={}, total={}, frameArrayLength={}",
                     connectionId, dataId, total, frameArray.length);
-            return new byte[0];
+            return null;
         }
 
         try {
             // 计算总数据长度
             int totalLength = 0;
-            for (QuicFrame frame : frameArray) {
+            for (int i = 0; i < frameArray.length; i++) {
+                QuicFrame frame = frameArray[i];
                 if (frame == null) {
                     log.warn("发现空帧，跳过计算 connectionId={}, dataId={}", connectionId, dataId);
-                    continue;
+                    log.error("missing frame, cannot combine data connectionId={}, dataId={}, sequence={}, total={}",
+                            connectionId, dataId, i, total);
+                    return null;
                 }
                 byte[] payload = frame.getPayload();
                 if (payload != null) {
@@ -65,7 +71,7 @@ public class QuicData {
             for (QuicFrame frame : frameArray) {
                 if (frame == null) {
                     log.warn("发现空帧，跳过合并 connectionId={}, dataId={}", connectionId, dataId);
-                    continue;
+                    return null;
                 }
                 byte[] payload = frame.getPayload();
                 if (payload == null || payload.length == 0) {
@@ -88,7 +94,7 @@ public class QuicData {
             return fullData;
         } catch (Exception e) {
             log.error("合并帧数据失败 connectionId={}, dataId={}", connectionId, dataId, e);
-            return new byte[0];
+            return null;
         }
     }
 

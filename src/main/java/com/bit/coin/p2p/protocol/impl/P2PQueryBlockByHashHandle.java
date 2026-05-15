@@ -26,7 +26,8 @@ public class P2PQueryBlockByHashHandle implements ProtocolHandler.ResultProtocol
         //发送者
         byte[] senderId = requestParams.getSenderId();
         Block blockByHash = blockChainService.getBlockByHash(data);
-        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Hash,requestParams.getRequestId(), blockByHash.serialize());
+        byte[] payload = blockByHash == null ? new byte[0] : blockByHash.serialize();
+        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Hash,requestParams.getRequestId(), payload);
         return p2PMessage.serialize();
     }
 }

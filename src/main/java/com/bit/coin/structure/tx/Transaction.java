@@ -23,8 +23,10 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.bit.coin.config.SystemConfig.TX_TIME_FORMATTER;
 import static com.bit.coin.structure.script.ScriptExecutor.combineScripts;
@@ -149,9 +151,11 @@ public class Transaction {
             log.warn("交易验证失败：交易必须包含至少一个输入和一个输出。");
             return false;
         }
-        if (utxoMap==null){
-            log.warn("交易验证失败：UTXO视图为空");
-            return false;
+        for (TxOutput output : outputs) {
+            if (output == null || output.getValue() < 0) {
+                log.warn("Transaction validation failed: invalid output value");
+                return false;
+            }
         }
         if (isCoinbase()) {
             //TODO
@@ -164,15 +168,29 @@ public class Transaction {
             }
             log.info("铸币交易逻辑验证通过。");
         }else {
+            if (utxoMap == null) {
+                log.warn("Transaction validation failed: UTXO view is empty");
+                return false;
+            }
+            Set<String> seenInputs = new HashSet<>();
             // 2. 签名验证
             // 遍历每一个输入，验证其签名
             for (int i = 0; i < inputs.size(); i++) {
                 TxInput input = inputs.get(i);
+                if (input == null || input.getTxId() == null || input.getIndex() < 0) {
+                    log.warn("Transaction validation failed: invalid input");
+                    return false;
+                }
                 byte[] sourceTxId = input.getTxId();
                 int sourceIndex = input.getIndex();
+                String inputKey = bytesToHex(UTXO.getKey(sourceTxId, sourceIndex));
+                if (!seenInputs.add(inputKey)) {
+                    log.warn("Transaction validation failed: duplicate input {}", inputKey);
+                    return false;
+                }
 
                 // 从UTXO集合中查找对应的UTXO
-                UTXO referencedUtxo = utxoMap.get(bytesToHex(UTXO.getKey(sourceTxId, sourceIndex)));
+                UTXO referencedUtxo = utxoMap.get(inputKey);
                 if (referencedUtxo == null) {
                     log.warn("交易验证失败：输入引用了一个不存在的UTXO (txId: {}, index: {})。", bytesToHex(sourceTxId), sourceIndex);
                     return false;

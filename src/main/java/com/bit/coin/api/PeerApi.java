@@ -2,7 +2,10 @@ package com.bit.coin.api;
 
 
 import com.bit.coin.p2p.netty.PeerServiceImpl;
+import com.bit.coin.p2p.kad.CandidatePeerSnapshot;
 import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.p2p.kad.RoutingTableHealthSnapshot;
+import com.bit.coin.p2p.kad.PeerScoreSnapshot;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.bit.coin.database.rocksDb.RocksDb.intToBytes;
 import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
@@ -68,6 +72,38 @@ public class PeerApi {
     @RequestMapping("/getRoutingTable")
     public List<List<Peer>> getRoutingTable(){
         return routingTable.getRoutingTable();
+    }
+
+    @RequestMapping("/dht/health")
+    public RoutingTableHealthSnapshot getDhtHealth() {
+        return routingTable.getHealthSnapshot();
+    }
+
+    @RequestMapping("/dht/coverage")
+    public Map<Integer, Integer> getDhtCoverage() {
+        return routingTable.getBucketCoverage();
+    }
+
+    @RequestMapping("/dht/candidates")
+    public List<CandidatePeerSnapshot> getDhtCandidates() {
+        return routingTable.getCandidatePeerSnapshots();
+    }
+
+    @RequestMapping("/dht/scores")
+    public List<PeerScoreSnapshot> getDhtScores() {
+        return routingTable.getPeerScoreSnapshots();
+    }
+
+    @RequestMapping("/dht/refresh")
+    public String refreshDhtNow() {
+        routingTable.triggerRefreshNow();
+        return "ok";
+    }
+
+    @RequestMapping("/dht/shareHints")
+    public String shareDhtHintsNow() {
+        routingTable.triggerPeerHintShareNow();
+        return "ok";
     }
 
 

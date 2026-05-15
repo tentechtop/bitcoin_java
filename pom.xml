@@ -28,6 +28,7 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <skipTests>true</skipTests>
     </properties>
     <dependencies>
         <dependency>
@@ -180,7 +181,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version> <!-- 使用最新稳定版本 -->
                 <configuration>
-                    <skipTests>true</skipTests> <!-- 全局跳过测试 -->
+                    <skipTests>${skipTests}</skipTests> <!-- 全局跳过测试 -->
                     <testFailureIgnore>false</testFailureIgnore> <!-- 若开启测试，失败则终止构建（可选） -->
                 </configuration>
             </plugin>
