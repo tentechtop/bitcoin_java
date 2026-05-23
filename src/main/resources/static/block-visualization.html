@@ -1,0 +1,1439 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>区块可视化</title>
+    <style>
+        :root {
+            --bg: #0b0f15;
+            --surface: #111821;
+            --surface-2: #151e29;
+            --surface-3: #1a2431;
+            --line: #263342;
+            --line-soft: rgba(148, 163, 184, 0.18);
+            --text: #edf3f8;
+            --muted: #94a3b8;
+            --dim: #64748b;
+            --green: #22c55e;
+            --green-soft: rgba(34, 197, 94, 0.14);
+            --amber: #f59e0b;
+            --amber-soft: rgba(245, 158, 11, 0.16);
+            --blue: #3b82f6;
+            --blue-soft: rgba(59, 130, 246, 0.15);
+            --red: #fb7185;
+            --red-soft: rgba(251, 113, 133, 0.15);
+            --gray-soft: rgba(148, 163, 184, 0.14);
+            --shadow: 0 18px 55px rgba(0, 0, 0, 0.32);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            color-scheme: dark;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background:
+                linear-gradient(180deg, rgba(20, 30, 42, 0.84), rgba(11, 15, 21, 0.96) 34%, #0b0f15),
+                repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.045) 0 1px, transparent 1px 96px),
+                repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.04) 0 1px, transparent 1px 72px);
+            color: var(--text);
+            font-family: Inter, "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
+            letter-spacing: 0;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            border: 1px solid var(--line);
+            background: var(--surface-2);
+            color: var(--text);
+            min-height: 38px;
+            border-radius: 8px;
+            padding: 0 12px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            border-color: rgba(148, 163, 184, 0.58);
+            background: #1a2633;
+        }
+
+        button.primary {
+            border-color: rgba(34, 197, 94, 0.72);
+            background: rgba(34, 197, 94, 0.14);
+            color: #86efac;
+            font-weight: 700;
+        }
+
+        button.icon {
+            width: 38px;
+            padding: 0;
+            display: inline-grid;
+            place-items: center;
+        }
+
+        input,
+        select {
+            min-height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #0d131c;
+            color: var(--text);
+            padding: 0 12px;
+            outline: none;
+        }
+
+        input:focus,
+        select:focus,
+        button:focus-visible,
+        .block-card:focus-visible {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+        }
+
+        .shell {
+            width: min(1880px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 28px 0 34px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 22px;
+        }
+
+        h1,
+        h2,
+        h3,
+        p {
+            margin: 0;
+        }
+
+        h1 {
+            font-size: 34px;
+            line-height: 1.18;
+        }
+
+        .subtitle {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 15px;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .search {
+            width: 290px;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 34px;
+            padding: 0 12px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(17, 24, 33, 0.8);
+            color: var(--muted);
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--dim);
+            box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.14);
+        }
+
+        .dot.live {
+            background: var(--green);
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15);
+        }
+
+        .dot.mock {
+            background: var(--amber);
+            box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .metric {
+            min-height: 112px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: linear-gradient(180deg, rgba(21, 30, 41, 0.94), rgba(13, 19, 28, 0.94));
+            padding: 18px 18px 16px;
+            box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
+        }
+
+        .metric[data-tone="green"] {
+            border-left: 4px solid var(--green);
+        }
+
+        .metric[data-tone="amber"] {
+            border-left: 4px solid var(--amber);
+        }
+
+        .metric[data-tone="blue"] {
+            border-left: 4px solid var(--blue);
+        }
+
+        .metric[data-tone="red"] {
+            border-left: 4px solid var(--red);
+        }
+
+        .metric-label {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .metric-value {
+            margin-top: 12px;
+            font-size: 27px;
+            font-weight: 800;
+            line-height: 1.05;
+        }
+
+        .metric-sub {
+            margin-top: 8px;
+            color: var(--dim);
+            font-size: 13px;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(360px, 500px);
+            gap: 16px;
+            align-items: stretch;
+        }
+
+        .stage,
+        .inspector,
+        .tx-panel {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(17, 24, 33, 0.88);
+            box-shadow: var(--shadow);
+        }
+
+        .stage {
+            min-height: 560px;
+            overflow: hidden;
+        }
+
+        .stage-header,
+        .inspector-header,
+        .tx-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 22px 26px 12px;
+        }
+
+        .stage-title h2,
+        .inspector-header h2,
+        .tx-header h2 {
+            font-size: 21px;
+            line-height: 1.2;
+        }
+
+        .meta-line {
+            margin-top: 7px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .segmented {
+            display: inline-grid;
+            grid-auto-flow: column;
+            gap: 4px;
+            padding: 4px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #0d131c;
+        }
+
+        .segment {
+            min-height: 30px;
+            border: 0;
+            border-radius: 6px;
+            padding: 0 12px;
+            background: transparent;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .segment.active {
+            background: var(--blue-soft);
+            color: #93c5fd;
+        }
+
+        .chain-wrap {
+            position: relative;
+            min-height: 380px;
+            padding: 72px 32px 44px;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+
+        .chain {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 82px;
+            min-width: 1040px;
+            padding: 72px 18px 92px;
+        }
+
+        .chain-line {
+            position: absolute;
+            left: 54px;
+            right: 54px;
+            top: 50%;
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, rgba(100, 116, 139, 0.34), rgba(59, 130, 246, 0.7), rgba(245, 158, 11, 0.76), rgba(34, 197, 94, 0.78));
+            transform: translateY(-50%);
+        }
+
+        .block-card {
+            --accent: var(--dim);
+            --accent-soft: var(--gray-soft);
+            position: relative;
+            width: var(--block-size);
+            min-width: var(--block-size);
+            height: calc(var(--block-size) + 28px);
+            border: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+            border-radius: 8px;
+            background:
+                linear-gradient(180deg, color-mix(in srgb, var(--accent) 24%, transparent), rgba(18, 26, 36, 0.92) 38%, rgba(13, 19, 28, 0.95));
+            color: var(--text);
+            cursor: pointer;
+            isolation: isolate;
+            transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .block-card::before {
+            content: "";
+            position: absolute;
+            inset: -28px;
+            z-index: -1;
+            border-radius: 50%;
+            background: color-mix(in srgb, var(--accent) 24%, transparent);
+            filter: blur(24px);
+            opacity: 0.55;
+        }
+
+        .block-card::after {
+            content: "";
+            position: absolute;
+            inset: 14px 10px auto;
+            height: 34px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .block-card:hover,
+        .block-card.selected {
+            transform: translateY(-6px);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), 0 18px 46px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+
+        .block-card.latest {
+            --accent: var(--green);
+            --accent-soft: var(--green-soft);
+        }
+
+        .block-card.pending {
+            --accent: var(--amber);
+            --accent-soft: var(--amber-soft);
+        }
+
+        .block-card.confirmed {
+            --accent: var(--blue);
+            --accent-soft: var(--blue-soft);
+        }
+
+        .block-card.history {
+            --accent: #7b8797;
+            --accent-soft: var(--gray-soft);
+        }
+
+        .block-card.orphan {
+            --accent: var(--red);
+            --accent-soft: var(--red-soft);
+            position: absolute;
+            left: 44%;
+            top: 74%;
+            width: 118px;
+            min-width: 118px;
+            height: 88px;
+            border-style: dashed;
+        }
+
+        .fork-line {
+            position: absolute;
+            left: 36%;
+            top: 56%;
+            width: 210px;
+            height: 92px;
+            border-left: 3px dashed rgba(251, 113, 133, 0.58);
+            border-bottom: 3px dashed rgba(251, 113, 133, 0.58);
+            border-radius: 0 0 0 48px;
+            transform: rotate(-16deg);
+            transform-origin: left top;
+        }
+
+        .block-status {
+            position: relative;
+            z-index: 1;
+            padding-top: 24px;
+            text-align: center;
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .block-height {
+            position: relative;
+            z-index: 1;
+            margin-top: 22px;
+            text-align: center;
+            font-size: clamp(17px, calc(var(--block-size) / 7), 25px);
+            font-weight: 850;
+        }
+
+        .block-txs {
+            position: relative;
+            z-index: 1;
+            margin-top: 9px;
+            text-align: center;
+            color: var(--accent);
+            font-size: 14px;
+        }
+
+        .block-time {
+            position: absolute;
+            left: 10px;
+            right: 10px;
+            bottom: 16px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 13px;
+        }
+
+        .spark {
+            position: absolute;
+            left: 50%;
+            bottom: 44px;
+            display: grid;
+            grid-template-columns: repeat(7, 7px);
+            align-items: end;
+            gap: 5px;
+            transform: translateX(-50%);
+        }
+
+        .spark span {
+            display: block;
+            height: var(--bar);
+            min-height: 4px;
+            border-radius: 3px;
+            background: var(--accent);
+            opacity: 0.58;
+        }
+
+        .heatmap {
+            margin: 0 26px 24px;
+            padding: 18px 18px 14px;
+            border: 1px dashed var(--line);
+            border-radius: 8px;
+            background: rgba(8, 13, 20, 0.5);
+        }
+
+        .heatmap-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .heat-cells {
+            display: grid;
+            grid-template-columns: repeat(24, minmax(16px, 1fr));
+            gap: 6px;
+        }
+
+        .heat-cell {
+            height: 22px;
+            border-radius: 5px;
+            background: color-mix(in srgb, var(--heat-color) var(--heat), rgba(30, 41, 59, 0.58));
+        }
+
+        .legend {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 18px;
+            padding: 6px 20px 26px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--swatch);
+        }
+
+        .side {
+            display: grid;
+            grid-template-rows: auto minmax(240px, 1fr);
+            gap: 16px;
+        }
+
+        .inspector {
+            min-height: 500px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            padding: 0 10px;
+            border: 1px solid color-mix(in srgb, var(--badge-color) 64%, transparent);
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--badge-color) 15%, transparent);
+            color: var(--badge-color);
+            font-size: 12px;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .inspector-body {
+            padding: 8px 26px 26px;
+        }
+
+        .big-height {
+            font-size: clamp(42px, 4vw, 60px);
+            font-weight: 900;
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin: 22px 0;
+        }
+
+        .detail {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(8, 13, 20, 0.46);
+            padding: 13px 14px;
+        }
+
+        .detail-label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .detail-value {
+            margin-top: 8px;
+            font-size: 16px;
+            font-weight: 750;
+            overflow-wrap: anywhere;
+        }
+
+        .hash-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .hash-row {
+            border: 1px solid var(--line);
+            border-left: 4px solid var(--accent);
+            border-radius: 8px;
+            background: rgba(8, 13, 20, 0.52);
+            padding: 12px 13px;
+        }
+
+        .hash-label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .hash-value {
+            margin-top: 7px;
+            color: #dbeafe;
+            font-family: Consolas, "SFMono-Regular", monospace;
+            font-size: 13px;
+            line-height: 1.55;
+            overflow-wrap: anywhere;
+        }
+
+        .confirmations {
+            margin-top: 22px;
+        }
+
+        .confirm-title {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 800;
+            margin-bottom: 12px;
+        }
+
+        .confirm-track {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 10px;
+        }
+
+        .confirm-track::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            right: 10px;
+            top: 9px;
+            height: 2px;
+            background: rgba(59, 130, 246, 0.38);
+        }
+
+        .confirm-dot {
+            position: relative;
+            z-index: 1;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--blue);
+        }
+
+        .confirm-dot.active {
+            background: var(--green);
+        }
+
+        .confirm-dot.empty {
+            background: #334155;
+        }
+
+        .tx-panel {
+            min-height: 260px;
+        }
+
+        .tx-list {
+            display: grid;
+            gap: 10px;
+            max-height: 280px;
+            overflow: auto;
+            padding: 4px 20px 22px;
+        }
+
+        .tx-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(8, 13, 20, 0.52);
+            padding: 12px 14px;
+        }
+
+        .tx-hash {
+            color: #cbd5e1;
+            font-family: Consolas, "SFMono-Regular", monospace;
+            font-size: 13px;
+            overflow-wrap: anywhere;
+        }
+
+        .tx-meta {
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .empty {
+            padding: 26px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        @media (max-width: 1280px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .side {
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: auto;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .shell {
+                width: min(100vw - 20px, 1880px);
+                padding-top: 18px;
+            }
+
+            .topbar {
+                display: grid;
+            }
+
+            .toolbar {
+                justify-content: stretch;
+            }
+
+            .toolbar > * {
+                flex: 1 1 auto;
+            }
+
+            .search {
+                width: 100%;
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .side {
+                grid-template-columns: 1fr;
+            }
+
+            .stage-header,
+            .inspector-header,
+            .tx-header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .chain-wrap {
+                padding-left: 18px;
+                padding-right: 18px;
+            }
+        }
+
+        @media (max-width: 560px) {
+            h1 {
+                font-size: 28px;
+            }
+
+            .metrics,
+            .detail-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .segmented {
+                width: 100%;
+            }
+
+            .segment {
+                padding: 0 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <header class="topbar">
+        <div>
+            <h1>区块链可视化</h1>
+            <p class="subtitle">区块高度、交易密度、确认深度与分叉状态</p>
+        </div>
+        <div class="toolbar">
+            <span class="status-pill" id="sourceStatus"><span class="dot" id="sourceDot"></span><span id="sourceText">准备加载</span></span>
+            <select id="blockCount" aria-label="显示区块数量">
+                <option value="6">6 个区块</option>
+                <option value="10" selected>10 个区块</option>
+                <option value="16">16 个区块</option>
+            </select>
+            <input class="search" id="searchInput" placeholder="高度或区块 Hash" autocomplete="off">
+            <button class="primary" id="searchBtn" type="button">查询</button>
+            <button class="icon" id="refreshBtn" type="button" aria-label="刷新">↻</button>
+            <button class="icon" id="autoBtn" type="button" aria-label="自动刷新">Ⅱ</button>
+        </div>
+    </header>
+
+    <section class="metrics" aria-label="链上指标">
+        <article class="metric" data-tone="green">
+            <div class="metric-label">当前高度</div>
+            <div class="metric-value" id="metricHeight">--</div>
+            <div class="metric-sub" id="metricHeightSub">--</div>
+        </article>
+        <article class="metric" data-tone="amber">
+            <div class="metric-label">Mempool</div>
+            <div class="metric-value" id="metricMempool">--</div>
+            <div class="metric-sub" id="metricMempoolSub">--</div>
+        </article>
+        <article class="metric" data-tone="blue">
+            <div class="metric-label">平均出块</div>
+            <div class="metric-value" id="metricInterval">--</div>
+            <div class="metric-sub">最近区块</div>
+        </article>
+        <article class="metric" data-tone="blue">
+            <div class="metric-label">交易峰值</div>
+            <div class="metric-value" id="metricPeak">--</div>
+            <div class="metric-sub" id="metricPeakSub">--</div>
+        </article>
+        <article class="metric" data-tone="red">
+            <div class="metric-label">候选分叉</div>
+            <div class="metric-value" id="metricOrphans">--</div>
+            <div class="metric-sub" id="metricOrphansSub">--</div>
+        </article>
+    </section>
+
+    <section class="layout">
+        <section class="stage" aria-label="区块链路">
+            <div class="stage-header">
+                <div class="stage-title">
+                    <h2>最近区块链路</h2>
+                    <p class="meta-line" id="chainMeta">--</p>
+                </div>
+                <div class="segmented" aria-label="排序方式">
+                    <button class="segment active" data-view="height" type="button">高度</button>
+                    <button class="segment" data-view="time" type="button">时间</button>
+                    <button class="segment" data-view="tx" type="button">交易量</button>
+                </div>
+            </div>
+
+            <div class="chain-wrap">
+                <div class="chain" id="chain">
+                    <div class="chain-line"></div>
+                </div>
+            </div>
+
+            <div class="heatmap">
+                <div class="heatmap-title">
+                    <span>交易密度</span>
+                    <span id="heatMeta">--</span>
+                </div>
+                <div class="heat-cells" id="heatCells"></div>
+            </div>
+
+            <div class="legend">
+                <span class="legend-item"><span class="legend-swatch" style="--swatch: var(--green)"></span>最新区块</span>
+                <span class="legend-item"><span class="legend-swatch" style="--swatch: var(--amber)"></span>待确认</span>
+                <span class="legend-item"><span class="legend-swatch" style="--swatch: var(--blue)"></span>确认中</span>
+                <span class="legend-item"><span class="legend-swatch" style="--swatch: #7b8797"></span>历史区块</span>
+                <span class="legend-item"><span class="legend-swatch" style="--swatch: var(--red)"></span>候选分叉</span>
+            </div>
+        </section>
+
+        <aside class="side">
+            <section class="inspector" aria-label="区块详情">
+                <div class="inspector-header">
+                    <h2>区块详情</h2>
+                    <span class="badge" id="detailBadge" style="--badge-color: var(--green)">LATEST</span>
+                </div>
+                <div class="inspector-body" id="inspectorBody"></div>
+            </section>
+
+            <section class="tx-panel" aria-label="交易列表">
+                <div class="tx-header">
+                    <h2>区块交易</h2>
+                    <span class="status-pill" id="txCountLabel">--</span>
+                </div>
+                <div class="tx-list" id="txList"></div>
+            </section>
+        </aside>
+    </section>
+</main>
+
+<script>
+    const state = {
+        blocks: [],
+        orphans: [],
+        selectedHash: null,
+        view: 'height',
+        autoRefresh: true,
+        timer: null,
+        source: 'mock',
+        mempool: null
+    };
+
+    const els = {
+        chain: document.getElementById('chain'),
+        heatCells: document.getElementById('heatCells'),
+        sourceStatus: document.getElementById('sourceStatus'),
+        sourceDot: document.getElementById('sourceDot'),
+        sourceText: document.getElementById('sourceText'),
+        blockCount: document.getElementById('blockCount'),
+        searchInput: document.getElementById('searchInput'),
+        searchBtn: document.getElementById('searchBtn'),
+        refreshBtn: document.getElementById('refreshBtn'),
+        autoBtn: document.getElementById('autoBtn'),
+        chainMeta: document.getElementById('chainMeta'),
+        heatMeta: document.getElementById('heatMeta'),
+        inspectorBody: document.getElementById('inspectorBody'),
+        detailBadge: document.getElementById('detailBadge'),
+        txList: document.getElementById('txList'),
+        txCountLabel: document.getElementById('txCountLabel'),
+        metricHeight: document.getElementById('metricHeight'),
+        metricHeightSub: document.getElementById('metricHeightSub'),
+        metricMempool: document.getElementById('metricMempool'),
+        metricMempoolSub: document.getElementById('metricMempoolSub'),
+        metricInterval: document.getElementById('metricInterval'),
+        metricPeak: document.getElementById('metricPeak'),
+        metricPeakSub: document.getElementById('metricPeakSub'),
+        metricOrphans: document.getElementById('metricOrphans'),
+        metricOrphansSub: document.getElementById('metricOrphansSub')
+    };
+
+    function number(value) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toLocaleString('zh-CN') : '--';
+    }
+
+    function compact(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return '--';
+        if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+        if (num >= 10000) return `${(num / 1000).toFixed(1)}K`;
+        return num.toLocaleString('zh-CN');
+    }
+
+    function hashShort(hash, head = 18, tail = 10) {
+        if (!hash) return '--';
+        const text = String(hash);
+        if (text.length <= head + tail + 3) return text;
+        return `${text.slice(0, head)}...${text.slice(-tail)}`;
+    }
+
+    function formatAge(seconds) {
+        const value = Number(seconds);
+        if (!Number.isFinite(value) || value <= 0) return '--';
+        const now = Date.now() / 1000;
+        const diff = Math.max(0, now - value);
+        if (diff < 60) return `${Math.round(diff)}s`;
+        if (diff < 3600) return `${Math.round(diff / 60)}m`;
+        if (diff < 86400) return `${Math.round(diff / 3600)}h`;
+        return `${Math.round(diff / 86400)}d`;
+    }
+
+    function formatTime(seconds) {
+        const value = Number(seconds);
+        if (!Number.isFinite(value) || value <= 0) return '--';
+        return new Date(value * 1000).toLocaleString('zh-CN', {hour12: false});
+    }
+
+    function readTxCount(block) {
+        if (!block) return 0;
+        if (Number.isFinite(Number(block.txCount))) return Number(block.txCount);
+        if (Array.isArray(block.transactions)) return block.transactions.length;
+        return 0;
+    }
+
+    function normalizeBlock(raw, index, latestHeight) {
+        const height = Number(raw.height ?? raw.blockHeight ?? 0);
+        const hash = String(raw.hash ?? raw.blockHash ?? makeHash(height + index));
+        const txCount = readTxCount(raw);
+        const time = Number(raw.time ?? raw.timestamp ?? Math.floor(Date.now() / 1000) - (latestHeight - height) * 600);
+        const confirmations = Math.max(0, latestHeight - height + 1);
+        let status = 'history';
+        if (confirmations <= 1) status = 'latest';
+        else if (confirmations <= 2) status = 'pending';
+        else if (confirmations <= 5) status = 'confirmed';
+        return {
+            ...raw,
+            height,
+            hash,
+            previousHash: raw.previousHash ?? raw.prevHash ?? raw.prevBlockHash ?? '',
+            merkleRoot: raw.merkleRoot ?? raw.merkleHash ?? '',
+            time,
+            txCount,
+            confirmations,
+            status,
+            version: raw.version ?? raw.blockHeader?.version ?? '--',
+            bits: raw.bits ?? raw.blockHeader?.bits ?? '--',
+            nonce: raw.nonce ?? raw.blockHeader?.nonce ?? '--',
+            chainWorkDecimal: raw.chainWorkDecimal ?? raw.chainWork ?? '--',
+            transactions: Array.isArray(raw.transactions) ? raw.transactions : []
+        };
+    }
+
+    async function fetchJson(url) {
+        const response = await fetch(url, {cache: 'no-store'});
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        return response.json();
+    }
+
+    async function loadLiveData() {
+        const latest = await fetchJson('/chain/getMainLatestBlock');
+        const latestHeight = Number(latest.height);
+        if (!Number.isFinite(latestHeight) || latestHeight <= 0) {
+            throw new Error('latest block has no height');
+        }
+
+        const count = Number(els.blockCount.value);
+        const start = Math.max(0, latestHeight - count + 1);
+        let blocks = await fetchJson(`/chain/getBlocksByPage?start=${start}&end=${latestHeight}`);
+        if (!Array.isArray(blocks) || blocks.length === 0) {
+            blocks = [latest];
+        }
+
+        let orphans = [];
+        try {
+            const orphanResponse = await fetchJson('/chain/getOrphanBlocks');
+            orphans = Array.isArray(orphanResponse) ? orphanResponse : [];
+        } catch (error) {
+            orphans = [];
+        }
+
+        let mempool = null;
+        try {
+            mempool = await fetchJson('/txpool/status');
+        } catch (error) {
+            mempool = null;
+        }
+
+        state.blocks = blocks
+            .map((block, index) => normalizeBlock(block, index, latestHeight))
+            .sort((a, b) => a.height - b.height);
+        state.orphans = orphans.map((block, index) => ({
+            ...normalizeBlock(block, index, latestHeight),
+            status: 'orphan'
+        }));
+        state.mempool = mempool;
+        state.source = 'live';
+        if (!state.selectedHash || !state.blocks.some(block => block.hash === state.selectedHash)) {
+            state.selectedHash = state.blocks[state.blocks.length - 1]?.hash ?? null;
+        }
+    }
+
+    function makeMockBlocks() {
+        const now = Math.floor(Date.now() / 1000);
+        const base = 878423;
+        const txs = [1188, 2460, 1732, 2543, 1690, 2779, 4304, 3204, 1858, 2368, 1420, 3910, 2105, 1764, 2960, 3318];
+        const count = Number(els.blockCount.value);
+        const latestHeight = base + count - 1;
+        state.blocks = Array.from({length: count}, (_, index) => {
+            const height = base + index;
+            const txCount = txs[index % txs.length];
+            return normalizeBlock({
+                height,
+                hash: makeHash(height),
+                previousHash: makeHash(height - 1),
+                merkleRoot: makeHash(height + 501),
+                time: now - (count - index) * 585 - Math.round(Math.sin(index) * 80),
+                txCount,
+                version: 1,
+                bits: 486604799,
+                nonce: 3982411507 - index * 17493,
+                chainWorkDecimal: String(928374982734982734n + BigInt(index) * 8192n),
+                transactions: makeMockTxs(height, txCount)
+            }, index, latestHeight);
+        });
+        state.orphans = [
+            normalizeBlock({
+                height: latestHeight - 4,
+                hash: makeHash(latestHeight + 77),
+                previousHash: state.blocks[Math.max(0, count - 6)]?.hash,
+                merkleRoot: makeHash(latestHeight + 578),
+                time: now - 2600,
+                txCount: 947,
+                version: 1,
+                bits: 486604799,
+                nonce: 285147921,
+                transactions: makeMockTxs(latestHeight + 77, 947)
+            }, 0, latestHeight)
+        ].map(block => ({...block, status: 'orphan'}));
+        state.mempool = {totalTransactions: 12931, pendingCount: 12931, totalFees: 182400};
+        state.source = 'mock';
+        state.selectedHash = state.blocks[state.blocks.length - 1]?.hash ?? null;
+    }
+
+    function makeHash(seed) {
+        let value = Math.abs(Number(seed) || 1);
+        let text = '0000000000000000000';
+        for (let i = 0; i < 45; i += 1) {
+            value = (value * 1103515245 + 12345 + i) >>> 0;
+            text += (value % 16).toString(16);
+        }
+        return text.slice(0, 64).padEnd(64, '0');
+    }
+
+    function makeMockTxs(height, txCount) {
+        const size = Math.min(8, Math.max(3, Math.round(txCount / 620)));
+        return Array.from({length: size}, (_, index) => ({
+            txId: makeHash(height * 100 + index),
+            inputs: Array.from({length: 1 + (index % 3)}),
+            outputs: Array.from({length: 2 + (index % 4)}),
+            fee: 120 + index * 41,
+            statusStr: index === 0 ? 'coinbase' : 'confirmed'
+        }));
+    }
+
+    async function loadData() {
+        setSource('loading');
+        try {
+            await loadLiveData();
+        } catch (error) {
+            makeMockBlocks();
+        }
+        render();
+    }
+
+    function setSource(mode) {
+        els.sourceDot.className = 'dot';
+        if (mode === 'loading') {
+            els.sourceText.textContent = '加载中';
+            return;
+        }
+        if (state.source === 'live') {
+            els.sourceDot.classList.add('live');
+            els.sourceText.textContent = '实时接口';
+        } else {
+            els.sourceDot.classList.add('mock');
+            els.sourceText.textContent = '演示数据';
+        }
+    }
+
+    function render() {
+        setSource(state.source);
+        const blocks = sortedBlocks();
+        renderMetrics(blocks);
+        renderChain(blocks);
+        renderHeatmap(blocks);
+        renderInspector(selectedBlock(blocks));
+    }
+
+    function sortedBlocks() {
+        const blocks = [...state.blocks];
+        if (state.view === 'time') {
+            return blocks.sort((a, b) => a.time - b.time);
+        }
+        if (state.view === 'tx') {
+            return blocks.sort((a, b) => a.txCount - b.txCount);
+        }
+        return blocks.sort((a, b) => a.height - b.height);
+    }
+
+    function selectedBlock(blocks = state.blocks) {
+        return blocks.find(block => block.hash === state.selectedHash)
+            || state.blocks.find(block => block.hash === state.selectedHash)
+            || state.orphans.find(block => block.hash === state.selectedHash)
+            || state.blocks[state.blocks.length - 1]
+            || null;
+    }
+
+    function renderMetrics(blocks) {
+        const latest = [...blocks].sort((a, b) => b.height - a.height)[0];
+        const peak = [...blocks].sort((a, b) => b.txCount - a.txCount)[0];
+        const intervals = blocks.slice(1).map((block, index) => Math.abs(block.time - blocks[index].time)).filter(Boolean);
+        const avg = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0;
+        const mempoolCount = state.mempool?.totalTransactions ?? state.mempool?.pendingCount ?? state.mempool?.txCount ?? 0;
+
+        els.metricHeight.textContent = latest ? number(latest.height) : '--';
+        els.metricHeightSub.textContent = latest ? `${formatAge(latest.time)} ago` : '--';
+        els.metricMempool.textContent = mempoolCount ? `${compact(mempoolCount)} tx` : '--';
+        els.metricMempoolSub.textContent = state.mempool?.totalFees ? `fees ${compact(state.mempool.totalFees)}` : '等待打包';
+        els.metricInterval.textContent = avg ? `${(avg / 60).toFixed(1)} min` : '--';
+        els.metricPeak.textContent = peak ? `${compact(peak.txCount)} tx` : '--';
+        els.metricPeakSub.textContent = peak ? `#${number(peak.height)}` : '--';
+        els.metricOrphans.textContent = number(state.orphans.length);
+        els.metricOrphansSub.textContent = state.orphans.length ? `最高 #${number(Math.max(...state.orphans.map(block => block.height)))}` : '主链稳定';
+        els.chainMeta.textContent = latest ? `Tip #${number(latest.height)} · ${blocks.length} blocks · updated ${new Date().toLocaleTimeString('zh-CN', {hour12: false})}` : '--';
+    }
+
+    function renderChain(blocks) {
+        els.chain.innerHTML = '<div class="chain-line"></div>';
+        const maxTx = Math.max(1, ...blocks.map(block => block.txCount));
+        let selectedElement = null;
+
+        blocks.forEach(block => {
+            const size = 112 + Math.round((block.txCount / maxTx) * 50);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `block-card ${block.status}${block.hash === state.selectedHash ? ' selected' : ''}`;
+            button.style.setProperty('--block-size', `${size}px`);
+            button.setAttribute('aria-label', `区块 ${block.height}`);
+            button.innerHTML = blockTemplate(block);
+            button.addEventListener('click', () => {
+                state.selectedHash = block.hash;
+                render();
+            });
+            els.chain.appendChild(button);
+            if (block.hash === state.selectedHash) {
+                selectedElement = button;
+            }
+        });
+
+        if (state.orphans.length) {
+            const fork = document.createElement('div');
+            fork.className = 'fork-line';
+            els.chain.appendChild(fork);
+
+            const orphan = state.orphans[0];
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `block-card orphan${orphan.hash === state.selectedHash ? ' selected' : ''}`;
+            button.style.setProperty('--block-size', '118px');
+            button.setAttribute('aria-label', `候选分叉 ${orphan.height}`);
+            button.innerHTML = `
+                <div class="block-status">STALE</div>
+                <div class="block-height">#${number(orphan.height)}</div>
+                <div class="block-time">${compact(orphan.txCount)} tx</div>
+            `;
+            button.addEventListener('click', () => {
+                state.selectedHash = orphan.hash;
+                renderInspector(orphan);
+                document.querySelectorAll('.block-card').forEach(item => item.classList.remove('selected'));
+                button.classList.add('selected');
+                centerSelectedBlock(button);
+            });
+            els.chain.appendChild(button);
+            if (orphan.hash === state.selectedHash) {
+                selectedElement = button;
+            }
+        }
+
+        centerSelectedBlock(selectedElement);
+    }
+
+    function centerSelectedBlock(element) {
+        if (!element) return;
+        window.requestAnimationFrame(() => {
+            const wrap = element.closest('.chain-wrap');
+            if (!wrap) return;
+            wrap.scrollLeft = element.offsetLeft - (wrap.clientWidth - element.offsetWidth) / 2;
+        });
+    }
+
+    function blockTemplate(block) {
+        const label = {
+            latest: 'LATEST',
+            pending: 'PENDING',
+            confirmed: 'CONFIRMED',
+            history: 'HISTORY'
+        }[block.status] || 'BLOCK';
+        const bars = Array.from({length: 7}, (_, index) => {
+            const value = 7 + Math.round(((Math.sin(block.height * 0.45 + index) + 1) / 2) * 22);
+            return `<span style="--bar:${value}px"></span>`;
+        }).join('');
+        return `
+            <div class="block-status">${label}</div>
+            <div class="block-height">#${number(block.height)}</div>
+            <div class="block-txs">${compact(block.txCount)} tx</div>
+            <div class="spark">${bars}</div>
+            <div class="block-time">${formatAge(block.time)} ago</div>
+        `;
+    }
+
+    function renderHeatmap(blocks) {
+        els.heatCells.innerHTML = '';
+        const values = blocks.flatMap(block => {
+            const base = Math.max(8, Math.min(96, Math.round(block.txCount / 45)));
+            return [base, Math.max(8, base - 16), Math.min(96, base + 12)];
+        }).slice(-24);
+        const padded = values.length ? values : Array.from({length: 24}, () => 10);
+        while (padded.length < 24) padded.unshift(10);
+        padded.forEach(value => {
+            const cell = document.createElement('span');
+            const color = value > 72 ? 'var(--amber)' : value > 44 ? 'var(--blue)' : 'var(--green)';
+            cell.className = 'heat-cell';
+            cell.style.setProperty('--heat', `${Math.max(18, value)}%`);
+            cell.style.setProperty('--heat-color', color);
+            els.heatCells.appendChild(cell);
+        });
+        const avg = blocks.length ? Math.round(blocks.reduce((sum, block) => sum + block.txCount, 0) / blocks.length) : 0;
+        els.heatMeta.textContent = avg ? `avg ${compact(avg)} tx/block` : '--';
+    }
+
+    function renderInspector(block) {
+        if (!block) {
+            els.inspectorBody.innerHTML = '<div class="empty">暂无区块数据</div>';
+            els.txList.innerHTML = '<div class="empty">暂无交易</div>';
+            return;
+        }
+        const badge = {
+            latest: ['LATEST', 'var(--green)'],
+            pending: ['PENDING', 'var(--amber)'],
+            confirmed: ['CONFIRMED', 'var(--blue)'],
+            history: ['HISTORY', '#94a3b8'],
+            orphan: ['STALE', 'var(--red)']
+        }[block.status] || ['BLOCK', '#94a3b8'];
+        els.detailBadge.textContent = badge[0];
+        els.detailBadge.style.setProperty('--badge-color', badge[1]);
+
+        els.inspectorBody.innerHTML = `
+            <div class="big-height">#${number(block.height)}</div>
+            <p class="meta-line">${number(block.txCount)} txs · ${formatAge(block.time)} ago · ${formatTime(block.time)}</p>
+            <div class="detail-grid">
+                <div class="detail">
+                    <div class="detail-label">Version</div>
+                    <div class="detail-value">${block.version ?? '--'}</div>
+                </div>
+                <div class="detail">
+                    <div class="detail-label">Nonce</div>
+                    <div class="detail-value">${number(block.nonce)}</div>
+                </div>
+                <div class="detail">
+                    <div class="detail-label">Bits</div>
+                    <div class="detail-value">${block.bits ?? '--'}</div>
+                </div>
+                <div class="detail">
+                    <div class="detail-label">Chain Work</div>
+                    <div class="detail-value">${hashShort(block.chainWorkDecimal, 9, 8)}</div>
+                </div>
+            </div>
+            <div class="hash-list">
+                ${hashRow('Hash', block.hash, 'var(--green)')}
+                ${hashRow('Prev Hash', block.previousHash, 'var(--blue)')}
+                ${hashRow('Merkle Root', block.merkleRoot, 'var(--amber)')}
+            </div>
+            <div class="confirmations">
+                <div class="confirm-title">
+                    <span>确认深度</span>
+                    <span>${number(block.confirmations)} confirmations</span>
+                </div>
+                <div class="confirm-track">
+                    ${Array.from({length: 8}, (_, index) => `<span class="confirm-dot ${index === 0 ? 'active' : index < block.confirmations ? '' : 'empty'}"></span>`).join('')}
+                </div>
+            </div>
+        `;
+        renderTransactions(block);
+    }
+
+    function hashRow(label, value, color) {
+        return `
+            <div class="hash-row" style="--accent:${color}">
+                <div class="hash-label">${label}</div>
+                <div class="hash-value">${value || '--'}</div>
+            </div>
+        `;
+    }
+
+    function renderTransactions(block) {
+        const transactions = Array.isArray(block.transactions) ? block.transactions.slice(0, 12) : [];
+        els.txCountLabel.textContent = `${number(block.txCount)} txs`;
+        if (!transactions.length) {
+            els.txList.innerHTML = '<div class="empty">该接口未返回交易明细</div>';
+            return;
+        }
+        els.txList.innerHTML = transactions.map((tx, index) => {
+            const txId = tx.txId || tx.hash || makeHash(block.height * 1000 + index);
+            const inputs = Array.isArray(tx.inputs) ? tx.inputs.length : 0;
+            const outputs = Array.isArray(tx.outputs) ? tx.outputs.length : 0;
+            return `
+                <article class="tx-item">
+                    <div>
+                        <div class="tx-hash">${hashShort(txId, 22, 12)}</div>
+                        <div class="meta-line">${tx.statusStr || 'confirmed'}</div>
+                    </div>
+                    <div class="tx-meta">${inputs} in · ${outputs} out</div>
+                </article>
+            `;
+        }).join('');
+    }
+
+    async function searchBlock() {
+        const query = els.searchInput.value.trim();
+        if (!query) return;
+        setSource('loading');
+        try {
+            const isHeight = /^\d+$/.test(query);
+            const block = await fetchJson(isHeight ? `/chain/getBlockByHeight?height=${query}` : `/chain/getBlockByHash?hash=${encodeURIComponent(query)}`);
+            const latestHeight = Math.max(Number(block.height), ...state.blocks.map(item => item.height));
+            const normalized = normalizeBlock(block, 0, latestHeight);
+            const exists = state.blocks.some(item => item.hash === normalized.hash);
+            if (!exists) {
+                state.blocks = [...state.blocks.slice(1), normalized].sort((a, b) => a.height - b.height);
+            }
+            state.selectedHash = normalized.hash;
+            state.source = 'live';
+            render();
+        } catch (error) {
+            const hit = [...state.blocks, ...state.orphans].find(block => String(block.height) === query || block.hash === query);
+            if (hit) {
+                state.selectedHash = hit.hash;
+                render();
+            } else {
+                state.source = 'mock';
+                render();
+                els.sourceText.textContent = '未找到';
+            }
+        }
+    }
+
+    function startTimer() {
+        window.clearInterval(state.timer);
+        if (state.autoRefresh) {
+            state.timer = window.setInterval(loadData, 15000);
+        }
+        els.autoBtn.textContent = state.autoRefresh ? 'Ⅱ' : '▶';
+    }
+
+    document.querySelectorAll('.segment').forEach(button => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('.segment').forEach(item => item.classList.remove('active'));
+            button.classList.add('active');
+            state.view = button.dataset.view;
+            render();
+        });
+    });
+
+    els.refreshBtn.addEventListener('click', loadData);
+    els.blockCount.addEventListener('change', loadData);
+    els.searchBtn.addEventListener('click', searchBlock);
+    els.searchInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') searchBlock();
+    });
+    els.autoBtn.addEventListener('click', () => {
+        state.autoRefresh = !state.autoRefresh;
+        startTimer();
+    });
+
+    loadData();
+    startTimer();
+</script>
+</body>
+</html>
