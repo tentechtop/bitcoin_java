@@ -12,7 +12,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addViewController("/bitcoin/system")
                 .setViewName("forward:/home/index.html");
 
-
+        registry.addViewController("/bitcoin/system/p2p")
+                .setViewName("forward:/p2p-monitor.html");
 
     }
 }

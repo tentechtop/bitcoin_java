@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>区块同步监控</title>
+    <style>
+        :root {
+            --bg: #f4f6f8;
+            --surface: #ffffff;
+            --surface-2: #eef2f5;
+            --line: #d8e0e7;
+            --text: #18212b;
+            --muted: #667381;
+            --green: #1d9a6c;
+            --blue: #2563eb;
+            --amber: #c98210;
+            --red: #c2413b;
+            --ink: #111827;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+        }
+
+        .shell {
+            width: min(1280px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 40px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .mode-control {
+            display: inline-grid;
+            grid-template-columns: repeat(2, minmax(96px, 1fr));
+            min-height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--surface);
+        }
+
+        .mode-control input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .mode-control span {
+            display: grid;
+            place-items: center;
+            padding: 0 12px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 800;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .mode-control label + label span {
+            border-left: 1px solid var(--line);
+        }
+
+        .mode-control input:checked + span {
+            background: var(--ink);
+            color: #ffffff;
+        }
+
+        .mode-control input:disabled + span {
+            cursor: not-allowed;
+            opacity: 0.65;
+        }
+
+        button {
+            min-height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--ink);
+            padding: 0 14px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button.primary {
+            border-color: var(--blue);
+            background: var(--blue);
+            color: #ffffff;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.65;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(120px, 1fr));
+            gap: 12px;
+        }
+
+        .metric {
+            min-height: 82px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 12px;
+            background: #fbfcfd;
+        }
+
+        .metric-label {
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            font-weight: 800;
+            overflow-wrap: anywhere;
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 12px;
+        }
+
+        .status-badge {
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 800;
+            color: #ffffff;
+            background: var(--muted);
+        }
+
+        .status-badge.STARTING,
+        .status-badge.LOCATING_COMMON_ANCESTOR,
+        .status-badge.DOWNLOADING_HEADERS,
+        .status-badge.VERIFYING_HEADERS,
+        .status-badge.DOWNLOADING,
+        .status-badge.VERIFYING,
+        .status-badge.HEADERS {
+            background: var(--blue);
+        }
+
+        .status-badge.COMPLETED {
+            background: var(--green);
+        }
+
+        .status-badge.FAILED,
+        .status-badge.DEGRADED {
+            background: var(--red);
+        }
+
+        .progress-track {
+            height: 16px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--surface-2);
+            border: 1px solid var(--line);
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, var(--green), var(--blue));
+            transition: width 0.25s ease;
+        }
+
+        .progress-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .mode-chip {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .section-title {
+            margin: 0 0 14px;
+            font-size: 18px;
+        }
+
+        .peer-bars {
+            display: grid;
+            gap: 10px;
+        }
+
+        .peer-bar {
+            display: grid;
+            grid-template-columns: minmax(180px, 260px) 1fr minmax(88px, auto);
+            gap: 12px;
+            align-items: center;
+        }
+
+        .peer-name {
+            font-family: Consolas, monospace;
+            font-size: 12px;
+            color: var(--ink);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .height-track {
+            position: relative;
+            height: 18px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--surface-2);
+        }
+
+        .height-fill {
+            height: 100%;
+            min-width: 2px;
+            background: var(--green);
+        }
+
+        .assigned-range {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            min-width: 2px;
+            background: rgba(37, 99, 235, 0.35);
+            border-left: 1px solid var(--blue);
+            border-right: 1px solid var(--blue);
+        }
+
+        .peer-height {
+            color: var(--muted);
+            font-size: 13px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        table {
+            width: 100%;
+            min-width: 980px;
+            border-collapse: collapse;
+            background: var(--surface);
+        }
+
+        th,
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            font-size: 13px;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f8fafc;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .mono {
+            font-family: Consolas, monospace;
+            overflow-wrap: anywhere;
+        }
+
+        .empty {
+            color: var(--muted);
+            padding: 16px;
+            border: 1px dashed var(--line);
+            border-radius: 8px;
+            background: #fbfcfd;
+        }
+
+        .errors {
+            display: grid;
+            gap: 8px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .errors li {
+            padding: 10px 12px;
+            border-left: 3px solid var(--red);
+            background: #fff6f5;
+            color: #7c2d2a;
+            font-size: 13px;
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 920px) {
+            .topbar {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .actions {
+                justify-content: flex-start;
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, minmax(120px, 1fr));
+            }
+
+            .peer-bar {
+                grid-template-columns: 1fr;
+                gap: 6px;
+            }
+
+            .peer-height {
+                text-align: left;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .shell {
+                width: min(100% - 20px, 1280px);
+                padding-top: 16px;
+            }
+
+            .metrics {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 23px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <div class="topbar">
+        <div>
+            <h1>区块同步监控</h1>
+            <div class="subtitle" id="lastUpdated">等待状态</div>
+        </div>
+        <div class="actions">
+            <div class="mode-control" role="radiogroup" aria-label="同步模式">
+                <label>
+                    <input type="radio" name="syncMode" value="FULL_BLOCKS" checked>
+                    <span>完整区块</span>
+                </label>
+                <label>
+                    <input type="radio" name="syncMode" value="HEADERS_FIRST">
+                    <span>Headers-first</span>
+                </label>
+            </div>
+            <button class="primary" id="startBtn" type="button">开始同步</button>
+            <button id="refreshBtn" type="button">刷新</button>
+        </div>
+    </div>
+
+    <section class="panel">
+        <div class="status-row">
+            <div>
+                <strong id="syncMessage">Idle</strong>
+            </div>
+            <span class="status-badge" id="syncStatus">IDLE</span>
+        </div>
+        <div class="progress-track" aria-label="同步进度">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-meta">
+            <span id="progressText">0%</span>
+            <span class="mode-chip" id="modeText">完整区块</span>
+            <span id="rangeText">-</span>
+            <span id="etaText">-</span>
+        </div>
+    </section>
+
+    <section class="metrics" aria-label="同步指标">
+        <div class="metric">
+            <div class="metric-label">本地高度</div>
+            <div class="metric-value" id="localHeight">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">网络高度</div>
+            <div class="metric-value" id="networkHeight">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label" id="verifiedLabel">已验证区块</div>
+            <div class="metric-value" id="verifiedBlocks">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label" id="inFlightLabel">下载中区块</div>
+            <div class="metric-value" id="inFlightBlocks">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">速率</div>
+            <div class="metric-value" id="syncRate">0/s</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">连接节点</div>
+            <div class="metric-value" id="peerCount">0</div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2 class="section-title">节点链高度</h2>
+        <div class="peer-bars" id="peerBars"></div>
+    </section>
+
+    <section class="panel">
+        <h2 class="section-title">已连接节点</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>节点</th>
+                    <th>地址</th>
+                    <th>状态</th>
+                    <th>高度</th>
+                    <th>已下载</th>
+                    <th>已验证</th>
+                    <th>分配区间</th>
+                    <th>最新 Hash</th>
+                    <th>错误</th>
+                </tr>
+                </thead>
+                <tbody id="peerTable"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2 class="section-title">最近错误</h2>
+        <ul class="errors" id="errorList"></ul>
+    </section>
+</main>
+
+<script>
+    const els = {
+        startBtn: document.getElementById('startBtn'),
+        refreshBtn: document.getElementById('refreshBtn'),
+        modeInputs: Array.from(document.querySelectorAll('input[name="syncMode"]')),
+        lastUpdated: document.getElementById('lastUpdated'),
+        syncMessage: document.getElementById('syncMessage'),
+        syncStatus: document.getElementById('syncStatus'),
+        progressFill: document.getElementById('progressFill'),
+        progressText: document.getElementById('progressText'),
+        modeText: document.getElementById('modeText'),
+        rangeText: document.getElementById('rangeText'),
+        etaText: document.getElementById('etaText'),
+        localHeight: document.getElementById('localHeight'),
+        networkHeight: document.getElementById('networkHeight'),
+        verifiedLabel: document.getElementById('verifiedLabel'),
+        verifiedBlocks: document.getElementById('verifiedBlocks'),
+        inFlightLabel: document.getElementById('inFlightLabel'),
+        inFlightBlocks: document.getElementById('inFlightBlocks'),
+        syncRate: document.getElementById('syncRate'),
+        peerCount: document.getElementById('peerCount'),
+        peerBars: document.getElementById('peerBars'),
+        peerTable: document.getElementById('peerTable'),
+        errorList: document.getElementById('errorList')
+    };
+
+    els.startBtn.addEventListener('click', startSync);
+    els.refreshBtn.addEventListener('click', loadStatus);
+    els.modeInputs.forEach(input => {
+        input.addEventListener('change', () => {
+            localStorage.setItem('syncMode', selectedMode());
+        });
+    });
+
+    const savedMode = localStorage.getItem('syncMode');
+    if (savedMode) {
+        setSelectedMode(savedMode);
+    }
+
+    async function startSync() {
+        els.startBtn.disabled = true;
+        try {
+            const mode = selectedMode();
+            const status = await fetchJson(mode === 'HEADERS_FIRST'
+                ? '/chain/startSyncHeadersFirst'
+                : '/chain/startSync');
+            render(status);
+        } finally {
+            setTimeout(() => {
+                if (!els.startBtn.dataset.running) {
+                    els.startBtn.disabled = false;
+                }
+            }, 800);
+        }
+    }
+
+    async function loadStatus() {
+        try {
+            const status = await fetchJson('/chain/getSyncStatus');
+            render(status);
+        } catch (error) {
+            renderError(error.message);
+        }
+    }
+
+    async function fetchJson(url) {
+        const response = await fetch(url, {cache: 'no-store'});
+        if (!response.ok) {
+            throw new Error(`${response.status} ${response.statusText}`);
+        }
+        return response.json();
+    }
+
+    function render(status) {
+        const peers = Array.isArray(status.peers) ? status.peers : [];
+        const percent = Number(status.percent || 0);
+        const maxHeight = Math.max(status.networkHeight || 0, ...peers.map(peer => peer.height || 0), 1);
+        const running = Boolean(status.running);
+        const mode = running ? normalizeMode(status.mode) : selectedMode();
+        const headerStage = mode === 'HEADERS_FIRST'
+            && ['DOWNLOADING_HEADERS', 'VERIFYING_HEADERS'].includes(status.status || '');
+
+        els.syncMessage.textContent = status.message || '-';
+        els.syncStatus.textContent = status.status || 'IDLE';
+        els.syncStatus.className = `status-badge ${status.status || 'IDLE'}`;
+        els.progressFill.style.width = `${Math.max(0, Math.min(100, percent)).toFixed(2)}%`;
+        els.progressText.textContent = `${percent.toFixed(2)}%`;
+        els.modeText.textContent = modeLabel(mode);
+        els.rangeText.textContent = rangeLabel(status);
+        els.etaText.textContent = etaLabel(status);
+        els.localHeight.textContent = number(status.localHeight);
+        els.networkHeight.textContent = number(status.networkHeight);
+        els.verifiedLabel.textContent = headerStage ? '已验证区块头' : '已验证区块';
+        els.verifiedBlocks.textContent = headerStage
+            ? `${number(status.verifiedHeaders)} / ${number(status.totalHeaders)}`
+            : `${number(status.verifiedBlocks)} / ${number(status.totalBlocks)}`;
+        els.inFlightLabel.textContent = headerStage ? '下载中区块头' : '下载中区块';
+        els.inFlightBlocks.textContent = number(headerStage ? status.inFlightHeaders : status.inFlightBlocks);
+        els.syncRate.textContent = `${Number(status.blocksPerSecond || 0).toFixed(2)}/s`;
+        els.peerCount.textContent = number(status.connectedPeerCount);
+        els.lastUpdated.textContent = `更新时间 ${formatTime(status.updatedAtMillis || Date.now())}`;
+        els.startBtn.disabled = running;
+        els.startBtn.dataset.running = running ? 'true' : '';
+        els.modeInputs.forEach(input => input.disabled = running);
+        if (running) {
+            setSelectedMode(mode);
+        }
+
+        renderPeerBars(peers, maxHeight);
+        renderPeerTable(peers);
+        renderErrors(status.recentErrors || []);
+    }
+
+    function renderPeerBars(peers, maxHeight) {
+        if (!peers.length) {
+            els.peerBars.innerHTML = '<div class="empty">暂无连接节点</div>';
+            return;
+        }
+
+        els.peerBars.innerHTML = peers.map(peer => {
+            const width = clamp(((peer.height || 0) / maxHeight) * 100, 0, 100);
+            const assigned = assignedStyle(peer, maxHeight);
+            return `
+                <div class="peer-bar">
+                    <div class="peer-name" title="${escapeHtml(peer.peerId || '')}">${escapeHtml(short(peer.peerId))}</div>
+                    <div class="height-track">
+                        <div class="height-fill" style="width:${width.toFixed(2)}%"></div>
+                        ${assigned}
+                    </div>
+                    <div class="peer-height">${number(peer.height)}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderPeerTable(peers) {
+        if (!peers.length) {
+            els.peerTable.innerHTML = '<tr><td colspan="9">暂无连接节点</td></tr>';
+            return;
+        }
+
+        els.peerTable.innerHTML = peers.map(peer => `
+            <tr>
+                <td class="mono" title="${escapeHtml(peer.peerId || '')}">${escapeHtml(short(peer.peerId))}</td>
+                <td>${escapeHtml(addressLabel(peer))}</td>
+                <td><span class="status-badge ${escapeHtml(peer.status || '')}">${escapeHtml(peer.status || '-')}</span></td>
+                <td>${number(peer.height)}</td>
+                <td>${number(peer.downloadedBlocks)}</td>
+                <td>${number(peer.verifiedBlocks)}</td>
+                <td>${escapeHtml(assignedLabel(peer))}</td>
+                <td class="mono" title="${escapeHtml(peer.hashHex || '')}">${escapeHtml(short(peer.hashHex))}</td>
+                <td>${escapeHtml(peer.lastError || '')}</td>
+            </tr>
+        `).join('');
+    }
+
+    function renderErrors(errors) {
+        if (!errors.length) {
+            els.errorList.innerHTML = '<li style="border-left-color: var(--line); background:#fbfcfd; color:var(--muted);">暂无错误</li>';
+            return;
+        }
+
+        els.errorList.innerHTML = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
+    }
+
+    function renderError(message) {
+        els.syncMessage.textContent = message;
+        els.syncStatus.textContent = 'ERROR';
+        els.syncStatus.className = 'status-badge FAILED';
+        renderErrors([message]);
+    }
+
+    function assignedStyle(peer, maxHeight) {
+        if (peer.assignedStartHeight == null || peer.assignedEndHeight == null || maxHeight <= 0) {
+            return '';
+        }
+        const left = clamp((peer.assignedStartHeight / maxHeight) * 100, 0, 100);
+        const right = clamp((peer.assignedEndHeight / maxHeight) * 100, 0, 100);
+        const width = Math.max(1, right - left);
+        return `<div class="assigned-range" style="left:${left.toFixed(2)}%; width:${width.toFixed(2)}%"></div>`;
+    }
+
+    function assignedLabel(peer) {
+        if (peer.assignedStartHeight == null || peer.assignedEndHeight == null) {
+            return '-';
+        }
+        return `${peer.assignedStartHeight} - ${peer.assignedEndHeight}`;
+    }
+
+    function rangeLabel(status) {
+        const start = status.startHeight || 0;
+        const target = status.targetHeight || 0;
+        if (!start || !target) {
+            return '-';
+        }
+        return `${number(start)} - ${number(target)}`;
+    }
+
+    function etaLabel(status) {
+        const eta = Number(status.estimatedSecondsRemaining);
+        if (!Number.isFinite(eta) || eta < 0) {
+            return '预计时间 -';
+        }
+        if (eta < 60) {
+            return `预计 ${eta}s`;
+        }
+        return `预计 ${Math.ceil(eta / 60)}min`;
+    }
+
+    function selectedMode() {
+        return els.modeInputs.find(input => input.checked)?.value || 'FULL_BLOCKS';
+    }
+
+    function setSelectedMode(mode) {
+        const normalized = normalizeMode(mode);
+        els.modeInputs.forEach(input => {
+            input.checked = input.value === normalized;
+        });
+    }
+
+    function normalizeMode(mode) {
+        return mode === 'HEADERS_FIRST' ? 'HEADERS_FIRST' : 'FULL_BLOCKS';
+    }
+
+    function modeLabel(mode) {
+        return normalizeMode(mode) === 'HEADERS_FIRST' ? 'Headers-first' : '完整区块';
+    }
+
+    function addressLabel(peer) {
+        const address = peer.address || '-';
+        const port = peer.port ? `:${peer.port}` : '';
+        return `${address}${port}`;
+    }
+
+    function formatTime(value) {
+        return new Date(value).toLocaleTimeString();
+    }
+
+    function number(value) {
+        return new Intl.NumberFormat().format(Number(value || 0));
+    }
+
+    function short(value) {
+        if (!value) {
+            return '-';
+        }
+        return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+
+    loadStatus();
+    setInterval(loadStatus, 2000);
+</script>
+</body>
+</html>

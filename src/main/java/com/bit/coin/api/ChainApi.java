@@ -5,6 +5,8 @@ import com.bit.coin.blockchain.Landmark;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.mining.MiningServiceImpl;
 import com.bit.coin.net.NetServiceImpl;
+import com.bit.coin.net.SyncPeerState;
+import com.bit.coin.net.SyncProgress;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.structure.block.Block;
@@ -196,8 +198,43 @@ public class ChainApi {
 
     //开始同步
     @GetMapping("/startSync")
-    public void startSync() throws InterruptedException, IOException {
-        netService.startSyncBlock();
+    public SyncProgress startSync() {
+        return netService.startSyncBlock();
+    }
+
+    @GetMapping("/sync/start")
+    public SyncProgress startSyncV2() {
+        return netService.startSyncBlock();
+    }
+
+    @GetMapping("/sync/startHeadersFirst")
+    public SyncProgress startHeadersFirstSync() {
+        return netService.startSyncBlockHeadersFirst();
+    }
+
+    @GetMapping("/startSyncHeadersFirst")
+    public SyncProgress startSyncHeadersFirst() {
+        return netService.startSyncBlockHeadersFirst();
+    }
+
+    @GetMapping("/getSyncStatus")
+    public SyncProgress getSyncStatus() {
+        return netService.getSyncProgress();
+    }
+
+    @GetMapping("/sync/status")
+    public SyncProgress syncStatus() {
+        return netService.getSyncProgress();
+    }
+
+    @GetMapping("/getSyncPeerStatus")
+    public List<SyncPeerState> getSyncPeerStatus() {
+        return netService.getSyncPeerStates();
+    }
+
+    @GetMapping("/sync/peers")
+    public List<SyncPeerState> syncPeers() {
+        return netService.getSyncPeerStates();
     }
 
     @GetMapping("/getLatestBlcok")

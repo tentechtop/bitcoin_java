@@ -283,6 +283,66 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
     }
 
+    public boolean hasBlockBody(byte[] hash) {
+        return hash != null && hash.length == 32 && dataBase.get(TBLOCK_BODY, hash) != null;
+    }
+
+    public UInt256 getChainWorkByHash(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return UInt256.ZERO;
+        }
+        return UInt256.fromBytes(dataBase.get(HASH_TO_CHAIN_WORK, hash));
+    }
+
+    public BlockHeader getBlockHeaderByHeight(int height) {
+        if (height < 0) {
+            return null;
+        }
+        byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
+        if (hash == null || hash.length != 32) {
+            return null;
+        }
+        return getBlockHeaderByHash(hash);
+    }
+
+    public synchronized boolean addBlockHeaderToStore(BlockHeader header, int height, UInt256 chainWork) {
+        if (header == null || height < 0 || chainWork == null) {
+            return false;
+        }
+        byte[] hash = header.calculateHash();
+        byte[] existing = dataBase.get(TBLOCK_HEADER, hash);
+        if (existing != null) {
+            if (dataBase.get(HASH_TO_HEIGHT, hash) == null) {
+                dataBase.insert(HASH_TO_HEIGHT, hash, RocksDb.intToBytes(height));
+            }
+            if (dataBase.get(HASH_TO_CHAIN_WORK, hash) == null) {
+                dataBase.insert(HASH_TO_CHAIN_WORK, hash, chainWork.toBytes());
+            }
+            return true;
+        }
+
+        List<RocksDb.DbOperation> operations = new ArrayList<>();
+        operations.add(new RocksDb.DbOperation(
+                TBLOCK_HEADER,
+                hash,
+                header.serialize(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        operations.add(new RocksDb.DbOperation(
+                HASH_TO_HEIGHT,
+                hash,
+                RocksDb.intToBytes(height),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        operations.add(new RocksDb.DbOperation(
+                HASH_TO_CHAIN_WORK,
+                hash,
+                chainWork.toBytes(),
+                RocksDb.DbOperation.OpType.INSERT
+        ));
+        return dataBase.dataTransaction(operations);
+    }
+
     /**
      * 执行链重组（Reorganization）
      * 核心优化：所有数据库操作合并到同一个原子事务中执行，保证链重组的原子性
@@ -705,13 +765,23 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
 
         //验证是否已经存在
-        if (getBlockHeaderByHash(block.getHash()) != null) {
+        if (getBlockHeaderByHash(block.getHash()) != null && hasBlockBody(block.getHash())) {
             log.error("区块已经存在");
             return true;
         }
 
 
         // 4. 区块交易验证
+        // A block whose parent is unknown cannot be fully validated yet, because
+        // transaction inputs may depend on UTXOs from the missing parent chain.
+        if (isMissingParentBlock(block)) {
+            log.warn("收到断链区块，先加入孤块池并等待同步父区块。height={}, hash={}, parent={}",
+                    block.getHeight(), bytesToHex(block.getHash()),
+                    bytesToHex(block.getBlockHeader().getPreviousHash()));
+            addOrphanBlock(block);
+            return false;
+        }
+
         if (!validateBlockTransactions(block)) {
             log.error("区块交易验证失败");
             return false;
@@ -719,7 +789,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
         // 5. 链接关系处理（主链延续、孤块、分叉）
         if (handleBlockConnection(block)){
-            routingTable.BroadcastResource(0,block.getHash());
+            routingTable.BroadcastResource(0, block.getHash(), block.getHeight(), block.getChainWork());
             return true;
         }else {
             //打包失败将交易重新添加回交易池
@@ -1038,7 +1108,8 @@ public class BlockChainServiceImpl implements BlockChainService{
 
             // 检查是否为孤块（父区块不存在）
             byte[] parentBlockBytes = dataBase.get(TBLOCK_HEADER, previousHash);
-            if (parentBlockBytes == null) {
+            Block parentBlock = getBlockByHash(previousHash);
+            if (parentBlockBytes == null || parentBlock == null) {
                 log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
                         bytesToHex(previousHash));
                 addOrphanBlock(block);
@@ -1046,7 +1117,6 @@ public class BlockChainServiceImpl implements BlockChainService{
             }
 
             // 获取父区块工作总量
-            Block parentBlock = getBlockByHash(previousHash);
             int height = parentBlock.getHeight();
             UInt256 previousChainWork = parentBlock.getChainWork();
             UInt256 newBlockChainWork = previousChainWork.add(UInt256.fromBigInteger(block.getBlockHeader().getWork()));
@@ -1102,7 +1172,39 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
 
-    // 辅助类：用于返回多值（可替换为Apache Commons Pair或自定义类）
+    // Block lookup helpers used by receive/sync paths.
+    public boolean hasFullBlock(byte[] hash) {
+        return hash != null
+                && hash.length == 32
+                && getBlockHeaderByHash(hash) != null
+                && hasBlockBody(hash);
+    }
+
+    public boolean isMissingParentBlock(Block block) {
+        if (block == null || block.getBlockHeader() == null || block.getHeight() == 0) {
+            return false;
+        }
+
+        byte[] previousHash = block.getBlockHeader().getPreviousHash();
+        if (previousHash == null || previousHash.length != 32 || isZeroHash(previousHash)) {
+            return false;
+        }
+
+        return !hasFullBlock(previousHash);
+    }
+
+    private boolean isZeroHash(byte[] hash) {
+        if (hash == null) {
+            return true;
+        }
+        for (byte b : hash) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static class Pair<F, S> {
         private final F first;
         private final S second;
@@ -1520,11 +1622,15 @@ public class BlockChainServiceImpl implements BlockChainService{
 
     public Block getBlockByHash(byte[] hash) {
         //获取区块头 区块体
+        if (hash == null || hash.length != 32) {
+            return null;
+        }
+
         byte[] header_bytes = dataBase.get(TBLOCK_HEADER,hash);
         byte[] body_bytes = dataBase.get(TBLOCK_BODY,hash);
-        byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
-        UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
         if (header_bytes!=null && body_bytes!=null){
+            byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
+            UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
             BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
             BlockBody blockBody = BlockBody.deserialize(body_bytes);
             Block block = Block.buildBlock(blockHeader, blockBody);

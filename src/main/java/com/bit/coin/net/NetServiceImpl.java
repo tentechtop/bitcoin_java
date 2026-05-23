@@ -7,18 +7,43 @@ import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
+import com.bit.coin.p2p.protocol.message.BlockHeadersPayload;
 import com.bit.coin.structure.block.Block;
+import com.bit.coin.structure.block.BlockHeader;
+import com.bit.coin.utils.UInt256;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.Random;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
@@ -30,206 +55,757 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @RequiredArgsConstructor
 public class NetServiceImpl implements NetService {
 
+    private static final int MAX_SYNC_PEERS = 8;
+    private static final int MAX_HEADERS_PER_REQUEST = BlockHeadersPayload.MAX_HEADERS_PER_RESPONSE;
+    private static final int MAX_IN_FLIGHT_BLOCKS = 128;
+    private static final int MAX_CONCURRENT_REQUESTS_PER_NODE = 3;
+    private static final int BLOCK_FETCH_TIMEOUT_SECONDS = 15;
+    private static final int BLOCK_FETCH_RETRY_TIMES = 2;
+    private static final int RECENT_ERROR_LIMIT = 20;
+
+    private static final ExecutorService SYNC_EXECUTOR = new ThreadPoolExecutor(
+            Math.max(4, Runtime.getRuntime().availableProcessors() * 2),
+            Math.max(8, Runtime.getRuntime().availableProcessors() * 4),
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(1000),
+            new ThreadFactory() {
+                private final AtomicInteger threadNum = new AtomicInteger(1);
+
+                @Override
+                public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "block-sync-thread-" + threadNum.getAndIncrement());
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+    );
+
     @Autowired
     private RoutingTable routingTable;
-
-
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
 
-    // 每批同步区块数量
-    private static final int BATCH_SIZE = 100;
-    // 每个节点并发批次数
-    private static final int CONCURRENT_BATCHES_PER_NODE = 5;
-    // 内存缓存上限: 500MB (估算每个区块约1MB，最多缓存500个)
-    private static final long MAX_CACHE_SIZE = 500 * 1024 * 1024;
-    // 每个节点最大并发请求数
-    private static final int MAX_CONCURRENT_REQUESTS_PER_NODE = 3;
-    // 超时配置
-    private static final int BLOCK_FETCH_TIMEOUT_SECONDS = 15;
-    // 区块下载重试次数
-    private static final int BLOCK_FETCH_RETRY_TIMES = 2;
-    // 全局线程池（核心数=CPU核心数*2，最大数=CPU核心数*4）
-    private static final ExecutorService SYNC_EXECUTOR = new ThreadPoolExecutor(
-            Runtime.getRuntime().availableProcessors() * 2,
-            Runtime.getRuntime().availableProcessors() * 4,
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(1000),
-            new ThreadFactory() {
-                private final AtomicInteger threadNum = new AtomicInteger(1);
-                @Override
-                public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r, "block-sync-thread-" + threadNum.getAndIncrement());
-                    t.setDaemon(true); // 守护线程，避免阻塞应用退出
-                    return t;
-                }
-            },
-            new ThreadPoolExecutor.CallerRunsPolicy() // 队列满时由调用线程执行，避免任务丢失
-    );
-    // 节点并发控制信号量（每个节点最多3个并发）
-    private final Map<String, Semaphore> peerSemaphores = new ConcurrentHashMap<>();
-    // 已下载区块缓存（按高度有序存储，保证处理顺序）
-    private final ConcurrentSkipListMap<Integer, Block> downloadedBlocks = new ConcurrentSkipListMap<>();
-    // 已下载区块总大小（控制内存占用）
-    private final AtomicLong cachedBlocksSize = new AtomicLong(0);
-    // 当前待处理的最小高度（保证有序处理）
-    private final AtomicInteger currentProcessHeight = new AtomicInteger(0);
-    // 节点切换休眠时间（毫秒）- 降低网络压力
-    private static final int PEER_SWITCH_SLEEP_MS = 100;
+    private final AtomicBoolean syncRunning = new AtomicBoolean(false);
+    private final AtomicInteger peerCursor = new AtomicInteger(0);
+    private final ConcurrentMap<String, Semaphore> peerSemaphores = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, PeerSyncTracker> peerStates = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedDeque<String> recentErrors = new ConcurrentLinkedDeque<>();
 
+    private final AtomicReference<String> syncStatus = new AtomicReference<>("IDLE");
+    private final AtomicReference<String> syncMessage = new AtomicReference<>("Idle");
+    private final AtomicReference<String> bestPeerId = new AtomicReference<>("");
+    private final AtomicInteger bestPeerHeight = new AtomicInteger(0);
+    private final AtomicInteger localHeightAtStart = new AtomicInteger(0);
+    private final AtomicInteger localHeight = new AtomicInteger(0);
+    private final AtomicInteger networkHeight = new AtomicInteger(0);
+    private final AtomicInteger commonAncestorHeight = new AtomicInteger(0);
+    private final AtomicInteger startHeight = new AtomicInteger(0);
+    private final AtomicInteger targetHeight = new AtomicInteger(0);
+    private final AtomicInteger totalBlocks = new AtomicInteger(0);
+    private final AtomicInteger totalHeaders = new AtomicInteger(0);
+    private final AtomicInteger downloadedBlocks = new AtomicInteger(0);
+    private final AtomicInteger downloadedHeaders = new AtomicInteger(0);
+    private final AtomicInteger verifiedBlocks = new AtomicInteger(0);
+    private final AtomicInteger verifiedHeaders = new AtomicInteger(0);
+    private final AtomicInteger failedBlocks = new AtomicInteger(0);
+    private final AtomicInteger inFlightBlocks = new AtomicInteger(0);
+    private final AtomicInteger inFlightHeaders = new AtomicInteger(0);
+    private final AtomicInteger connectedPeerCount = new AtomicInteger(0);
+    private final AtomicInteger syncPeerCount = new AtomicInteger(0);
+    private final AtomicLong startedAtMillis = new AtomicLong(0L);
+    private final AtomicLong updatedAtMillis = new AtomicLong(0L);
+    private final AtomicLong finishedAtMillis = new AtomicLong(0L);
 
+    private volatile Future<?> currentSyncTask;
 
-    public void startSyncBlock() throws InterruptedException, IOException {
-        int localHeight = getCurrentLocalHeight();
-        int networkHeight = getBestNetworkHeight();
+    private final AtomicReference<String> syncMode = new AtomicReference<>("FULL_BLOCKS");
 
-        if (networkHeight <= localHeight) {
-            log.info("本地区块已最新，无需同步。本地高度={}, 网络高度={}", localHeight, networkHeight);
-            return;
-        }
-
-        List<Peer> peers = getConnectedPeers();
-        if (peers.isEmpty()) {
-            log.warn("无可用节点，同步终止");
-            return;
-        }
-
-        // 筛选最优节点（高度足够、响应稳定）
-        List<Peer> optimalPeers = selectOptimalPeers(peers, networkHeight);
-        log.info("开始区块同步：本地高度={}, 网络高度={}, 待同步区块数={}, 可用节点数={}",
-                localHeight, networkHeight, (networkHeight - localHeight), optimalPeers.size());
-
-        if (optimalPeers.isEmpty()) {
-            log.warn("无可用节点，同步终止");
-            return;
-        }
-
-        // 本地路标
-        List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
-        // 找到共同祖先节点（使用第一个最优节点）
-        Peer firstPeer = optimalPeers.getFirst();
-        byte[] bytes = staticSendData(bytesToHex(firstPeer.getId()),
-                ProtocolEnum.P2P_Query_Common_Ancestor,
-                Landmark.serializeList(localLandmarks), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
-
-        P2PMessage deserialize = P2PMessage.deserialize(bytes);
-        if (deserialize == null) {
-            log.error("获取共同祖先节点失败，同步终止");
-            return;
-        }
-
-        byte[] data = deserialize.getData();
-        Landmark commonAncestor = Landmark.deserialize(data);
-        log.info("共同祖先hash{} 共同祖先高度{}", bytesToHex(commonAncestor.getHash()), commonAncestor.getHeight());
-
-        int startHeight = commonAncestor.getHeight() + 1;
-        int totalBlocksToSync = networkHeight - startHeight + 1;
-
-        if (totalBlocksToSync <= 0) {
-            log.info("无需要同步的区块，共同祖先高度={}, 网络高度={}", commonAncestor.getHeight(), networkHeight);
-            return;
-        }
-
-        // ========== 核心修改：给每个节点分配区块高度区间 ==========
-        // 1. 计算每个节点需要同步的区块数
-        int peerCount = optimalPeers.size();
-        int blocksPerPeer = totalBlocksToSync / peerCount;
-        int remainingBlocks = totalBlocksToSync % peerCount;
-
-        log.info("开始分节点同步：总需同步区块数={}, 节点数={}, 每节点基础区块数={}, 剩余区块数={}",
-                totalBlocksToSync, peerCount, blocksPerPeer, remainingBlocks);
-
-        // 2. 逐个节点分配任务并串行执行
-        int currentAssignHeight = startHeight;
-        for (int peerIndex = 0; peerIndex < optimalPeers.size(); peerIndex++) {
-            Peer currentPeer = optimalPeers.get(peerIndex);
-            String peerId = bytesToHex(currentPeer.getId());
-
-            // 计算当前节点需要同步的区块数量（最后一个节点处理剩余区块）
-            int currentPeerBlockCount = blocksPerPeer;
-            if (peerIndex == optimalPeers.size() - 1) {
-                currentPeerBlockCount += remainingBlocks;
-            }
-
-            // 计算当前节点的同步区间
-            int endHeight = currentAssignHeight + currentPeerBlockCount - 1;
-            // 防止超出网络高度
-            endHeight = Math.min(endHeight, networkHeight);
-
-            if (currentAssignHeight > endHeight) {
-                log.info("节点{}无需要同步的区块，跳过", peerId);
-                continue;
-            }
-
-            log.info("给节点{}分配同步任务：高度区间[{}, {}]，共{}个区块",
-                    peerId, currentAssignHeight, endHeight, (endHeight - currentAssignHeight + 1));
-
-            // 3. 串行同步当前节点分配的区块
-            for (int height = currentAssignHeight; height <= endHeight; height++) {
-                // 下载并验证区块（带重试）
-                Block block = fetchBlockFromPeerWithRetry(peerId, height);
-                if (block == null) {
-                    log.error("节点{}下载区块{}失败（已重试{}次），同步终止",
-                            peerId, height, BLOCK_FETCH_RETRY_TIMES);
-                    return;
-                }
-
-                // 验证区块
-                try {
-                    blockChainService.verifyBlock(block);
-                } catch (Exception e) {
-                    log.error("节点{}下载的区块{}验证失败，同步终止", peerId, height, e);
-                    return;
-                }
-
-                // 更新当前处理高度
-                currentProcessHeight.set(height);
-            }
-
-            // 更新下一个节点的起始高度
-            currentAssignHeight = endHeight + 1;
-
-            // 节点切换时休眠，降低网络压力
-            if (peerIndex < optimalPeers.size() - 1) {
-                Thread.sleep(PEER_SWITCH_SLEEP_MS);
-                log.info("切换到下一个节点，已休眠{}毫秒", PEER_SWITCH_SLEEP_MS);
-            }
-
-            log.info("节点{}同步完成：共同步{}个区块（高度区间[{}, {}]）",
-                    peerId, (endHeight - (currentAssignHeight - currentPeerBlockCount) + 1),
-                    (currentAssignHeight - currentPeerBlockCount), endHeight);
-        }
-
-        log.info("所有节点同步完成！最终同步高度：{}，本地最新高度：{}",
-                currentProcessHeight.get(), getCurrentLocalHeight());
+    @Override
+    public SyncProgress startSyncBlock() {
+        return startSync(false);
     }
 
+    @Override
+    public SyncProgress startSyncBlockHeadersFirst() {
+        return startSync(true);
+    }
 
-    /**
-     * 带重试的区块下载
-     */
-    private Block fetchBlockFromPeerWithRetry(String peerId, int height) {
-        int retry = 0;
-        while (retry <= BLOCK_FETCH_RETRY_TIMES) {
-            try {
-                Block block = fetchBlockFromPeer(peerId, height);
-                if (block != null) {
-                    return block;
+    private SyncProgress startSync(boolean headersFirst) {
+        if (!syncRunning.compareAndSet(false, true)) {
+            syncMessage.set("Sync is already running");
+            touchProgress();
+            return getSyncProgress();
+        }
+
+        resetProgress();
+        syncMode.set(headersFirst ? "HEADERS_FIRST" : "FULL_BLOCKS");
+        currentSyncTask = SYNC_EXECUTOR.submit(() -> runSyncSafely(headersFirst));
+        return getSyncProgress();
+    }
+
+    private void runSyncSafely(boolean headersFirst) {
+        try {
+            if (headersFirst) {
+                runHeadersFirstSync();
+            } else {
+                runSync();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            markFailed("Sync interrupted", e);
+        } catch (Exception e) {
+            markFailed("Sync failed: " + e.getMessage(), e);
+        } finally {
+            inFlightBlocks.set(0);
+            inFlightHeaders.set(0);
+            syncRunning.set(false);
+            finishedAtMillis.compareAndSet(0L, System.currentTimeMillis());
+            touchProgress();
+        }
+    }
+
+    private void runSync() throws Exception {
+        setStage("STARTING", "Scanning local chain and connected peers");
+
+        int currentLocalHeight = getCurrentLocalHeight();
+        int bestNetworkHeight = getBestNetworkHeight();
+        List<Peer> connectedPeers = getConnectedPeers();
+        refreshPeerStates(connectedPeers);
+
+        localHeightAtStart.set(currentLocalHeight);
+        localHeight.set(currentLocalHeight);
+        networkHeight.set(bestNetworkHeight);
+        targetHeight.set(bestNetworkHeight);
+        connectedPeerCount.set(connectedPeers.size());
+        updateBestPeerFields();
+
+        if (bestNetworkHeight <= currentLocalHeight) {
+            totalBlocks.set(0);
+            verifiedBlocks.set(0);
+            setStage("COMPLETED", "Local chain is already at the best known height");
+            return;
+        }
+
+        if (connectedPeers.isEmpty()) {
+            throw new IllegalStateException("No connected peers are available");
+        }
+
+        List<Peer> syncPeers = selectOptimalPeers(connectedPeers, currentLocalHeight + 1, bestNetworkHeight);
+        syncPeerCount.set(syncPeers.size());
+        if (syncPeers.isEmpty()) {
+            throw new IllegalStateException("No connected peer can serve the required block range");
+        }
+
+        setStage("LOCATING_COMMON_ANCESTOR", "Locating common ancestor");
+        Landmark commonAncestor = queryCommonAncestor(syncPeers, currentLocalHeight);
+        if (commonAncestor == null) {
+            throw new IllegalStateException("Unable to locate common ancestor from connected peers");
+        }
+
+        commonAncestorHeight.set(commonAncestor.getHeight());
+        int firstHeight = commonAncestor.getHeight() + 1;
+        int blocksToSync = bestNetworkHeight - firstHeight + 1;
+        startHeight.set(firstHeight);
+        totalBlocks.set(Math.max(0, blocksToSync));
+
+        if (blocksToSync <= 0) {
+            setStage("COMPLETED", "No blocks need to be synchronized");
+            return;
+        }
+
+        log.info("Start block sync: localHeight={}, networkHeight={}, commonAncestor={}, range=[{}, {}], peers={}",
+                currentLocalHeight, bestNetworkHeight, commonAncestor.getHeight(), firstHeight, bestNetworkHeight,
+                syncPeers.size());
+
+        setStage("DOWNLOADING", "Downloading blocks");
+        syncBlocks(syncPeers, firstHeight, bestNetworkHeight);
+        localHeight.set(getCurrentLocalHeight());
+        setStage("COMPLETED", "Block sync completed");
+    }
+
+    private void runHeadersFirstSync() throws Exception {
+        setStage("STARTING", "Scanning local chain and connected peers");
+
+        int currentLocalHeight = getCurrentLocalHeight();
+        int bestNetworkHeight = getBestNetworkHeight();
+        List<Peer> connectedPeers = getConnectedPeers();
+        refreshPeerStates(connectedPeers);
+
+        localHeightAtStart.set(currentLocalHeight);
+        localHeight.set(currentLocalHeight);
+        networkHeight.set(bestNetworkHeight);
+        targetHeight.set(bestNetworkHeight);
+        connectedPeerCount.set(connectedPeers.size());
+        updateBestPeerFields();
+
+        if (bestNetworkHeight <= currentLocalHeight) {
+            totalBlocks.set(0);
+            totalHeaders.set(0);
+            verifiedBlocks.set(0);
+            verifiedHeaders.set(0);
+            setStage("COMPLETED", "Local chain is already at the best known height");
+            return;
+        }
+
+        if (connectedPeers.isEmpty()) {
+            throw new IllegalStateException("No connected peers are available");
+        }
+
+        List<Peer> syncPeers = selectOptimalPeers(connectedPeers, currentLocalHeight + 1, bestNetworkHeight);
+        syncPeerCount.set(syncPeers.size());
+        if (syncPeers.isEmpty()) {
+            throw new IllegalStateException("No connected peer can serve the required block range");
+        }
+
+        setStage("LOCATING_COMMON_ANCESTOR", "Locating common ancestor");
+        Landmark commonAncestor = queryCommonAncestor(syncPeers, currentLocalHeight);
+        if (commonAncestor == null) {
+            throw new IllegalStateException("Unable to locate common ancestor from connected peers");
+        }
+
+        commonAncestorHeight.set(commonAncestor.getHeight());
+        int firstHeight = commonAncestor.getHeight() + 1;
+        int blocksToSync = bestNetworkHeight - firstHeight + 1;
+        startHeight.set(firstHeight);
+        totalBlocks.set(Math.max(0, blocksToSync));
+        totalHeaders.set(Math.max(0, blocksToSync));
+
+        if (blocksToSync <= 0) {
+            setStage("COMPLETED", "No blocks need to be synchronized");
+            return;
+        }
+
+        log.info("Start headers-first sync: localHeight={}, networkHeight={}, commonAncestor={}, range=[{}, {}], peers={}",
+                currentLocalHeight, bestNetworkHeight, commonAncestor.getHeight(), firstHeight, bestNetworkHeight,
+                syncPeers.size());
+
+        setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
+        List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, firstHeight, bestNetworkHeight);
+        if (headerChain.size() != blocksToSync) {
+            throw new IllegalStateException("Header chain is incomplete: expected=" + blocksToSync
+                    + ", actual=" + headerChain.size());
+        }
+
+        setStage("DOWNLOADING", "Downloading blocks for verified headers");
+        syncBlocksByHeaders(syncPeers, headerChain);
+        localHeight.set(getCurrentLocalHeight());
+        setStage("COMPLETED", "Headers-first block sync completed");
+    }
+
+    private List<HeaderSyncRecord> syncHeaders(
+            List<Peer> syncPeers,
+            Landmark commonAncestor,
+            int firstHeight,
+            int lastHeight
+    ) {
+        List<HeaderSyncRecord> headerChain = new ArrayList<>();
+        byte[] expectedPreviousHash = commonAncestor.getHash();
+        UInt256 runningChainWork = blockChainService.getChainWorkByHash(expectedPreviousHash);
+        int nextHeight = firstHeight;
+
+        while (nextHeight <= lastHeight) {
+            List<BlockHeadersPayload.Entry> entries = fetchHeaderBatchFromAnyPeer(syncPeers, nextHeight, lastHeight);
+            if (entries.isEmpty()) {
+                String error = "Unable to download headers starting at height " + nextHeight;
+                addRecentError(error);
+                throw new IllegalStateException(error);
+            }
+
+            for (BlockHeadersPayload.Entry entry : entries) {
+                if (entry.height() != nextHeight) {
+                    String error = "Unexpected header height: expected=" + nextHeight + ", actual=" + entry.height();
+                    addRecentError(error);
+                    throw new IllegalStateException(error);
                 }
-                retry++;
-                log.warn("下载区块{}失败，重试第{}次（节点{}）", height, retry, peerId);
-                Thread.sleep(500L * retry); // 指数退避重试
-            } catch (InterruptedException e) {
-                log.error("下载区块{}被中断（节点{}）", height, peerId, e);
-                Thread.currentThread().interrupt();
-                return null;
-            } catch (Exception e) {
-                retry++;
-                log.error("下载区块{}异常，重试第{}次（节点{}）", height, retry, peerId, e);
+
+                HeaderSyncRecord record = validateAndStoreHeader(entry, expectedPreviousHash, runningChainWork);
+                headerChain.add(record);
+                expectedPreviousHash = record.hash();
+                runningChainWork = record.chainWork();
+                downloadedHeaders.incrementAndGet();
+                verifiedHeaders.incrementAndGet();
+                syncMessage.set("Verified header " + record.height());
+                touchProgress();
+
+                nextHeight++;
+                if (nextHeight > lastHeight) {
+                    break;
+                }
+            }
+        }
+
+        return headerChain;
+    }
+
+    private HeaderSyncRecord validateAndStoreHeader(
+            BlockHeadersPayload.Entry entry,
+            byte[] expectedPreviousHash,
+            UInt256 previousChainWork
+    ) {
+        BlockHeader header = entry.header();
+        if (header == null) {
+            throw new IllegalStateException("Header is null at height " + entry.height());
+        }
+        if (!Arrays.equals(expectedPreviousHash, header.getPreviousHash())) {
+            throw new IllegalStateException("Header " + entry.height() + " does not connect to previous header");
+        }
+        if (!header.verifyProofOfWork(false)) {
+            throw new IllegalStateException("Header " + entry.height() + " failed proof-of-work validation");
+        }
+        long currentTime = System.currentTimeMillis() / 1000;
+        if (header.getTime() > currentTime + 7200) {
+            throw new IllegalStateException("Header " + entry.height() + " timestamp is too far in the future");
+        }
+
+        UInt256 chainWork = previousChainWork.add(UInt256.fromBigInteger(header.getWork()));
+        if (!blockChainService.addBlockHeaderToStore(header, entry.height(), chainWork)) {
+            throw new IllegalStateException("Failed to store header " + entry.height());
+        }
+        return new HeaderSyncRecord(entry.height(), header.calculateHash(), header, chainWork);
+    }
+
+    private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromAnyPeer(
+            List<Peer> syncPeers,
+            int startHeight,
+            int lastHeight
+    ) {
+        List<Peer> candidates = candidatesForHeight(syncPeers, startHeight);
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+
+        int stopHeight = Math.min(lastHeight, startHeight + MAX_HEADERS_PER_REQUEST - 1);
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+
+        for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
+            for (int i = 0; i < candidates.size(); i++) {
+                Peer peer = candidates.get((startIndex + i) % candidates.size());
+                String peerId = peerIdHex(peer);
+                List<BlockHeadersPayload.Entry> headers = fetchHeaderBatchFromPeer(peerId, startHeight, stopHeight);
+                if (!headers.isEmpty()) {
+                    trackerFor(peer).status.set("HEADERS");
+                    return headers;
+                }
+                trackerFor(peer).recordFailedRequest("Headers starting at " + startHeight + " returned empty response");
+            }
+
+            if (attempt < BLOCK_FETCH_RETRY_TIMES) {
                 try {
-                    Thread.sleep(500L * retry);
-                } catch (InterruptedException ie) {
+                    Thread.sleep(300L * (attempt + 1));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return List.of();
+                }
+            }
+        }
+        return List.of();
+    }
+
+    private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromPeer(String peerId, int startHeight, int stopHeight) {
+        Semaphore semaphore = peerSemaphores.computeIfAbsent(
+                peerId,
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
+        );
+
+        boolean acquired = false;
+        boolean headerSlotTracked = false;
+        try {
+            acquired = semaphore.tryAcquire(BLOCK_FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!acquired) {
+                return List.of();
+            }
+
+            inFlightHeaders.incrementAndGet();
+            headerSlotTracked = true;
+            byte[] bytes = staticSendData(
+                    peerId,
+                    ProtocolEnum.P2P_Query_Block_Headers,
+                    BlockHeadersPayload.serializeRequest(startHeight, stopHeight, MAX_HEADERS_PER_REQUEST),
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
+            );
+            if (bytes == null || bytes.length == 0) {
+                return List.of();
+            }
+
+            P2PMessage message = P2PMessage.deserialize(bytes);
+            if (message == null || message.getData() == null || message.getData().length == 0) {
+                return List.of();
+            }
+
+            return BlockHeadersPayload.deserializeResponse(message.getData());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (Exception e) {
+            log.warn("Fetch headers failed: peer={}, startHeight={}, stopHeight={}", peerId, startHeight, stopHeight, e);
+            return List.of();
+        } finally {
+            if (headerSlotTracked) {
+                inFlightHeaders.decrementAndGet();
+            }
+            if (acquired) {
+                semaphore.release();
+            }
+        }
+    }
+
+    private void syncBlocks(List<Peer> syncPeers, int firstHeight, int lastHeight) throws Exception {
+        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(SYNC_EXECUTOR);
+        List<Future<BlockFetchResult>> futures = new ArrayList<>();
+        NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
+
+        int nextSubmitHeight = firstHeight;
+        int nextVerifyHeight = firstHeight;
+        int inFlight = 0;
+
+        try {
+            while (nextVerifyHeight <= lastHeight) {
+                while (nextSubmitHeight <= lastHeight && inFlight < MAX_IN_FLIGHT_BLOCKS) {
+                    int height = nextSubmitHeight++;
+                    Future<BlockFetchResult> future = completionService.submit(fetchTask(syncPeers, height));
+                    futures.add(future);
+                    inFlight++;
+                    inFlightBlocks.incrementAndGet();
+                }
+
+                Future<BlockFetchResult> completed = completionService.poll(1, TimeUnit.SECONDS);
+                if (completed == null) {
+                    localHeight.set(getCurrentLocalHeight());
+                    touchProgress();
+                    continue;
+                }
+
+                inFlight--;
+                inFlightBlocks.decrementAndGet();
+                BlockFetchResult result = completed.get();
+                if (!result.success()) {
+                    throw new IllegalStateException("Failed to fetch block " + result.height() + ": " + result.error());
+                }
+
+                pendingBlocks.put(result.height(), result);
+                while (pendingBlocks.containsKey(nextVerifyHeight)) {
+                    BlockFetchResult pending = pendingBlocks.remove(nextVerifyHeight);
+                    verifyFetchedBlock(pending);
+                    nextVerifyHeight++;
+                }
+            }
+        } catch (Exception e) {
+            for (Future<BlockFetchResult> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                }
+            }
+            throw e;
+        }
+    }
+
+    private void syncBlocksByHeaders(List<Peer> syncPeers, List<HeaderSyncRecord> headerChain) throws Exception {
+        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(SYNC_EXECUTOR);
+        List<Future<BlockFetchResult>> futures = new ArrayList<>();
+        NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
+
+        int nextSubmitIndex = 0;
+        int nextVerifyIndex = 0;
+        int inFlight = 0;
+
+        try {
+            while (nextVerifyIndex < headerChain.size()) {
+                while (nextSubmitIndex < headerChain.size() && inFlight < MAX_IN_FLIGHT_BLOCKS) {
+                    HeaderSyncRecord record = headerChain.get(nextSubmitIndex++);
+                    Future<BlockFetchResult> future = completionService.submit(fetchTask(syncPeers, record));
+                    futures.add(future);
+                    inFlight++;
+                    inFlightBlocks.incrementAndGet();
+                }
+
+                Future<BlockFetchResult> completed = completionService.poll(1, TimeUnit.SECONDS);
+                if (completed == null) {
+                    localHeight.set(getCurrentLocalHeight());
+                    touchProgress();
+                    continue;
+                }
+
+                inFlight--;
+                inFlightBlocks.decrementAndGet();
+                BlockFetchResult result = completed.get();
+                if (!result.success()) {
+                    throw new IllegalStateException("Failed to fetch block " + result.height() + ": " + result.error());
+                }
+
+                pendingBlocks.put(result.height(), result);
+                while (nextVerifyIndex < headerChain.size()) {
+                    HeaderSyncRecord expected = headerChain.get(nextVerifyIndex);
+                    BlockFetchResult pending = pendingBlocks.get(expected.height());
+                    if (pending == null) {
+                        break;
+                    }
+                    pendingBlocks.remove(expected.height());
+                    verifyFetchedBlock(pending);
+                    nextVerifyIndex++;
+                }
+            }
+        } catch (Exception e) {
+            for (Future<BlockFetchResult> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                }
+            }
+            throw e;
+        }
+    }
+
+    private Callable<BlockFetchResult> fetchTask(List<Peer> syncPeers, int height) {
+        return () -> fetchBlockFromAnyPeer(syncPeers, height);
+    }
+
+    private Callable<BlockFetchResult> fetchTask(List<Peer> syncPeers, HeaderSyncRecord record) {
+        return () -> fetchBlockByHashFromAnyPeer(syncPeers, record);
+    }
+
+    private BlockFetchResult fetchBlockFromAnyPeer(List<Peer> syncPeers, int height) {
+        List<Peer> candidates = candidatesForHeight(syncPeers, height);
+        if (candidates.isEmpty()) {
+            failedBlocks.incrementAndGet();
+            String error = "No peer has block height " + height;
+            addRecentError(error);
+            return BlockFetchResult.failed(height, "", error);
+        }
+
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+        String lastPeerId = "";
+        String lastError = "";
+
+        for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
+            for (int i = 0; i < candidates.size(); i++) {
+                Peer peer = candidates.get((startIndex + i) % candidates.size());
+                String peerId = peerIdHex(peer);
+                lastPeerId = peerId;
+                PeerSyncTracker tracker = trackerFor(peer);
+                tracker.assign(height);
+
+                long startNanos = System.nanoTime();
+                Block block = fetchBlockFromPeer(peerId, height);
+                long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+                if (block != null) {
+                    downloadedBlocks.incrementAndGet();
+                    tracker.recordDownloaded(height);
+                    syncMessage.set("Downloaded block " + height + " from " + shortPeerId(peerId));
+                    touchProgress();
+                    return BlockFetchResult.success(height, peerId, block, elapsedMillis);
+                }
+
+                lastError = "empty response";
+                tracker.recordFailedRequest("Block " + height + " returned empty response");
+            }
+
+            if (attempt < BLOCK_FETCH_RETRY_TIMES) {
+                try {
+                    Thread.sleep(300L * (attempt + 1));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    failedBlocks.incrementAndGet();
+                    return BlockFetchResult.failed(height, lastPeerId, "interrupted");
+                }
+            }
+        }
+
+        failedBlocks.incrementAndGet();
+        String error = "Unable to download block " + height + " after retries, lastError=" + lastError;
+        addRecentError(error);
+        return BlockFetchResult.failed(height, lastPeerId, error);
+    }
+
+    private BlockFetchResult fetchBlockByHashFromAnyPeer(List<Peer> syncPeers, HeaderSyncRecord record) {
+        Block existing = blockChainService.getBlockByHash(record.hash());
+        if (existing != null) {
+            return BlockFetchResult.success(record.height(), "local", existing, 0L, record.hash());
+        }
+
+        List<Peer> candidates = candidatesForHeight(syncPeers, record.height());
+        if (candidates.isEmpty()) {
+            failedBlocks.incrementAndGet();
+            String error = "No peer can serve block height " + record.height();
+            addRecentError(error);
+            return BlockFetchResult.failed(record.height(), "", error);
+        }
+
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+        String lastPeerId = "";
+        String lastError = "";
+
+        for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
+            for (int i = 0; i < candidates.size(); i++) {
+                Peer peer = candidates.get((startIndex + i) % candidates.size());
+                String peerId = peerIdHex(peer);
+                lastPeerId = peerId;
+                PeerSyncTracker tracker = trackerFor(peer);
+                tracker.assign(record.height());
+
+                long startNanos = System.nanoTime();
+                Block block = fetchBlockByHashFromPeer(peerId, record.hash());
+                long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+                if (block != null && Arrays.equals(record.hash(), block.getHash())) {
+                    downloadedBlocks.incrementAndGet();
+                    tracker.recordDownloaded(record.height());
+                    syncMessage.set("Downloaded block " + record.height() + " from " + shortPeerId(peerId));
+                    touchProgress();
+                    return BlockFetchResult.success(record.height(), peerId, block, elapsedMillis, record.hash());
+                }
+
+                lastError = block == null ? "empty response" : "hash mismatch";
+                tracker.recordFailedRequest("Block " + record.height() + " " + lastError);
+            }
+
+            if (attempt < BLOCK_FETCH_RETRY_TIMES) {
+                try {
+                    Thread.sleep(300L * (attempt + 1));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    failedBlocks.incrementAndGet();
+                    return BlockFetchResult.failed(record.height(), lastPeerId, "interrupted");
+                }
+            }
+        }
+
+        failedBlocks.incrementAndGet();
+        String error = "Unable to download block " + record.height() + " by hash after retries, lastError=" + lastError;
+        addRecentError(error);
+        return BlockFetchResult.failed(record.height(), lastPeerId, error);
+    }
+
+    private void verifyFetchedBlock(BlockFetchResult result) {
+        setStage("VERIFYING", "Verifying block " + result.height());
+        try {
+            if (result.expectedHash() != null && !Arrays.equals(result.expectedHash(), result.block().getHash())) {
+                failedBlocks.incrementAndGet();
+                throw new IllegalStateException("Block " + result.height() + " does not match verified header hash");
+            }
+            boolean verified = blockChainService.verifyBlock(result.block());
+            if (!verified) {
+                failedBlocks.incrementAndGet();
+                PeerSyncTracker tracker = peerStates.get(result.peerId());
+                if (tracker != null) {
+                    tracker.recordFailedRequest("Block " + result.height() + " failed validation");
+                }
+                throw new IllegalStateException("Block " + result.height() + " failed validation");
+            }
+
+            verifiedBlocks.incrementAndGet();
+            localHeight.set(Math.max(getCurrentLocalHeight(), result.height()));
+            PeerSyncTracker tracker = peerStates.get(result.peerId());
+            if (tracker != null) {
+                tracker.recordVerified(result.height());
+            }
+            syncMessage.set("Verified block " + result.height());
+            syncStatus.set("DOWNLOADING");
+            touchProgress();
+        } catch (RuntimeException e) {
+            addRecentError(e.getMessage());
+            throw e;
+        }
+    }
+
+    private Block fetchBlockFromPeer(String peerId, int height) {
+        Semaphore semaphore = peerSemaphores.computeIfAbsent(
+                peerId,
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
+        );
+
+        boolean acquired = false;
+        try {
+            acquired = semaphore.tryAcquire(BLOCK_FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!acquired) {
+                log.warn("Timed out waiting for peer request slot: peer={}, height={}", peerId, height);
+                return null;
+            }
+
+            byte[] bytes = staticSendData(
+                    peerId,
+                    ProtocolEnum.P2P_Query_Block_By_Height,
+                    RocksDb.intToBytes(height),
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
+            );
+            if (bytes == null || bytes.length == 0) {
+                return null;
+            }
+
+            P2PMessage message = P2PMessage.deserialize(bytes);
+            if (message == null || message.getData() == null || message.getData().length == 0) {
+                return null;
+            }
+
+            return Block.deserialize(message.getData());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            log.warn("Fetch block failed: peer={}, height={}", peerId, height, e);
+            return null;
+        } finally {
+            if (acquired) {
+                semaphore.release();
+            }
+        }
+    }
+
+    private Block fetchBlockByHashFromPeer(String peerId, byte[] hash) {
+        Semaphore semaphore = peerSemaphores.computeIfAbsent(
+                peerId,
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
+        );
+
+        boolean acquired = false;
+        try {
+            acquired = semaphore.tryAcquire(BLOCK_FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!acquired) {
+                log.warn("Timed out waiting for peer request slot: peer={}, hash={}", peerId, bytesToHex(hash));
+                return null;
+            }
+
+            byte[] bytes = staticSendData(
+                    peerId,
+                    ProtocolEnum.P2P_Query_Block_By_Hash,
+                    hash,
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
+            );
+            if (bytes == null || bytes.length == 0) {
+                return null;
+            }
+
+            P2PMessage message = P2PMessage.deserialize(bytes);
+            if (message == null || message.getData() == null || message.getData().length == 0) {
+                return null;
+            }
+
+            return Block.deserialize(message.getData());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            log.warn("Fetch block by hash failed: peer={}, hash={}", peerId, bytesToHex(hash), e);
+            return null;
+        } finally {
+            if (acquired) {
+                semaphore.release();
+            }
+        }
+    }
+
+    private Block fetchBlockFromPeerWithRetry(String peerId, int height) {
+        for (int retry = 0; retry <= BLOCK_FETCH_RETRY_TIMES; retry++) {
+            Block block = fetchBlockFromPeer(peerId, height);
+            if (block != null) {
+                return block;
+            }
+            if (retry < BLOCK_FETCH_RETRY_TIMES) {
+                try {
+                    Thread.sleep(300L * (retry + 1));
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return null;
                 }
@@ -238,152 +814,442 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
-    /**
-     * 从指定节点获取单个区块（基础方法，保留原有逻辑）
-     */
-    private Block fetchBlockFromPeer(String peerId, int height) {
-        try {
-            byte[] bytes = staticSendData(peerId,
-                    ProtocolEnum.P2P_Query_Block_By_Height,
-                    RocksDb.intToBytes(height), BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
-            if (bytes == null || bytes.length == 0) {
-                return null;
+    private Landmark queryCommonAncestor(List<Peer> peers, int currentLocalHeight) {
+        List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(currentLocalHeight);
+        byte[] payload = Landmark.serializeList(localLandmarks);
+
+        for (Peer peer : peers) {
+            String peerId = peerIdHex(peer);
+            try {
+                byte[] bytes = staticSendData(
+                        peerId,
+                        ProtocolEnum.P2P_Query_Common_Ancestor,
+                        payload,
+                        BLOCK_FETCH_TIMEOUT_SECONDS * 1000
+                );
+                if (bytes == null || bytes.length == 0) {
+                    trackerFor(peer).recordFailedRequest("Common ancestor returned empty response");
+                    continue;
+                }
+
+                P2PMessage message = P2PMessage.deserialize(bytes);
+                if (message == null || message.getData() == null || message.getData().length == 0) {
+                    trackerFor(peer).recordFailedRequest("Common ancestor response is invalid");
+                    continue;
+                }
+
+                Landmark commonAncestor = Landmark.deserialize(message.getData());
+                if (commonAncestor != null) {
+                    trackerFor(peer).status.set("READY");
+                    return commonAncestor;
+                }
+            } catch (Exception e) {
+                trackerFor(peer).recordFailedRequest("Common ancestor query failed: " + e.getMessage());
+                log.warn("Common ancestor query failed: peer={}", peerId, e);
             }
-            P2PMessage deserialize = P2PMessage.deserialize(bytes);
-            if (deserialize != null && deserialize.getData() != null) {
-                return Block.deserialize(deserialize.getData());
-            }
-        } catch (Exception e) {
-            log.error("从节点{}获取区块{}异常", peerId, height, e);
         }
+
         return null;
     }
 
+    private List<Peer> selectOptimalPeers(List<Peer> peers, int neededStartHeight, int bestNetworkHeight) {
+        return peers.stream()
+                .filter(peer -> peer.getId() != null)
+                .filter(Peer::isOnline)
+                .filter(peer -> peer.getHeight() >= neededStartHeight)
+                .sorted(Comparator
+                        .comparingInt(Peer::getHeight).reversed()
+                        .thenComparing(Peer::getLastSeen, Comparator.reverseOrder()))
+                .limit(MAX_SYNC_PEERS)
+                .peek(peer -> trackerFor(peer).status.set(peer.getHeight() >= bestNetworkHeight ? "READY" : "PARTIAL"))
+                .collect(Collectors.toList());
+    }
 
+    private List<Peer> candidatesForHeight(List<Peer> peers, int height) {
+        return peers.stream()
+                .filter(peer -> peer.getId() != null)
+                .filter(peer -> peer.getHeight() >= height)
+                .sorted(Comparator.comparingInt(Peer::getHeight).reversed())
+                .collect(Collectors.toList());
+    }
 
-
+    @Override
     public int getCurrentLocalHeight() {
         return mainTipBlock != null ? mainTipBlock.getHeight() : 0;
     }
 
+    @Override
     public int getBestNetworkHeight() {
-        List<Peer> onlineNodes = routingTable.getOnlineNodes();
-        return onlineNodes.stream()
+        return Optional.ofNullable(routingTable.getOnlineNodes())
+                .orElseGet(List::of)
+                .stream()
+                .filter(peer -> peer.getId() != null)
                 .mapToInt(Peer::getHeight)
                 .max()
                 .orElse(getCurrentLocalHeight());
     }
 
-
+    @Override
     public Peer getBestPeer() {
-        List<Peer> onlineNodes = routingTable.getOnlineNodes();
-
-        if (onlineNodes == null || onlineNodes.isEmpty()) {
+        List<Peer> onlineNodes = Optional.ofNullable(routingTable.getOnlineNodes()).orElseGet(List::of);
+        if (onlineNodes.isEmpty()) {
             return null;
         }
 
-        // 第一步：找到最高高度值
-        long maxHeight = onlineNodes.stream()
-                .mapToLong(Peer::getHeight)
+        int maxHeight = onlineNodes.stream()
+                .mapToInt(Peer::getHeight)
                 .max()
                 .orElse(0);
 
-        // 第二步：收集所有高度等于maxHeight的节点
         List<Peer> maxHeightPeers = onlineNodes.stream()
                 .filter(peer -> peer.getHeight() == maxHeight)
+                .filter(peer -> peer.getId() != null)
                 .toList();
 
-        // 第三步：随机返回一个最高高度节点（也可返回第一个）
-        Random random = new Random();
-        return maxHeightPeers.get(random.nextInt(maxHeightPeers.size()));
+        if (maxHeightPeers.isEmpty()) {
+            return null;
+        }
+        return maxHeightPeers.get(new Random().nextInt(maxHeightPeers.size()));
     }
 
-
-
+    @Override
     public List<Peer> getConnectedPeers() {
-        List<Peer> onlineNodes = routingTable.getOnlineNodes();
-        return onlineNodes.stream()
-                .filter(peer -> peer.getId() != null && peer.getHeight() > 0 && peer.isOnline())
+        return Optional.ofNullable(routingTable.getOnlineNodes())
+                .orElseGet(List::of)
+                .stream()
+                .filter(peer -> peer.getId() != null && peer.isOnline())
                 .collect(Collectors.toList());
     }
 
-
+    @Override
     public Block getLatestBlockFromOnlinePeers() {
-        List<Peer> connectedPeers = getConnectedPeers();
-        if (connectedPeers.isEmpty()) {
-            log.warn("没有可用的在线节点");
+        Peer bestPeer = getBestPeer();
+        if (bestPeer == null || bestPeer.getId() == null) {
+            log.warn("No online peer is available");
             return null;
         }
 
-        // 选择最优节点获取最新区块
-        Peer bestPeer = selectOptimalPeers(connectedPeers, getBestNetworkHeight()).get(0);
-        try {
-            int latestHeight = bestPeer.getHeight();
-            return fetchBlockFromPeerWithRetry(bytesToHex(bestPeer.getId()), latestHeight);
-        } catch (Exception e) {
-            log.error("获取最新区块时发生异常", e);
-            return null;
-        }
+        return fetchBlockFromPeerWithRetry(peerIdHex(bestPeer), bestPeer.getHeight());
+    }
+
+    @Override
+    public SyncProgress getSyncProgress() {
+        List<Peer> connectedPeers = getConnectedPeers();
+        refreshPeerStates(connectedPeers);
+        connectedPeerCount.set(connectedPeers.size());
+        updateBestPeerFields();
+
+        boolean headerStage = "HEADERS_FIRST".equals(syncMode.get())
+                && ("DOWNLOADING_HEADERS".equals(syncStatus.get()) || "VERIFYING_HEADERS".equals(syncStatus.get()));
+        int total = headerStage ? totalHeaders.get() : totalBlocks.get();
+        int verified = headerStage ? verifiedHeaders.get() : verifiedBlocks.get();
+        double percent = total <= 0 ? ("COMPLETED".equals(syncStatus.get()) ? 100.0 : 0.0)
+                : Math.min(100.0, verified * 100.0 / total);
+
+        long startedAt = startedAtMillis.get();
+        long now = System.currentTimeMillis();
+        long elapsedMillis = startedAt > 0 ? Math.max(1L, now - startedAt) : 0L;
+        double blocksPerSecond = elapsedMillis > 0 ? verified / (elapsedMillis / 1000.0) : 0.0;
+        int remaining = Math.max(0, total - verified);
+        long estimatedSecondsRemaining = blocksPerSecond > 0.0
+                ? (long) Math.ceil(remaining / blocksPerSecond)
+                : -1L;
+
+        return new SyncProgress(
+                syncRunning.get(),
+                syncStatus.get(),
+                syncMode.get(),
+                syncMessage.get(),
+                startedAtMillis.get(),
+                updatedAtMillis.get(),
+                finishedAtMillis.get(),
+                localHeightAtStart.get(),
+                localHeight.get(),
+                networkHeight.get(),
+                commonAncestorHeight.get(),
+                startHeight.get(),
+                targetHeight.get(),
+                totalBlocks.get(),
+                totalHeaders.get(),
+                downloadedBlocks.get(),
+                downloadedHeaders.get(),
+                verifiedBlocks.get(),
+                verifiedHeaders.get(),
+                failedBlocks.get(),
+                inFlightBlocks.get(),
+                inFlightHeaders.get(),
+                percent,
+                blocksPerSecond,
+                estimatedSecondsRemaining,
+                connectedPeerCount.get(),
+                syncPeerCount.get(),
+                bestPeerId.get(),
+                bestPeerHeight.get(),
+                List.copyOf(recentErrors),
+                getSyncPeerStates()
+        );
+    }
+
+    @Override
+    public List<SyncPeerState> getSyncPeerStates() {
+        List<Peer> connectedPeers = getConnectedPeers();
+        refreshPeerStates(connectedPeers);
+
+        Set<String> onlineIds = connectedPeers.stream()
+                .map(this::peerIdHex)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        return peerStates.values().stream()
+                .filter(tracker -> onlineIds.contains(tracker.peerId) || tracker.hasActivity())
+                .map(tracker -> tracker.snapshot(onlineIds.contains(tracker.peerId)))
+                .sorted(Comparator
+                        .comparing(SyncPeerState::online).reversed()
+                        .thenComparing(SyncPeerState::height, Comparator.reverseOrder())
+                        .thenComparing(SyncPeerState::peerId))
+                .toList();
     }
 
     @PreDestroy
     public void shutdown() {
-        log.info("开始关闭区块同步服务，清理相关资源...");
+        log.info("Shutting down block sync service");
+        Future<?> task = currentSyncTask;
+        if (task != null && !task.isDone()) {
+            task.cancel(true);
+        }
 
-        // 1. 优雅关闭同步线程池
-        if (SYNC_EXECUTOR != null && !SYNC_EXECUTOR.isShutdown()) {
+        if (!SYNC_EXECUTOR.isShutdown()) {
+            SYNC_EXECUTOR.shutdown();
             try {
-                // 第一步：发起有序关闭，不再接受新任务
-                SYNC_EXECUTOR.shutdown();
-                log.info("已发起线程池有序关闭，等待剩余任务完成...");
-
-                // 第二步：等待指定时间（30秒）让现有任务完成，超时则强制关闭
                 if (!SYNC_EXECUTOR.awaitTermination(30, TimeUnit.SECONDS)) {
-                    log.warn("线程池等待超时，强制关闭剩余任务");
-                    // 强制关闭并返回未执行的任务
-                    List<Runnable> unfinishedTasks = SYNC_EXECUTOR.shutdownNow();
-                    log.warn("强制关闭后，未执行的任务数：{}", unfinishedTasks.size());
+                    SYNC_EXECUTOR.shutdownNow();
                 }
-
-                log.info("区块同步线程池已成功关闭");
             } catch (InterruptedException e) {
-                log.error("线程池关闭过程被中断，强制关闭剩余任务", e);
-                // 恢复线程中断状态，遵循中断规范
                 Thread.currentThread().interrupt();
-                // 强制关闭
                 SYNC_EXECUTOR.shutdownNow();
             }
         }
 
-        // 2. 清理并发控制资源（避免内存泄漏）
         peerSemaphores.clear();
-
-        // 3. 清理区块缓存，释放内存
-        downloadedBlocks.clear();
-        cachedBlocksSize.set(0);
-        currentProcessHeight.set(0);
-
-        log.info("区块同步服务资源清理完成，shutdown执行完毕");
+        peerStates.clear();
+        recentErrors.clear();
     }
 
-    /**
-     * 筛选最优节点：高度足够、在线状态稳定
-     */
-    private List<Peer> selectOptimalPeers(List<Peer> peers, int networkHeight) {
-        return peers.stream()
-                // 过滤：节点高度≥网络最高高度（保证有完整数据）
-                .filter(peer -> peer.getHeight() >= networkHeight)
-                // 过滤：节点ID有效、连接状态正常（可扩展响应速度筛选）
-                .filter(peer -> peer.getId() != null && peer.isOnline())
-                // 按节点高度降序、响应时间升序排序（优先选数据完整、响应快的节点）
-                .sorted((p1, p2) -> {
-                    if (p1.getHeight() != p2.getHeight()) {
-                        return Integer.compare(p2.getHeight(), p1.getHeight());
-                    }
-                    // 可扩展：根据历史响应时间排序
-                    return 0;
-                })
-                .collect(Collectors.toList());
+    private void resetProgress() {
+        long now = System.currentTimeMillis();
+        peerCursor.set(0);
+        peerStates.clear();
+        recentErrors.clear();
+        syncStatus.set("STARTING");
+        syncMessage.set("Starting block sync");
+        bestPeerId.set("");
+        bestPeerHeight.set(0);
+        localHeightAtStart.set(getCurrentLocalHeight());
+        localHeight.set(getCurrentLocalHeight());
+        networkHeight.set(getBestNetworkHeight());
+        commonAncestorHeight.set(0);
+        startHeight.set(0);
+        targetHeight.set(networkHeight.get());
+        totalBlocks.set(0);
+        totalHeaders.set(0);
+        downloadedBlocks.set(0);
+        downloadedHeaders.set(0);
+        verifiedBlocks.set(0);
+        verifiedHeaders.set(0);
+        failedBlocks.set(0);
+        inFlightBlocks.set(0);
+        inFlightHeaders.set(0);
+        connectedPeerCount.set(0);
+        syncPeerCount.set(0);
+        startedAtMillis.set(now);
+        updatedAtMillis.set(now);
+        finishedAtMillis.set(0L);
     }
 
+    private void markFailed(String message, Exception e) {
+        syncStatus.set("FAILED");
+        syncMessage.set(message);
+        addRecentError(message);
+        finishedAtMillis.set(System.currentTimeMillis());
+        log.error(message, e);
+    }
+
+    private void setStage(String status, String message) {
+        syncStatus.set(status);
+        syncMessage.set(message);
+        touchProgress();
+    }
+
+    private void touchProgress() {
+        updatedAtMillis.set(System.currentTimeMillis());
+    }
+
+    private void addRecentError(String error) {
+        if (error == null || error.isBlank()) {
+            return;
+        }
+        recentErrors.addFirst(System.currentTimeMillis() + " " + error);
+        while (recentErrors.size() > RECENT_ERROR_LIMIT) {
+            recentErrors.pollLast();
+        }
+        touchProgress();
+    }
+
+    private void updateBestPeerFields() {
+        Peer bestPeer = getBestPeer();
+        if (bestPeer == null || bestPeer.getId() == null) {
+            bestPeerId.set("");
+            bestPeerHeight.set(0);
+            return;
+        }
+        bestPeerId.set(peerIdHex(bestPeer));
+        bestPeerHeight.set(bestPeer.getHeight());
+    }
+
+    private void refreshPeerStates(List<Peer> peers) {
+        for (Peer peer : peers) {
+            trackerFor(peer).updatePeer(peer);
+        }
+    }
+
+    private PeerSyncTracker trackerFor(Peer peer) {
+        String peerId = peerIdHex(peer);
+        return peerStates.computeIfAbsent(peerId, ignored -> new PeerSyncTracker(peer));
+    }
+
+    private String peerIdHex(Peer peer) {
+        return bytesToHex(peer.getId());
+    }
+
+    private String shortPeerId(String peerId) {
+        if (peerId == null || peerId.length() <= 12) {
+            return peerId == null ? "" : peerId;
+        }
+        return peerId.substring(0, 12);
+    }
+
+    private record BlockFetchResult(
+            int height,
+            String peerId,
+            Block block,
+            String error,
+            long elapsedMillis,
+            byte[] expectedHash
+    ) {
+        static BlockFetchResult success(int height, String peerId, Block block, long elapsedMillis) {
+            return new BlockFetchResult(height, peerId, block, "", elapsedMillis, null);
+        }
+
+        static BlockFetchResult success(int height, String peerId, Block block, long elapsedMillis, byte[] expectedHash) {
+            return new BlockFetchResult(height, peerId, block, "", elapsedMillis, expectedHash);
+        }
+
+        static BlockFetchResult failed(int height, String peerId, String error) {
+            return new BlockFetchResult(height, peerId, null, error, 0L, null);
+        }
+
+        boolean success() {
+            return block != null;
+        }
+    }
+
+    private record HeaderSyncRecord(
+            int height,
+            byte[] hash,
+            BlockHeader header,
+            UInt256 chainWork
+    ) {
+    }
+
+    private static final class PeerSyncTracker {
+        private final String peerId;
+        private final AtomicReference<String> status = new AtomicReference<>("CONNECTED");
+        private final AtomicInteger assignedStartHeight = new AtomicInteger(Integer.MAX_VALUE);
+        private final AtomicInteger assignedEndHeight = new AtomicInteger(Integer.MIN_VALUE);
+        private final AtomicInteger downloadedBlocks = new AtomicInteger(0);
+        private final AtomicInteger verifiedBlocks = new AtomicInteger(0);
+        private final AtomicInteger failedRequests = new AtomicInteger(0);
+        private final AtomicInteger lastSyncedHeight = new AtomicInteger(Integer.MIN_VALUE);
+        private final AtomicReference<String> lastError = new AtomicReference<>("");
+        private final AtomicLong lastUpdatedAtMillis = new AtomicLong(System.currentTimeMillis());
+
+        private volatile String address;
+        private volatile int port;
+        private volatile int height;
+        private volatile String hashHex;
+        private volatile String chainWorkDecimal;
+
+        private PeerSyncTracker(Peer peer) {
+            this.peerId = bytesToHex(peer.getId());
+            updatePeer(peer);
+        }
+
+        private void updatePeer(Peer peer) {
+            this.address = peer.getAddress();
+            this.port = peer.getPort();
+            this.height = peer.getHeight();
+            this.hashHex = peer.getHashHex();
+            this.chainWorkDecimal = peer.getChainWorkDecimal().toString();
+            this.lastUpdatedAtMillis.set(System.currentTimeMillis());
+        }
+
+        private void assign(int blockHeight) {
+            assignedStartHeight.accumulateAndGet(blockHeight, Math::min);
+            assignedEndHeight.accumulateAndGet(blockHeight, Math::max);
+            status.set("DOWNLOADING");
+            lastUpdatedAtMillis.set(System.currentTimeMillis());
+        }
+
+        private void recordDownloaded(int blockHeight) {
+            downloadedBlocks.incrementAndGet();
+            lastSyncedHeight.accumulateAndGet(blockHeight, Math::max);
+            status.set("DOWNLOADING");
+            lastUpdatedAtMillis.set(System.currentTimeMillis());
+        }
+
+        private void recordVerified(int blockHeight) {
+            verifiedBlocks.incrementAndGet();
+            lastSyncedHeight.accumulateAndGet(blockHeight, Math::max);
+            status.set("SYNCING");
+            lastUpdatedAtMillis.set(System.currentTimeMillis());
+        }
+
+        private void recordFailedRequest(String error) {
+            failedRequests.incrementAndGet();
+            lastError.set(error == null ? "" : error);
+            status.set("DEGRADED");
+            lastUpdatedAtMillis.set(System.currentTimeMillis());
+        }
+
+        private boolean hasActivity() {
+            return downloadedBlocks.get() > 0
+                    || verifiedBlocks.get() > 0
+                    || failedRequests.get() > 0
+                    || assignedStartHeight.get() != Integer.MAX_VALUE;
+        }
+
+        private SyncPeerState snapshot(boolean online) {
+            Integer assignedStart = assignedStartHeight.get() == Integer.MAX_VALUE ? null : assignedStartHeight.get();
+            Integer assignedEnd = assignedEndHeight.get() == Integer.MIN_VALUE ? null : assignedEndHeight.get();
+            Integer lastSynced = lastSyncedHeight.get() == Integer.MIN_VALUE ? null : lastSyncedHeight.get();
+
+            return new SyncPeerState(
+                    peerId,
+                    address,
+                    port,
+                    online,
+                    height,
+                    hashHex,
+                    chainWorkDecimal,
+                    online ? status.get() : "DISCONNECTED",
+                    assignedStart,
+                    assignedEnd,
+                    lastSynced,
+                    downloadedBlocks.get(),
+                    verifiedBlocks.get(),
+                    failedRequests.get(),
+                    lastError.get(),
+                    lastUpdatedAtMillis.get()
+            );
+        }
+    }
 }

@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>交易池状态监控</title>
+    <style>
+        :root {
+            --bg: #f4f6f8;
+            --surface: #ffffff;
+            --surface-2: #eef2f5;
+            --line: #d7e0e7;
+            --text: #18212b;
+            --muted: #667381;
+            --blue: #2563eb;
+            --green: #1f8a5b;
+            --amber: #b7791f;
+            --red: #c2413b;
+            --violet: #6d5bd0;
+            --ink: #111827;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+            letter-spacing: 0;
+        }
+
+        .shell {
+            width: min(1480px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 24px 0 36px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+        }
+
+        .subtitle {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .actions,
+        .filters {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button,
+        input,
+        select {
+            min-height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--ink);
+            font: inherit;
+        }
+
+        button {
+            padding: 0 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button.primary {
+            border-color: var(--blue);
+            background: var(--blue);
+            color: #ffffff;
+        }
+
+        button:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+
+        input,
+        select {
+            padding: 0 12px;
+        }
+
+        input {
+            width: min(360px, 100%);
+        }
+
+        .status-text {
+            min-width: 150px;
+            color: var(--muted);
+            font-size: 13px;
+            text-align: right;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(130px, 1fr));
+            gap: 12px;
+            margin: 18px 0;
+        }
+
+        .metric,
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .metric {
+            min-width: 0;
+            padding: 14px;
+        }
+
+        .metric-label {
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .metric-value {
+            overflow-wrap: anywhere;
+            font-size: 24px;
+            font-weight: 800;
+            line-height: 1.12;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 390px;
+            gap: 16px;
+            align-items: start;
+        }
+
+        .panel {
+            overflow: hidden;
+        }
+
+        .panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+            font-weight: 800;
+        }
+
+        .panel-sub {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 400;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            min-width: 1160px;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 11px 13px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            white-space: nowrap;
+            font-size: 13px;
+            vertical-align: middle;
+        }
+
+        th {
+            color: var(--muted);
+            background: #fafbfd;
+            font-weight: 800;
+            user-select: none;
+        }
+
+        th.sortable {
+            cursor: pointer;
+        }
+
+        tr {
+            cursor: pointer;
+        }
+
+        tr:hover td,
+        tr.selected td {
+            background: #f7fbff;
+        }
+
+        tr:last-child td {
+            border-bottom: 0;
+        }
+
+        code,
+        .hash {
+            font-family: Consolas, "Courier New", monospace;
+        }
+
+        .hash {
+            display: inline-block;
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: middle;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            border-radius: 999px;
+            padding: 0 9px;
+            background: var(--surface-2);
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .badge.IN_POOL,
+        .badge.available {
+            background: #e9f8f0;
+            color: var(--green);
+        }
+
+        .badge.PACKING,
+        .badge.locked {
+            background: #fff5df;
+            color: var(--amber);
+        }
+
+        .badge.REJECTED,
+        .badge.double {
+            background: #fff0ed;
+            color: var(--red);
+        }
+
+        .badge.high {
+            background: #eef2ff;
+            color: var(--violet);
+        }
+
+        .flag-list {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            max-width: 310px;
+        }
+
+        .empty {
+            padding: 28px 16px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .detail {
+            display: grid;
+            gap: 14px;
+            padding: 16px;
+        }
+
+        .detail-title {
+            display: grid;
+            gap: 8px;
+        }
+
+        .detail-title code {
+            overflow-wrap: anywhere;
+            white-space: normal;
+            color: var(--ink);
+        }
+
+        .kv {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .kv-item {
+            min-width: 0;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px;
+            background: #fbfcfd;
+        }
+
+        .kv-label {
+            margin-bottom: 6px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .kv-value {
+            overflow-wrap: anywhere;
+            font-weight: 800;
+        }
+
+        .list-block {
+            display: grid;
+            gap: 8px;
+        }
+
+        .list-block h3 {
+            margin: 0;
+            font-size: 14px;
+        }
+
+        .mono-list {
+            display: grid;
+            gap: 6px;
+            max-height: 180px;
+            overflow: auto;
+            padding: 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fbfcfd;
+        }
+
+        .mono-list code {
+            overflow-wrap: anywhere;
+            white-space: normal;
+            font-size: 12px;
+        }
+
+        @media (max-width: 1120px) {
+            .metrics {
+                grid-template-columns: repeat(3, minmax(130px, 1fr));
+            }
+
+            .layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 680px) {
+            .shell {
+                width: min(100% - 20px, 1480px);
+                padding-top: 16px;
+            }
+
+            .topbar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .actions,
+            .filters {
+                width: 100%;
+            }
+
+            input,
+            select,
+            button {
+                width: 100%;
+            }
+
+            .status-text {
+                width: 100%;
+                min-width: 0;
+                text-align: left;
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .metric-value {
+                font-size: 21px;
+            }
+
+            .kv {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <div class="topbar">
+        <div>
+            <h1>交易池状态监控</h1>
+            <div class="subtitle" id="lastUpdated">等待数据</div>
+        </div>
+        <div class="actions">
+            <button class="primary" id="refreshBtn" type="button">刷新</button>
+            <button id="pauseBtn" type="button">暂停</button>
+            <div class="status-text" id="statusText">自动刷新中</div>
+        </div>
+    </div>
+
+    <section class="metrics">
+        <div class="metric">
+            <div class="metric-label">交易池容量</div>
+            <div class="metric-value" id="capacity">0 / 0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">可打包交易</div>
+            <div class="metric-value" id="availableCount">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">打包中</div>
+            <div class="metric-value" id="packingCount">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">锁定交易</div>
+            <div class="metric-value" id="lockedCount">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">总手续费</div>
+            <div class="metric-value" id="totalFee">0</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">平均费率</div>
+            <div class="metric-value" id="avgFeeRate">0</div>
+        </div>
+    </section>
+
+    <div class="layout">
+        <section class="panel">
+            <div class="panel-head">
+                <div>池内交易 <span class="panel-sub" id="tableMeta">0 条</span></div>
+                <div class="filters">
+                    <input id="searchInput" type="search" placeholder="搜索交易哈希或 UTXO">
+                    <select id="lifecycleFilter" aria-label="状态过滤">
+                        <option value="">全部状态</option>
+                        <option value="IN_POOL">池中</option>
+                        <option value="PACKING">打包中</option>
+                        <option value="PENDING">待处理</option>
+                        <option value="REJECTED">已拒绝</option>
+                        <option value="REPLACED">已替换</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>交易</th>
+                        <th>状态</th>
+                        <th class="sortable" data-sort="fee">手续费</th>
+                        <th class="sortable" data-sort="feeRate">费率</th>
+                        <th class="sortable" data-sort="size">大小</th>
+                        <th>输入/输出</th>
+                        <th>标记</th>
+                        <th class="sortable" data-sort="ageSeconds">入池时间</th>
+                    </tr>
+                    </thead>
+                    <tbody id="txTable"></tbody>
+                </table>
+            </div>
+            <div class="empty" id="emptyState" hidden>当前没有匹配的交易</div>
+        </section>
+
+        <aside class="panel">
+            <div class="panel-head">
+                <div>交易详情</div>
+                <span class="panel-sub" id="detailState">未选择</span>
+            </div>
+            <div class="detail" id="detailPane">
+                <div class="empty">选择一笔交易查看输入、输出和依赖状态</div>
+            </div>
+        </aside>
+    </div>
+</main>
+
+<script>
+    const labels = {
+        PENDING: '待处理',
+        IN_POOL: '池中',
+        PACKING: '打包中',
+        CONFIRMED: '已确认',
+        ORPHANED: '孤立',
+        REJECTED: '已拒绝',
+        REPLACED: '已替换',
+        EXPIRED: '已过期',
+        FORK: '分叉',
+        UNKNOWN: '未知'
+    };
+
+    const flagLabels = {
+        HIGH_FEE: '高手续费',
+        DUST_TX: '粉尘',
+        LARGE_SIZE: '大体积',
+        VERIFIED: '已验证',
+        MEMPOOL_LOCKED: '锁定',
+        PRIORITY_HIGH: '高优先级',
+        PRIORITY_LOW: '低优先级',
+        RBF_ENABLED: 'RBF',
+        CPFP_ENABLED: 'CPFP',
+        DOUBLE_SPEND_FLAG: '双花风险',
+        INVALID_SIG: '签名无效',
+        INSUFFICIENT_FEE: '手续费不足',
+        NON_STANDARD: '非标准',
+        TIME_LOCKED: '时间锁',
+        HEIGHT_LOCKED: '高度锁',
+        MULTISIG_TX: '多签',
+        CONTRACT_TX: '合约',
+        WITNESS_TX: '见证'
+    };
+
+    const els = {
+        refreshBtn: document.getElementById('refreshBtn'),
+        pauseBtn: document.getElementById('pauseBtn'),
+        statusText: document.getElementById('statusText'),
+        lastUpdated: document.getElementById('lastUpdated'),
+        capacity: document.getElementById('capacity'),
+        availableCount: document.getElementById('availableCount'),
+        packingCount: document.getElementById('packingCount'),
+        lockedCount: document.getElementById('lockedCount'),
+        totalFee: document.getElementById('totalFee'),
+        avgFeeRate: document.getElementById('avgFeeRate'),
+        searchInput: document.getElementById('searchInput'),
+        lifecycleFilter: document.getElementById('lifecycleFilter'),
+        tableMeta: document.getElementById('tableMeta'),
+        txTable: document.getElementById('txTable'),
+        emptyState: document.getElementById('emptyState'),
+        detailState: document.getElementById('detailState'),
+        detailPane: document.getElementById('detailPane')
+    };
+
+    const state = {
+        paused: false,
+        snapshot: null,
+        selectedTxId: null,
+        sortKey: 'feeRate',
+        sortDir: -1
+    };
+
+    els.refreshBtn.addEventListener('click', loadStatus);
+    els.pauseBtn.addEventListener('click', () => {
+        state.paused = !state.paused;
+        els.pauseBtn.textContent = state.paused ? '继续' : '暂停';
+        els.statusText.textContent = state.paused ? '已暂停' : '自动刷新中';
+    });
+    els.searchInput.addEventListener('input', renderTransactions);
+    els.lifecycleFilter.addEventListener('change', renderTransactions);
+    document.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            state.sortDir = state.sortKey === key ? state.sortDir * -1 : -1;
+            state.sortKey = key;
+            renderTransactions();
+        });
+    });
+
+    async function loadStatus() {
+        if (state.paused) {
+            return;
+        }
+        try {
+            els.statusText.textContent = '读取中';
+            const response = await fetch('/txpool/status', {cache: 'no-store'});
+            if (!response.ok) {
+                throw new Error(`${response.status} ${response.statusText}`);
+            }
+            state.snapshot = await response.json();
+            renderSummary();
+            renderTransactions();
+            els.statusText.textContent = '自动刷新中';
+        } catch (error) {
+            els.statusText.textContent = `读取失败: ${error.message}`;
+        }
+    }
+
+    function renderSummary() {
+        const data = state.snapshot || {};
+        els.capacity.textContent = `${number(data.totalCount)} / ${number(data.capacity)}`;
+        els.availableCount.textContent = number(data.availableCount);
+        els.packingCount.textContent = number(data.packingCount);
+        els.lockedCount.textContent = number(data.lockedCount);
+        els.totalFee.textContent = `${number(data.totalFee)} sat`;
+        els.avgFeeRate.textContent = `${fixed(data.averageFeeRate)} sat/B`;
+        els.lastUpdated.textContent = `更新时间 ${formatTime(data.timestampMillis || Date.now())}`;
+    }
+
+    function renderTransactions() {
+        const data = state.snapshot || {};
+        const query = els.searchInput.value.trim().toLowerCase();
+        const lifecycle = els.lifecycleFilter.value;
+        let rows = Array.isArray(data.transactions) ? data.transactions.slice() : [];
+
+        rows = rows.filter(tx => {
+            const matchLifecycle = !lifecycle || tx.lifecycle === lifecycle;
+            const haystack = [
+                tx.txId,
+                ...(tx.inputOutpoints || []),
+                ...(tx.outputOutpoints || [])
+            ].join(' ').toLowerCase();
+            return matchLifecycle && (!query || haystack.includes(query));
+        });
+
+        rows.sort((a, b) => compare(a, b, state.sortKey) * state.sortDir);
+        els.tableMeta.textContent = `${number(rows.length)} 条`;
+        els.emptyState.hidden = rows.length > 0;
+        els.txTable.innerHTML = rows.map(tx => rowHtml(tx)).join('');
+        els.txTable.querySelectorAll('tr[data-tx-id]').forEach(row => {
+            row.addEventListener('click', () => {
+                state.selectedTxId = row.dataset.txId;
+                renderTransactions();
+                renderDetail();
+            });
+        });
+        renderDetail();
+    }
+
+    function rowHtml(tx) {
+        const selected = tx.txId === state.selectedTxId ? ' class="selected"' : '';
+        const flags = importantFlags(tx).map(flag => badge(flagLabels[flag] || flag, flagClass(flag))).join('');
+        return `
+            <tr data-tx-id="${escapeHtml(tx.txId)}"${selected}>
+                <td><span class="hash" title="${escapeHtml(tx.txId)}">${escapeHtml(shortHash(tx.txId))}</span></td>
+                <td>${badge(labels[tx.lifecycle] || tx.lifecycle, tx.lifecycle)}</td>
+                <td>${number(tx.fee)} sat</td>
+                <td>${fixed(tx.feeRate)} sat/B</td>
+                <td>${number(tx.size)} B</td>
+                <td>${number(tx.inputCount)} / ${number(tx.outputCount)}</td>
+                <td><div class="flag-list">${flags || '<span class="panel-sub">无</span>'}</div></td>
+                <td>${duration(tx.ageSeconds)}</td>
+            </tr>
+        `;
+    }
+
+    function renderDetail() {
+        const tx = findSelectedTx();
+        if (!tx) {
+            els.detailState.textContent = '未选择';
+            els.detailPane.innerHTML = '<div class="empty">选择一笔交易查看输入、输出和依赖状态</div>';
+            return;
+        }
+
+        els.detailState.textContent = labels[tx.lifecycle] || tx.lifecycle;
+        els.detailPane.innerHTML = `
+            <div class="detail-title">
+                ${badge(labels[tx.lifecycle] || tx.lifecycle, tx.lifecycle)}
+                <code>${escapeHtml(tx.txId)}</code>
+            </div>
+            <div class="kv">
+                ${kv('手续费', `${number(tx.fee)} sat`)}
+                ${kv('费率', `${fixed(tx.feeRate)} sat/B`)}
+                ${kv('大小', `${number(tx.size)} B`)}
+                ${kv('入池时长', duration(tx.ageSeconds))}
+                ${kv('入池时间', formatTime(tx.joinTime))}
+                ${kv('最近广播', formatTime(tx.broadcastTime))}
+            </div>
+            <div class="list-block">
+                <h3>状态标记</h3>
+                <div class="flag-list">${(tx.flags || []).map(flag => badge(flagLabels[flag] || flag, flagClass(flag))).join('') || '<span class="panel-sub">无</span>'}</div>
+            </div>
+            ${listBlock('输入 UTXO', tx.inputOutpoints)}
+            ${listBlock('输出 UTXO', tx.outputOutpoints)}
+            ${listBlock('父交易', tx.parents)}
+            ${listBlock('子交易', tx.children)}
+        `;
+    }
+
+    function findSelectedTx() {
+        const rows = state.snapshot && Array.isArray(state.snapshot.transactions)
+            ? state.snapshot.transactions
+            : [];
+        return rows.find(tx => tx.txId === state.selectedTxId) || rows[0] || null;
+    }
+
+    function listBlock(title, values) {
+        const rows = Array.isArray(values) && values.length > 0
+            ? values.map(value => `<code>${escapeHtml(value)}</code>`).join('')
+            : '<span class="panel-sub">无</span>';
+        return `
+            <div class="list-block">
+                <h3>${escapeHtml(title)}</h3>
+                <div class="mono-list">${rows}</div>
+            </div>
+        `;
+    }
+
+    function kv(label, value) {
+        return `
+            <div class="kv-item">
+                <div class="kv-label">${escapeHtml(label)}</div>
+                <div class="kv-value">${escapeHtml(value || '-')}</div>
+            </div>
+        `;
+    }
+
+    function importantFlags(tx) {
+        const flags = Array.isArray(tx.flags) ? tx.flags : [];
+        return flags.filter(flag => [
+            'HIGH_FEE',
+            'PRIORITY_HIGH',
+            'PRIORITY_LOW',
+            'RBF_ENABLED',
+            'CPFP_ENABLED',
+            'MEMPOOL_LOCKED',
+            'DOUBLE_SPEND_FLAG',
+            'INSUFFICIENT_FEE',
+            'NON_STANDARD',
+            'TIME_LOCKED',
+            'HEIGHT_LOCKED'
+        ].includes(flag)).slice(0, 4);
+    }
+
+    function flagClass(flag) {
+        if (flag === 'DOUBLE_SPEND_FLAG' || flag === 'INSUFFICIENT_FEE' || flag === 'NON_STANDARD') return 'double';
+        if (flag === 'MEMPOOL_LOCKED') return 'locked';
+        if (flag === 'HIGH_FEE' || flag === 'PRIORITY_HIGH') return 'high';
+        if (flag === 'PRIORITY_LOW' || flag === 'TIME_LOCKED' || flag === 'HEIGHT_LOCKED') return 'PACKING';
+        return 'available';
+    }
+
+    function badge(text, type) {
+        return `<span class="badge ${escapeHtml(type || '')}">${escapeHtml(text || '-')}</span>`;
+    }
+
+    function compare(a, b, key) {
+        const av = Number(a[key] || 0);
+        const bv = Number(b[key] || 0);
+        if (av === bv) {
+            return String(a.txId || '').localeCompare(String(b.txId || ''));
+        }
+        return av > bv ? 1 : -1;
+    }
+
+    function number(value) {
+        return Number(value || 0).toLocaleString('zh-CN');
+    }
+
+    function fixed(value) {
+        return Number(value || 0).toFixed(2);
+    }
+
+    function duration(seconds) {
+        const value = Number(seconds || 0);
+        if (value < 60) return `${value}s`;
+        if (value < 3600) return `${Math.floor(value / 60)}m ${value % 60}s`;
+        return `${Math.floor(value / 3600)}h ${Math.floor((value % 3600) / 60)}m`;
+    }
+
+    function formatTime(ms) {
+        if (!ms) return '-';
+        return new Date(ms).toLocaleString('zh-CN', {hour12: false});
+    }
+
+    function shortHash(hash) {
+        if (!hash || hash.length <= 24) return hash || '-';
+        return `${hash.slice(0, 14)}...${hash.slice(-10)}`;
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[char]));
+    }
+
+    loadStatus();
+    setInterval(loadStatus, 2000);
+</script>
+</body>
+</html>

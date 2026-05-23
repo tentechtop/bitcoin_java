@@ -18,42 +18,45 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
-public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHandler{
-
-
+public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHandler {
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
 
     @Override
     public void handleVoid(P2PMessage requestParams) throws IOException {
-        log.info("收到资源请求");
+        log.info("Received resource request");
         byte[] data = requestParams.getData();
         byte[] senderId = requestParams.getSenderId();
-        BroadcastResource broadcastResource = BroadcastResource.fromBytes(data);
-
-        if (broadcastResource!=null){
-            int type = broadcastResource.getType();
-            //如果是0 则是区块 如果是1 则是交易 用switch
-            //是否需要这个资源
-            switch (type){
-                case 0:
-                    log.info("将区块发送 hash:{}",bytesToHex(broadcastResource.getHash()));
-                    //如果不存在就回复该节点
-                    //将区块发送给目标节点
-                    Block blockByHash = blockChainService.getBlockByHash(broadcastResource.getHash());
-                    byte[] serialize = blockByHash.serialize();
-                    staticSendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Block,serialize,5000);
-                    break;
-                case 1:
-                    log.info("将交易发送 hash:{}",broadcastResource.getHash());
-                    Transaction txByHash = blockChainService.getTxByHash(broadcastResource.getHash());
-                    byte[] txSerialize = txByHash.serialize();
-                    staticSendData(bytesToHex(senderId),ProtocolEnum.P2P_Receive_Transaction,txSerialize,5000);
-                    break;
-                default:
-                    log.info("收到未知资源广播");
-            }
+        BroadcastResource resource = BroadcastResource.fromBytes(data);
+        if (resource == null || resource.getHash() == null || senderId == null) {
+            return;
         }
+
+        switch (resource.getType()) {
+            case BroadcastResource.TYPE_BLOCK -> sendBlock(senderId, resource);
+            case BroadcastResource.TYPE_TRANSACTION -> sendTransaction(senderId, resource);
+            default -> log.info("Received unknown resource request: type={}", resource.getType());
+        }
+    }
+
+    private void sendBlock(byte[] senderId, BroadcastResource resource) throws IOException {
+        log.info("Send block by hash: {}", bytesToHex(resource.getHash()));
+        Block block = blockChainService.getBlockByHash(resource.getHash());
+        if (block == null) {
+            log.info("Requested block does not exist: {}", bytesToHex(resource.getHash()));
+            return;
+        }
+        staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Receive_Block, block.serialize(), 5000);
+    }
+
+    private void sendTransaction(byte[] senderId, BroadcastResource resource) throws IOException {
+        log.info("Send transaction by hash: {}", bytesToHex(resource.getHash()));
+        Transaction tx = blockChainService.getTxByHash(resource.getHash());
+        if (tx == null) {
+            log.info("Requested transaction does not exist: {}", bytesToHex(resource.getHash()));
+            return;
+        }
+        staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Receive_Transaction, tx.serialize(), 5000);
     }
 }

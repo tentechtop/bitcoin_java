@@ -656,7 +656,7 @@ public class QuicFrame {
             // 遍历当前字节的8个比特位（大端序：第7位对应序列号 byteIndex*8 + 0）
             for (int bitIndex = 0; bitIndex < 8; bitIndex++) {
                 // 计算当前比特位对应的帧序列号
-                int sequence = byteIndex * 8 + (7 - bitIndex);
+                int sequence = byteIndex * 8 + bitIndex;
                 // 判断该比特位是否为1（通过位运算）
                 if ((b & (1 << (7 - bitIndex))) != 0) {
                     receivedSeqList.add(sequence);

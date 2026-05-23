@@ -34,6 +34,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
@@ -67,6 +68,7 @@ public class RoutingTable {
     private ScheduledExecutorService persistScheduler;
     // 定时检查周期：1分钟（单位：毫秒）
     private static final long PERSIST_CHECK_PERIOD = 60 * 1000L;
+    private static final byte[] ROUTING_TABLE_PEERS_KEY = "ROUTING_TABLE_PEERS".getBytes(StandardCharsets.UTF_8);
 
     // 路由表刷新相关配置
     // 刷新周期：10分钟（Kademlia 标准）
@@ -104,6 +106,23 @@ public class RoutingTable {
     private final Map<String, Future<List<Peer>>> pendingQueries = new ConcurrentHashMap<>();
     private final ReentrantLock queryLock = new ReentrantLock();
 
+    private static final int CANDIDATE_POOL_LIMIT = 512;
+    private static final int CANDIDATE_VALIDATION_BATCH_SIZE = 8;
+    private static final int PEER_HINT_BATCH_SIZE = 8;
+    private static final int MAX_CANDIDATE_ATTEMPTS = 3;
+    private static final long CANDIDATE_VALIDATION_PERIOD = 15 * 1000L;
+    private static final long PEER_HINT_PERIOD = 60 * 1000L;
+    private static final long PEER_HINT_MIN_INTERVAL_PER_PEER = 2 * 60 * 1000L;
+
+    private final Map<String, CandidatePeer> candidatePeers = new ConcurrentHashMap<>();
+    private final Map<String, PeerScore> peerScores = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastHintSentAt = new ConcurrentHashMap<>();
+    private final AtomicLong lookupSuccessCount = new AtomicLong();
+    private final AtomicLong lookupFailureCount = new AtomicLong();
+    private ScheduledFuture<?> candidateValidationTask;
+    private ScheduledFuture<?> peerHintTask;
+    private volatile int lastAdaptiveAlpha = REFRESH_PARALLELISM;
+
 
     /**
      * Spring初始化方法（替代构造方法）
@@ -137,6 +156,8 @@ public class RoutingTable {
 
         // ========== 新增：启动路由表刷新任务 ==========
         initRefreshScheduler();
+        initCandidateValidationScheduler();
+        initPeerHintScheduler();
     }
 
 
@@ -252,7 +273,7 @@ public class RoutingTable {
      * @param peer 要添加的节点
      */
     public void addPeer(Peer peer) {
-        if (peer == null) {
+        if (!isValidPeer(peer)) {
             log.warn("尝试添加空节点，忽略");
             return;
         }
@@ -263,10 +284,12 @@ public class RoutingTable {
             return;
         }
         boolean isNodeChanged = false; // 标记是否发生节点变动
+        String peerIdHex = bytesToHex(peerId);
+        candidatePeers.remove(peerIdHex);
+        recordPeerSuccess(peerIdHex, peer, -1, false);
         try {
             int bucketIndex = getBucketIndex(peerId);
             Bucket bucket = buckets.get(bucketIndex);
-            String peerIdHex = bytesToHex(peerId);
 
             // 更新桶最后访问时间
             lastBucketAccessTime.put(bucketIndex, System.currentTimeMillis());
@@ -284,19 +307,7 @@ public class RoutingTable {
                         log.info("桶{}未满，添加节点{}到头部", bucketIndex, peerIdHex);
                         isNodeChanged = true; // 新增节点，标记变动
                     } else {
-                        //TODO
-                        // 桶已满，移除尾部节点，添加新节点到头部（Kad协议简化实现，可扩展为检查尾节点存活状态）
-                        String lastPeerId = bucket.getNodeIds().iterator().hasNext() ?
-                                bucket.getNodeIds().iterator().next() : null; // 尾节点ID
-                        if (lastPeerId != null) {
-                            Peer lastPeer = bucket.getNode(lastPeerId);
-                            bucket.remove(lastPeer);
-                            log.debug("桶{}已满，移除最不活跃节点{}", bucketIndex, lastPeerId);
-                            isNodeChanged = true; // 移除旧节点+添加新节点，标记变动
-                        }
-                        bucket.add(peer);
-                        log.debug("桶{}已满，添加新节点{}到头部", bucketIndex, peerIdHex);
-                        isNodeChanged = true; // 新增节点，标记变动
+                        isNodeChanged = handleFullBucket(bucket, peer, bucketIndex, peerIdHex);
                     }
                 }
             }
@@ -315,6 +326,68 @@ public class RoutingTable {
                 nodeChangeCount.set(0); // 重置计数器
             }
         }
+    }
+
+    private boolean handleFullBucket(Bucket bucket, Peer peer, int bucketIndex, String peerIdHex) {
+        Peer evictionCandidate = selectEvictionCandidate(bucket);
+        if (shouldReplacePeer(evictionCandidate, peer)) {
+            if (evictionCandidate != null) {
+                String removedPeerId = bytesToHex(evictionCandidate.getId());
+                bucket.remove(evictionCandidate);
+                recordPeerFailure(removedPeerId, "evicted from full bucket");
+                log.debug("bucket {} evicted low-score peer {}", bucketIndex, removedPeerId);
+            }
+            bucket.add(peer);
+            log.debug("bucket {} accepted peer {}", bucketIndex, peerIdHex);
+            return true;
+        } else {
+            rememberCandidatePeer(peer, "bucket-full");
+            log.debug("bucket {} kept existing peers; candidate {} was deferred", bucketIndex, peerIdHex);
+            return false;
+        }
+    }
+
+    private Peer selectEvictionCandidate(Bucket bucket) {
+        Peer selected = null;
+        double selectedScore = Double.MAX_VALUE;
+        long selectedLastSeen = Long.MAX_VALUE;
+        for (Peer existingPeer : bucket.getNodesArrayList()) {
+            if (!isValidPeer(existingPeer)) {
+                return existingPeer;
+            }
+            String existingPeerId = bytesToHex(existingPeer.getId());
+            double score = scorePeer(existingPeerId, existingPeer);
+            long lastSeen = Math.max(0, existingPeer.getLastSeen());
+            if (score < selectedScore || (Double.compare(score, selectedScore) == 0 && lastSeen < selectedLastSeen)) {
+                selected = existingPeer;
+                selectedScore = score;
+                selectedLastSeen = lastSeen;
+            }
+        }
+        return selected;
+    }
+
+    private boolean shouldReplacePeer(Peer oldPeer, Peer newPeer) {
+        if (oldPeer == null) {
+            return true;
+        }
+        String oldPeerId = bytesToHex(oldPeer.getId());
+        String newPeerId = bytesToHex(newPeer.getId());
+        PeerScore oldScore = peerScores.get(oldPeerId);
+        double oldValue = scorePeer(oldPeerId, oldPeer);
+        double newValue = scorePeer(newPeerId, newPeer);
+        if (oldScore != null && oldScore.state() == PeerQualityState.BAD) {
+            return true;
+        }
+        long now = System.currentTimeMillis();
+        if (oldPeer.getLastSeen() > 0 && now - oldPeer.getLastSeen() > TimeUnit.HOURS.toMillis(6)) {
+            return true;
+        }
+        return newValue >= oldValue + 5;
+    }
+
+    private boolean isValidPeer(Peer peer) {
+        return peer != null && peer.getId() != null && peer.getId().length == 32;
     }
 
     //仅仅更新最后访问时间
@@ -385,7 +458,15 @@ public class RoutingTable {
 
         // 按距离升序排序（异或结果越小，距离越近）
         return peerDistanceMap.entrySet().stream()
-                .sorted((e1, e2) -> compareDistance(e1.getValue(), e2.getValue()))
+                .sorted((e1, e2) -> {
+                    int distanceCompare = compareDistance(e1.getValue(), e2.getValue());
+                    if (distanceCompare != 0) {
+                        return distanceCompare;
+                    }
+                    double s1 = scorePeer(bytesToHex(e1.getKey().getId()), e1.getKey());
+                    double s2 = scorePeer(bytesToHex(e2.getKey().getId()), e2.getKey());
+                    return Double.compare(s2, s1);
+                })
                 .map(Map.Entry::getKey)
                 .limit(maxCount) // 在线<20时无限制，正常则限制20
                 .collect(Collectors.toList());
@@ -562,6 +643,534 @@ public class RoutingTable {
     /**
      * 获取 K桶
      */
+    private void initCandidateValidationScheduler() {
+        candidateValidationTask = persistScheduler.scheduleAtFixedRate(
+                this::validateCandidatePeers,
+                CANDIDATE_VALIDATION_PERIOD,
+                CANDIDATE_VALIDATION_PERIOD,
+                TimeUnit.MILLISECONDS
+        );
+        log.info("DHT candidate validation task started, period={}ms", CANDIDATE_VALIDATION_PERIOD);
+    }
+
+    private void initPeerHintScheduler() {
+        peerHintTask = persistScheduler.scheduleAtFixedRate(
+                this::sharePeerHintsWithOnlinePeers,
+                PEER_HINT_PERIOD,
+                PEER_HINT_PERIOD,
+                TimeUnit.MILLISECONDS
+        );
+        log.info("DHT peer hint task started, period={}ms", PEER_HINT_PERIOD);
+    }
+
+    public void receivePeerHints(byte[] data, byte[] senderId) throws Exception {
+        if (data == null || data.length == 0) {
+            return;
+        }
+        String sourcePeerId = senderId == null || senderId.length != 32 ? "" : bytesToHex(senderId);
+        receivePeerHints(deserializePeers(data), sourcePeerId);
+    }
+
+    public void receivePeerHints(List<Peer> peers, String sourcePeerId) {
+        if (peers == null || peers.isEmpty()) {
+            return;
+        }
+        int accepted = 0;
+        for (Peer peer : peers) {
+            if (rememberCandidatePeer(peer, sourcePeerId)) {
+                accepted++;
+            }
+        }
+        log.debug("accepted {} DHT peer hints from {}", accepted, sourcePeerId);
+    }
+
+    public List<CandidatePeerSnapshot> getCandidatePeerSnapshots() {
+        return candidatePeers.values().stream()
+                .map(CandidatePeer::snapshot)
+                .sorted(Comparator.comparing(CandidatePeerSnapshot::peerId))
+                .toList();
+    }
+
+    public List<PeerScoreSnapshot> getPeerScoreSnapshots() {
+        return peerScores.entrySet().stream()
+                .map(entry -> entry.getValue().snapshot(entry.getKey()))
+                .sorted(Comparator.comparingDouble(PeerScoreSnapshot::score).reversed()
+                        .thenComparing(PeerScoreSnapshot::peerId))
+                .toList();
+    }
+
+    public Map<Integer, Integer> getBucketCoverage() {
+        Map<Integer, Integer> coverage = new LinkedHashMap<>();
+        for (Bucket bucket : buckets) {
+            coverage.put(bucket.getId(), bucket.size());
+        }
+        return Collections.unmodifiableMap(coverage);
+    }
+
+    public RoutingTableHealthSnapshot getHealthSnapshot() {
+        int totalPeers = getAll().size();
+        int onlinePeers = getOnlinePeerCount();
+        int good = 0;
+        int questionable = 0;
+        int bad = 0;
+        for (PeerScore score : peerScores.values()) {
+            switch (score.state()) {
+                case GOOD -> good++;
+                case QUESTIONABLE -> questionable++;
+                case BAD -> bad++;
+            }
+        }
+        int nonEmpty = 0;
+        int sparse = 0;
+        int totalBucketEntries = 0;
+        for (Bucket bucket : buckets) {
+            int size = bucket.size();
+            totalBucketEntries += size;
+            if (size > 0) {
+                nonEmpty++;
+            }
+            if (size < Math.max(1, bucketSize / 4)) {
+                sparse++;
+            }
+        }
+        double averageFill = buckets.isEmpty() ? 0 : (double) totalBucketEntries / buckets.size();
+        return new RoutingTableHealthSnapshot(
+                totalPeers,
+                onlinePeers,
+                candidatePeers.size(),
+                good,
+                questionable,
+                bad,
+                buckets.size(),
+                nonEmpty,
+                sparse,
+                averageFill,
+                lookupSuccessCount.get(),
+                lookupFailureCount.get(),
+                lastAdaptiveAlpha
+        );
+    }
+
+    public void triggerRefreshNow() {
+        executor.submit(this::refreshRoutingTable);
+    }
+
+    public void triggerPeerHintShareNow() {
+        executor.submit(this::sharePeerHintsWithOnlinePeers);
+    }
+
+    private boolean rememberCandidatePeer(Peer peer, String sourcePeerId) {
+        if (!isValidPeer(peer) || Arrays.equals(peer.getId(), localNodeId)) {
+            return false;
+        }
+        String peerIdHex = bytesToHex(peer.getId());
+        if (contains(peer.getId())) {
+            return false;
+        }
+        if (candidatePeers.size() >= CANDIDATE_POOL_LIMIT && !candidatePeers.containsKey(peerIdHex)) {
+            evictOldestCandidate();
+        }
+        candidatePeers.compute(peerIdHex, (ignored, existing) -> {
+            if (existing == null) {
+                return new CandidatePeer(peerIdHex, peer, sourcePeerId);
+            }
+            existing.observe(peer, sourcePeerId);
+            return existing;
+        });
+        return true;
+    }
+
+    private void evictOldestCandidate() {
+        candidatePeers.values().stream()
+                .min(Comparator.comparingLong(CandidatePeer::lastSeenMillis))
+                .ifPresent(candidate -> candidatePeers.remove(candidate.peerId));
+    }
+
+    private void validateCandidatePeers() {
+        try {
+            long now = System.currentTimeMillis();
+            List<CandidatePeer> dueCandidates = candidatePeers.values().stream()
+                    .filter(candidate -> candidate.ready(now))
+                    .sorted(Comparator.comparingInt(CandidatePeer::attempts)
+                            .thenComparingLong(CandidatePeer::lastSeenMillis))
+                    .limit(CANDIDATE_VALIDATION_BATCH_SIZE)
+                    .toList();
+            for (CandidatePeer candidate : dueCandidates) {
+                if (candidate.startValidation(now)) {
+                    executor.submit(() -> validateCandidatePeer(candidate));
+                }
+            }
+        } catch (Exception e) {
+            log.error("DHT candidate validation failed", e);
+        }
+    }
+
+    private void validateCandidatePeer(CandidatePeer candidate) {
+        boolean success = false;
+        String failureReason = "connect failed";
+        try {
+            if (contains(candidate.peer.getId())) {
+                candidatePeers.remove(candidate.peerId);
+                return;
+            }
+            QuicConnection connection = QuicConnectionManager.getConnectionByPeerId(candidate.peerId);
+            if (connection == null || connection.isExpired()) {
+                String multiAddress = candidate.peer.getMultiaddr();
+                if (multiAddress == null || multiAddress.isBlank()) {
+                    failureReason = "missing multiaddr";
+                } else {
+                    connection = QuicConnectionManager.connectRemoteByAddr(multiAddress);
+                }
+            }
+            if (connection != null && !connection.isExpired()) {
+                candidate.peer.setOnline(true);
+                addPeer(candidate.peer);
+                recordPeerSuccess(candidate.peerId, candidate.peer, connection.getLastRttMillis(), false);
+                candidatePeers.remove(candidate.peerId);
+                success = true;
+            }
+        } catch (Exception e) {
+            failureReason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            log.debug("candidate peer validation failed for {}: {}", candidate.peerId, failureReason);
+        } finally {
+            if (!success) {
+                recordPeerFailure(candidate.peerId, failureReason);
+                if (candidate.fail(failureReason) >= MAX_CANDIDATE_ATTEMPTS) {
+                    candidatePeers.remove(candidate.peerId);
+                }
+            }
+            candidate.finishValidation();
+        }
+    }
+
+    private void sharePeerHintsWithOnlinePeers() {
+        try {
+            List<Peer> onlineNodes = getOnlineNodes();
+            if (onlineNodes.isEmpty()) {
+                return;
+            }
+            long now = System.currentTimeMillis();
+            for (Peer target : onlineNodes) {
+                if (!isValidPeer(target)) {
+                    continue;
+                }
+                String targetPeerId = bytesToHex(target.getId());
+                long lastSent = lastHintSentAt.getOrDefault(targetPeerId, 0L);
+                if (now - lastSent < PEER_HINT_MIN_INTERVAL_PER_PEER) {
+                    continue;
+                }
+                List<Peer> hints = selectPeerHintsFor(target.getId(), PEER_HINT_BATCH_SIZE);
+                if (hints.isEmpty()) {
+                    continue;
+                }
+                staticSendData(targetPeerId, ProtocolEnum.P2P_Peer_Hints, serializePeers(hints), 1000);
+                lastHintSentAt.put(targetPeerId, now);
+                log.debug("sent {} DHT peer hints to {}", hints.size(), targetPeerId);
+            }
+        } catch (Exception e) {
+            log.debug("DHT peer hint share failed: {}", e.getMessage());
+        }
+    }
+
+    private List<Peer> selectPeerHintsFor(byte[] targetPeerId, int limit) {
+        if (targetPeerId == null || targetPeerId.length != 32) {
+            return Collections.emptyList();
+        }
+        return getAll().stream()
+                .filter(this::isValidPeer)
+                .filter(peer -> !Arrays.equals(peer.getId(), targetPeerId))
+                .filter(peer -> qualityState(bytesToHex(peer.getId())) != PeerQualityState.BAD)
+                .sorted((left, right) -> {
+                    double leftScore = scorePeer(bytesToHex(left.getId()), left);
+                    double rightScore = scorePeer(bytesToHex(right.getId()), right);
+                    int scoreCompare = Double.compare(rightScore, leftScore);
+                    if (scoreCompare != 0) {
+                        return scoreCompare;
+                    }
+                    return compareDistance(calculateDistance(left.getId(), targetPeerId),
+                            calculateDistance(right.getId(), targetPeerId));
+                })
+                .limit(Math.max(0, limit))
+                .toList();
+    }
+
+    private int adaptiveParallelism(int requestedParallelism) {
+        int requested = Math.max(1, requestedParallelism);
+        long successes = lookupSuccessCount.get();
+        long failures = lookupFailureCount.get();
+        long total = successes + failures;
+        double failureRate = total == 0 ? 0 : (double) failures / total;
+        int alpha = requested;
+        if (failureRate > 0.35) {
+            alpha = Math.max(2, requested - 1);
+        } else if (failureRate < 0.10 && successes > 5) {
+            alpha = Math.min(6, requested + 1);
+        }
+        RoutingTableHealthSnapshot health = getHealthSnapshotWithoutOnlineLookup(alpha);
+        if (health.totalPeers() < bucketSize || health.sparseBuckets() > health.bucketCount() * 0.70) {
+            alpha = Math.max(alpha, Math.min(6, requested + 2));
+        }
+        lastAdaptiveAlpha = alpha;
+        return alpha;
+    }
+
+    private RoutingTableHealthSnapshot getHealthSnapshotWithoutOnlineLookup(int alpha) {
+        int totalPeers = getAll().size();
+        int good = 0;
+        int questionable = 0;
+        int bad = 0;
+        for (PeerScore score : peerScores.values()) {
+            switch (score.state()) {
+                case GOOD -> good++;
+                case QUESTIONABLE -> questionable++;
+                case BAD -> bad++;
+            }
+        }
+        int nonEmpty = 0;
+        int sparse = 0;
+        int totalBucketEntries = 0;
+        for (Bucket bucket : buckets) {
+            int size = bucket.size();
+            totalBucketEntries += size;
+            if (size > 0) {
+                nonEmpty++;
+            }
+            if (size < Math.max(1, bucketSize / 4)) {
+                sparse++;
+            }
+        }
+        double averageFill = buckets.isEmpty() ? 0 : (double) totalBucketEntries / buckets.size();
+        return new RoutingTableHealthSnapshot(totalPeers, 0, candidatePeers.size(), good, questionable, bad,
+                buckets.size(), nonEmpty, sparse, averageFill, lookupSuccessCount.get(), lookupFailureCount.get(), alpha);
+    }
+
+    private double scorePeer(String peerIdHex, Peer peer) {
+        PeerScore score = peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore());
+        boolean online = peer != null && peer.isOnline();
+        return score.value(peer, online);
+    }
+
+    private PeerQualityState qualityState(String peerIdHex) {
+        PeerScore score = peerScores.get(peerIdHex);
+        return score == null ? PeerQualityState.QUESTIONABLE : score.state();
+    }
+
+    private void recordPeerSuccess(String peerIdHex, Peer peer, long rttMillis, boolean lookupHelp) {
+        peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore())
+                .success(peer, rttMillis, lookupHelp);
+    }
+
+    private void recordPeerFailure(String peerIdHex, String reason) {
+        if (peerIdHex == null || peerIdHex.isBlank()) {
+            return;
+        }
+        peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore()).failure(reason);
+    }
+
+    private static final class CandidatePeer {
+        private final String peerId;
+        private volatile Peer peer;
+        private volatile String sourcePeerId;
+        private final long firstSeenMillis;
+        private volatile long lastSeenMillis;
+        private volatile int attempts;
+        private volatile long nextAttemptAtMillis;
+        private volatile String lastFailureReason = "";
+        private volatile boolean validating;
+
+        private CandidatePeer(String peerId, Peer peer, String sourcePeerId) {
+            this.peerId = peerId;
+            this.peer = peer;
+            this.sourcePeerId = sourcePeerId == null ? "" : sourcePeerId;
+            this.firstSeenMillis = System.currentTimeMillis();
+            this.lastSeenMillis = firstSeenMillis;
+            this.nextAttemptAtMillis = firstSeenMillis;
+        }
+
+        private synchronized void observe(Peer peer, String sourcePeerId) {
+            this.peer = peer;
+            if (sourcePeerId != null && !sourcePeerId.isBlank()) {
+                this.sourcePeerId = sourcePeerId;
+            }
+            this.lastSeenMillis = System.currentTimeMillis();
+        }
+
+        private boolean ready(long now) {
+            return !validating && nextAttemptAtMillis <= now;
+        }
+
+        private synchronized boolean startValidation(long now) {
+            if (validating || nextAttemptAtMillis > now) {
+                return false;
+            }
+            validating = true;
+            attempts++;
+            return true;
+        }
+
+        private synchronized int fail(String reason) {
+            this.lastFailureReason = reason == null ? "" : reason;
+            long backoff = Math.min(TimeUnit.MINUTES.toMillis(5),
+                    TimeUnit.SECONDS.toMillis(5) * (1L << Math.min(attempts, 5)));
+            this.nextAttemptAtMillis = System.currentTimeMillis() + backoff;
+            return attempts;
+        }
+
+        private synchronized void finishValidation() {
+            validating = false;
+        }
+
+        private int attempts() {
+            return attempts;
+        }
+
+        private long lastSeenMillis() {
+            return lastSeenMillis;
+        }
+
+        private CandidatePeerSnapshot snapshot() {
+            return new CandidatePeerSnapshot(
+                    peerId,
+                    peer == null ? null : peer.getMultiaddr(),
+                    sourcePeerId,
+                    firstSeenMillis,
+                    lastSeenMillis,
+                    attempts,
+                    nextAttemptAtMillis,
+                    lastFailureReason
+            );
+        }
+    }
+
+    private static final class PeerScore {
+        private long successCount;
+        private long failureCount;
+        private long lookupHelpCount;
+        private int consecutiveFailures;
+        private long avgRttMillis = -1;
+        private long lastSeenMillis;
+        private long lastSuccessMillis;
+        private long lastFailureMillis;
+        private String lastFailureReason = "";
+
+        private synchronized void success(Peer peer, long rttMillis, boolean lookupHelp) {
+            successCount++;
+            consecutiveFailures = 0;
+            long now = System.currentTimeMillis();
+            lastSuccessMillis = now;
+            lastSeenMillis = now;
+            if (peer != null && peer.getLastSeen() > 0) {
+                lastSeenMillis = Math.max(lastSeenMillis, peer.getLastSeen());
+            }
+            if (lookupHelp) {
+                lookupHelpCount++;
+            }
+            if (rttMillis >= 0) {
+                avgRttMillis = avgRttMillis < 0 ? rttMillis : (avgRttMillis * 7 + rttMillis) / 8;
+            }
+        }
+
+        private synchronized void failure(String reason) {
+            failureCount++;
+            consecutiveFailures++;
+            lastFailureMillis = System.currentTimeMillis();
+            lastFailureReason = reason == null ? "" : reason;
+        }
+
+        private synchronized PeerQualityState state() {
+            if (consecutiveFailures >= 3 || failureCount >= successCount + 5) {
+                return PeerQualityState.BAD;
+            }
+            if (successCount >= 2 && consecutiveFailures == 0) {
+                return PeerQualityState.GOOD;
+            }
+            return PeerQualityState.QUESTIONABLE;
+        }
+
+        private synchronized double value(Peer peer, boolean online) {
+            long now = System.currentTimeMillis();
+            double value = 50;
+            value += Math.min(25, successCount * 4);
+            value += Math.min(10, lookupHelpCount * 2);
+            value -= Math.min(35, failureCount * 7);
+            value -= Math.min(25, consecutiveFailures * 10);
+            if (online) {
+                value += 10;
+            }
+            if (avgRttMillis >= 0) {
+                if (avgRttMillis <= 100) {
+                    value += 8;
+                } else if (avgRttMillis > 1000) {
+                    value -= 8;
+                }
+            }
+            long seenAt = peer != null && peer.getLastSeen() > 0 ? peer.getLastSeen() : lastSeenMillis;
+            if (seenAt > 0) {
+                long age = now - seenAt;
+                if (age < TimeUnit.MINUTES.toMillis(30)) {
+                    value += 8;
+                } else if (age > TimeUnit.DAYS.toMillis(1)) {
+                    value -= 15;
+                }
+            }
+            if (lastFailureMillis > 0 && now - lastFailureMillis < TimeUnit.MINUTES.toMillis(5)) {
+                value -= 10;
+            }
+            return Math.max(0, Math.min(100, value));
+        }
+
+        private synchronized PeerScoreSnapshot snapshot(String peerId) {
+            return new PeerScoreSnapshot(
+                    peerId,
+                    state(),
+                    value(null, false),
+                    successCount,
+                    failureCount,
+                    lookupHelpCount,
+                    consecutiveFailures,
+                    avgRttMillis,
+                    lastSeenMillis,
+                    lastSuccessMillis,
+                    lastFailureMillis
+            );
+        }
+    }
+
+    /**
+     * 移除通信失败的节点，并立即持久化路由表，避免失败节点从数据库恢复回来。
+     */
+    public void removeFailedPeer(String nodeId, String reason) {
+        byte[] nodeIdBytes = parseNodeId(nodeId);
+        if (nodeIdBytes == null) {
+            return;
+        }
+        delete(nodeIdBytes);
+        log.warn("移除通信失败节点{}，原因：{}", bytesToHex(nodeIdBytes), reason);
+        persistToDatabase();
+        nodeChangeCount.set(0);
+    }
+
+    private byte[] parseNodeId(String nodeId) {
+        if (nodeId == null || nodeId.isBlank()) {
+            return null;
+        }
+        String trimmed = nodeId.trim();
+        try {
+            if (trimmed.matches("(?i)^[0-9a-f]{64}$")) {
+                return hexToBytes(trimmed);
+            }
+            byte[] decoded = Base58.decode(trimmed);
+            if (decoded.length != 32) {
+                log.warn("节点ID长度错误，忽略删除：{}", nodeId);
+                return null;
+            }
+            return decoded;
+        } catch (Exception e) {
+            log.error("解析节点ID{}失败", nodeId, e);
+            return null;
+        }
+    }
+
     public List<Bucket> getBuckets() {
         return buckets;
     }
@@ -578,13 +1187,15 @@ public class RoutingTable {
                 allPeers.addAll(bucket.getNodesArrayList());
             }
             if (allPeers.isEmpty()) {
+                dataBase.delete(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY);
+                log.info("路由表为空，已删除数据库中的路由表节点快照");
                 log.debug("路由表为空，无需持久化");
                 return;
             }
 
             // 序列化节点列表（这里假设Peer类支持列表序列化，或自定义序列化逻辑）
             byte[] serializedPeers = serializePeers(allPeers);
-            dataBase.insert(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes(StandardCharsets.UTF_8), serializedPeers);
+            dataBase.insert(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY, serializedPeers);
             log.info("成功持久化{}个节点到路由表", allPeers.size());
         } catch (Exception e) {
             log.error("持久化路由表失败", e);
@@ -598,7 +1209,7 @@ public class RoutingTable {
     public void restoreFromDatabase() {
         log.info("从数据库回复节点");
         try {
-            byte[] serializedPeers = dataBase.get(TableEnum.PEER, "ROUTING_TABLE_PEERS".getBytes());
+            byte[] serializedPeers = dataBase.get(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY);
             if (serializedPeers == null || serializedPeers.length == 0) {
                 log.info("无持久化的路由表节点数据");
                 return;
@@ -663,9 +1274,13 @@ public class RoutingTable {
                     try {
                         QuicConnection quicConnection = QuicConnectionManager.connectRemoteByAddr(peer.getMultiaddr());
                         if (quicConnection != null) {
+                            peer.setOnline(true);
                             findNodeIterative(peer.getId(), localNodeId);
+                        } else {
+                            peer.setOnline(false);
                         }
                     } catch (Exception e) {
+                        peer.setOnline(false);
                         log.error("连接节点{}失败", peer.getMultiaddr(), e);
                     }
                 }
@@ -750,9 +1365,25 @@ public class RoutingTable {
     }
 
     public void BroadcastResource(int i, byte[] hash) {
+        UInt256 chainWork = UInt256.ZERO;
+        int height = BroadcastResource.UNKNOWN_HEIGHT;
+        if (i == BroadcastResource.TYPE_BLOCK && hash != null) {
+            byte[] heightBytes = dataBase.get(TableEnum.HASH_TO_HEIGHT, hash);
+            if (heightBytes != null && heightBytes.length == 4) {
+                height = ByteBuffer.wrap(heightBytes).getInt();
+            }
+            chainWork = UInt256.fromBytes(dataBase.get(TableEnum.HASH_TO_CHAIN_WORK, hash));
+        }
+        BroadcastResource(i, hash, height, chainWork);
+    }
+
+    public void BroadcastResource(int i, byte[] hash, int height, UInt256 chainWork) {
         BroadcastResource broadcastResource = new BroadcastResource();
         broadcastResource.setHash(hash);
         broadcastResource.setType(i);
+        broadcastResource.setHeight(height);
+        broadcastResource.setChainWork(chainWork == null ? UInt256.ZERO : chainWork);
+        broadcastResource.setTimestampMillis(System.currentTimeMillis());
         //将这个消息广播给所有的在线节点
         List<Peer> onlineNodes = getOnlineNodes();
         log.info("广播消息{}",onlineNodes.size());
@@ -768,11 +1399,11 @@ public class RoutingTable {
     public List<Peer> getOnlineNodes() {
         List<Peer> all = getAll();
         Set<String> onlinePeerIds = getOnlinePeerIds();//all的id一定要在onlinePeerIds中
+        all.forEach(peer -> peer.setOnline(onlinePeerIds.contains(bytesToHex(peer.getId()))));
         List<Peer> onlineNodes = all.stream()
                 .filter(peer -> onlinePeerIds.contains(bytesToHex(peer.getId())))
                 .toList();
         //onlineNodes中的online字段改成true
-        onlineNodes.forEach(peer -> peer.setOnline(true));
         return onlineNodes;
     }
 
@@ -820,10 +1451,13 @@ public class RoutingTable {
         Peer peer = getNodeByHexId(peerId);
         if (peer!=null){
             //如果当前高度大于过去记录的高度就更新
-            if (height>peer.getHeight()){
+            UInt256 safeChainWork = chainWork == null ? UInt256.ZERO : chainWork;
+            boolean higherWorkAtSameHeight = height == peer.getHeight()
+                    && safeChainWork.compareTo(peer.getChainWork() == null ? UInt256.ZERO : peer.getChainWork()) > 0;
+            if (height>peer.getHeight() || higherWorkAtSameHeight){
                 peer.setHashHex(hashHex);
                 peer.setHeight(height);
-                peer.setChainWork(chainWork);
+                peer.setChainWork(safeChainWork);
             }
             addPeer(peer);
         }
@@ -936,6 +1570,7 @@ public class RoutingTable {
             log.warn("目标节点ID格式错误");
             return Collections.emptyList();
         }
+        parallelism = adaptiveParallelism(parallelism);
 
         // 1. 初始化最近节点列表
         List<Peer> closestPeers = new CopyOnWriteArrayList<>();
@@ -1104,6 +1739,7 @@ public class RoutingTable {
             log.warn("targetId或searchId格式错误（必须32字节）");
             return Collections.emptyList();
         }
+        parallelism = adaptiveParallelism(parallelism);
 
         // 2. 初始化核心容器（线程安全）
         // 待查询的节点队列（初始放入指定的targetId节点）
@@ -1205,6 +1841,7 @@ public class RoutingTable {
      * 向指定节点发送FindNode请求
      */
     public List<Peer> sendFindNodeToPeer(String peerIdHex, byte[] searchId, int count, int timeoutMillis) {
+        long startTime = System.currentTimeMillis();
         try {
             // 构造查询数据
             byte[] data = new byte[36];
@@ -1214,6 +1851,8 @@ public class RoutingTable {
             // 发送查询请求
             byte[] p2pRes = staticSendData(peerIdHex, ProtocolEnum.P2P_Find_Node_Req, data, timeoutMillis);
             if (p2pRes == null) {
+                lookupFailureCount.incrementAndGet();
+                recordPeerFailure(peerIdHex, "find_node no response");
                 log.debug("节点{}无响应", peerIdHex);
                 return Collections.emptyList();
             }
@@ -1221,18 +1860,25 @@ public class RoutingTable {
             // 解析响应
             P2PMessage response = P2PMessage.deserialize(p2pRes);
             if (response == null || response.getData() == null) {
+                lookupFailureCount.incrementAndGet();
+                recordPeerFailure(peerIdHex, "find_node empty response");
                 return Collections.emptyList();
             }
 
             List<Peer> peers = deserializePeers(response.getData());
             if (peers == null) {
+                lookupFailureCount.incrementAndGet();
+                recordPeerFailure(peerIdHex, "find_node invalid peers");
                 return Collections.emptyList();
             }
 
-            // 添加新发现的节点到路由表
+            lookupSuccessCount.incrementAndGet();
+            recordPeerSuccess(peerIdHex, null, System.currentTimeMillis() - startTime, !peers.isEmpty());
+
+            // 新发现的节点先进入候选池，后台验证成功后再进入路由表
             for (Peer discoveredPeer : peers) {
                 if (discoveredPeer != null && !Arrays.equals(discoveredPeer.getId(), localNodeId)) {
-                    addPeer(discoveredPeer);
+                    rememberCandidatePeer(discoveredPeer, peerIdHex);
                 }else {
                     log.info("节点是自己");
                 }
@@ -1242,6 +1888,8 @@ public class RoutingTable {
             return peers;
 
         } catch (Exception e) {
+            lookupFailureCount.incrementAndGet();
+            recordPeerFailure(peerIdHex, e.getMessage());
             log.debug("查询节点{}失败: {}", peerIdHex, e.getMessage());
             return Collections.emptyList();
         }
@@ -1388,18 +2036,27 @@ public class RoutingTable {
             log.info("开始执行路由表刷新任务");
             long startTime = System.currentTimeMillis();
 
-            // 遍历所有 K 桶（跳过空桶/无节点的桶）
+            int refreshedBuckets = 0;
+            int maxBucketsPerCycle = 32;
+            // 遍历所有 K 桶，优先刷新空桶、稀疏桶和长期未访问的桶
             for (int bucketIndex = 0; bucketIndex < buckets.size(); bucketIndex++) {
+                if (refreshedBuckets >= maxBucketsPerCycle) {
+                    break;
+                }
+                if (bucketIndex >= identifierSize) {
+                    continue;
+                }
                 Bucket bucket = buckets.get(bucketIndex);
-                if (bucket == null || bucket.size() == 0) {
+                if (bucket == null) {
                     continue;
                 }
 
-                // 跳过长期未访问的桶（优化：仅刷新30分钟内有访问的桶）
+                boolean sparseBucket = bucket.size() < Math.max(1, bucketSize / 4);
                 Long lastAccessTime = lastBucketAccessTime.get(bucketIndex);
-                if (lastAccessTime != null &&
-                        System.currentTimeMillis() - lastAccessTime > 30 * 60 * 1000) {
-                    log.debug("桶{}超过30分钟未访问，跳过刷新", bucketIndex);
+                boolean staleBucket = lastAccessTime == null ||
+                        System.currentTimeMillis() - lastAccessTime > 30 * 60 * 1000;
+                if (!sparseBucket && !staleBucket) {
+                    log.debug("桶{}覆盖健康，跳过刷新", bucketIndex);
                     continue;
                 }
 
@@ -1423,6 +2080,7 @@ public class RoutingTable {
 
                 // 用新节点更新当前桶
                 updateBucketWithNewPeers(bucketIndex, newPeers);
+                refreshedBuckets++;
 
                 //TODO
                 // 清理桶内失效节点（PING 检测）
@@ -1513,8 +2171,7 @@ public class RoutingTable {
                     continue;
                 }
 
-                // 复用addPeer逻辑，自动处理桶的满/空、节点活跃度
-                addPeer(newPeer);
+                rememberCandidatePeer(newPeer, "refresh");
             }
         }
 

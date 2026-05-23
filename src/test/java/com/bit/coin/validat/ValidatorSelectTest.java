@@ -66,4 +66,7 @@ public class ValidatorSelectTest {
         new java.security.SecureRandom().nextBytes(bytes);
         return bytes;
     }
+
+
+    //生成一笔惩罚交易 并上链 所有的人都能收到这笔交易
 }

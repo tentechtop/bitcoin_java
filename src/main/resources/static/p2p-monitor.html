@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>P2P 连接监控</title>
+    <style>
+        :root {
+            --bg: #f5f7fa;
+            --panel: #ffffff;
+            --ink: #17212b;
+            --muted: #607080;
+            --line: #d7e0e8;
+            --blue: #1f6fb2;
+            --green: #237a57;
+            --orange: #b7651d;
+            --red: #b42318;
+            --yellow: #fff6df;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+            letter-spacing: 0;
+        }
+
+        .shell {
+            width: min(1480px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 24px 0 36px;
+        }
+
+        header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 18px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.2;
+        }
+
+        .hint {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: var(--panel);
+            color: var(--ink);
+            padding: 9px 13px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        button:hover {
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .status-text {
+            min-width: 126px;
+            color: var(--muted);
+            font-size: 13px;
+            text-align: right;
+        }
+
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(140px, 1fr));
+            gap: 12px;
+            margin: 18px 0;
+        }
+
+        .metric,
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .metric {
+            padding: 14px;
+            min-width: 0;
+        }
+
+        .metric label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .metric strong {
+            display: block;
+            overflow-wrap: anywhere;
+            font-size: 23px;
+            line-height: 1.12;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 380px;
+            gap: 16px;
+            align-items: start;
+        }
+
+        .panel {
+            overflow: hidden;
+        }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+            font-weight: 700;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            min-width: 1160px;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 11px 13px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            white-space: nowrap;
+            font-size: 13px;
+        }
+
+        th {
+            color: var(--muted);
+            background: #fafbfd;
+            font-weight: 700;
+        }
+
+        tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .peer {
+            max-width: 270px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: Consolas, "Courier New", monospace;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            border-radius: 999px;
+            padding: 0 9px;
+            background: #e8f5ef;
+            color: var(--green);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .badge.warn {
+            background: var(--yellow);
+            color: var(--orange);
+        }
+
+        .badge.bad {
+            background: #fff0ed;
+            color: var(--red);
+        }
+
+        .side {
+            display: grid;
+            gap: 16px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 220px;
+            background: #fbfcfd;
+        }
+
+        .legend {
+            display: flex;
+            gap: 14px;
+            padding: 0 16px 14px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .key {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .swatch {
+            width: 18px;
+            height: 3px;
+            border-radius: 3px;
+            background: var(--blue);
+        }
+
+        .swatch.orange {
+            background: var(--orange);
+        }
+
+        .empty {
+            padding: 46px 16px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        @media (max-width: 1080px) {
+            header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .status-text {
+                text-align: left;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .shell {
+                width: min(100vw - 20px, 1480px);
+                padding-top: 16px;
+            }
+
+            .summary {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+<main class="shell">
+    <header>
+        <div>
+            <h1>P2P 连接监控</h1>
+            <div class="hint">实时查看连接节点、网速、传输字节、RTT、流量窗口和拥塞窗口。</div>
+        </div>
+        <div class="toolbar">
+            <button type="button" id="refreshBtn">刷新</button>
+            <button type="button" id="pauseBtn">暂停</button>
+            <div class="status-text" id="statusText">等待数据</div>
+        </div>
+    </header>
+
+    <section class="summary">
+        <div class="metric">
+            <label>连接数</label>
+            <strong id="connCount">0</strong>
+        </div>
+        <div class="metric">
+            <label>发送速率</label>
+            <strong id="sendRate">0 B/s</strong>
+        </div>
+        <div class="metric">
+            <label>接收速率</label>
+            <strong id="recvRate">0 B/s</strong>
+        </div>
+        <div class="metric">
+            <label>累计发送</label>
+            <strong id="sentTotal">0 B</strong>
+        </div>
+        <div class="metric">
+            <label>累计接收</label>
+            <strong id="recvTotal">0 B</strong>
+        </div>
+        <div class="metric">
+            <label>平均 RTT</label>
+            <strong id="avgRtt">-</strong>
+        </div>
+    </section>
+
+    <section class="layout">
+        <div class="panel">
+            <div class="panel-title">
+                <span>连接节点</span>
+                <span class="hint" id="updatedAt">未更新</span>
+            </div>
+            <div class="table-wrap" id="tableWrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Peer ID</th>
+                        <th>地址</th>
+                        <th>方向</th>
+                        <th>状态</th>
+                        <th>空闲</th>
+                        <th>RTT</th>
+                        <th>发送速率</th>
+                        <th>接收速率</th>
+                        <th>累计发送</th>
+                        <th>累计接收</th>
+                        <th>CWND</th>
+                        <th>SSTHRESH</th>
+                        <th>远端窗口</th>
+                        <th>本地窗口</th>
+                        <th>在途字节</th>
+                        <th>待发队列</th>
+                    </tr>
+                    </thead>
+                    <tbody id="connectionRows"></tbody>
+                </table>
+            </div>
+            <div class="empty" id="emptyState" hidden>当前没有活跃连接</div>
+        </div>
+
+        <div class="side">
+            <div class="panel">
+                <div class="panel-title">吞吐趋势</div>
+                <canvas id="rateChart" width="760" height="440"></canvas>
+                <div class="legend">
+                    <span class="key"><span class="swatch"></span>发送</span>
+                    <span class="key"><span class="swatch orange"></span>接收</span>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-title">窗口趋势</div>
+                <canvas id="windowChart" width="760" height="440"></canvas>
+                <div class="legend">
+                    <span class="key"><span class="swatch"></span>拥塞窗口</span>
+                    <span class="key"><span class="swatch orange"></span>在途字节</span>
+                </div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>
+    const rowsEl = document.getElementById('connectionRows');
+    const tableWrap = document.getElementById('tableWrap');
+    const emptyState = document.getElementById('emptyState');
+    const statusText = document.getElementById('statusText');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const history = [];
+    let paused = false;
+
+    function formatBytes(value) {
+        const n = Number(value || 0);
+        if (n < 1024) return `${n.toFixed(0)} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MB`;
+        return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    }
+
+    function formatRate(value) {
+        return `${formatBytes(value)}/s`;
+    }
+
+    function formatMillis(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) return '-';
+        if (n < 1000) return `${Math.round(n)} ms`;
+        return `${(n / 1000).toFixed(1)} s`;
+    }
+
+    function sum(items, field) {
+        return items.reduce((total, item) => total + Number(item[field] || 0), 0);
+    }
+
+    function updateSummary(items) {
+        const sendRate = sum(items, 'sendBytesPerSecond');
+        const recvRate = sum(items, 'receiveBytesPerSecond');
+        const sentTotal = sum(items, 'sentBytes');
+        const recvTotal = sum(items, 'receivedBytes');
+        const rtts = items.map(item => Number(item.lastRttMillis)).filter(value => value >= 0);
+        const avgRtt = rtts.length ? Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length) : -1;
+
+        document.getElementById('connCount').textContent = items.length;
+        document.getElementById('sendRate').textContent = formatRate(sendRate);
+        document.getElementById('recvRate').textContent = formatRate(recvRate);
+        document.getElementById('sentTotal').textContent = formatBytes(sentTotal);
+        document.getElementById('recvTotal').textContent = formatBytes(recvTotal);
+        document.getElementById('avgRtt').textContent = formatMillis(avgRtt);
+
+        history.push({
+            sendRate,
+            recvRate,
+            cwnd: sum(items, 'congestionWindow'),
+            inflight: sum(items, 'sentUnAckedBytes')
+        });
+        while (history.length > 60) history.shift();
+    }
+
+    function renderRows(items) {
+        rowsEl.innerHTML = items.map(item => {
+            const idle = Number(item.idleMillis || 0);
+            const stateClass = item.expired ? 'bad' : (idle > 1500 ? 'warn' : '');
+            const stateText = item.expired ? '失效' : (idle > 1500 ? '空闲' : '在线');
+            const pendingBytes = Number(item.pendingQueueMB || 0) * 1024 * 1024;
+            return `
+                <tr>
+                    <td class="peer" title="${item.peerId || ''}">${item.peerId || '-'}</td>
+                    <td>${item.remoteAddress || '-'}</td>
+                    <td>${item.outbound ? '出站' : '入站'}</td>
+                    <td><span class="badge ${stateClass}">${stateText}</span></td>
+                    <td>${formatMillis(idle)}</td>
+                    <td>${formatMillis(item.lastRttMillis)}</td>
+                    <td>${formatRate(item.sendBytesPerSecond)}</td>
+                    <td>${formatRate(item.receiveBytesPerSecond)}</td>
+                    <td>${formatBytes(item.sentBytes)}</td>
+                    <td>${formatBytes(item.receivedBytes)}</td>
+                    <td>${formatBytes(item.congestionWindow)}</td>
+                    <td>${formatBytes(item.slowStartThreshold)}</td>
+                    <td>${formatBytes(item.remoteReceiveWindow)}</td>
+                    <td>${formatBytes(item.localReceiveWindow)}</td>
+                    <td>${formatBytes(item.sentUnAckedBytes)}</td>
+                    <td>${formatBytes(pendingBytes)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const isEmpty = items.length === 0;
+        tableWrap.hidden = isEmpty;
+        emptyState.hidden = !isEmpty;
+    }
+
+    function drawChart(canvasId, firstKey, secondKey) {
+        const canvas = document.getElementById(canvasId);
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        const pad = 36;
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = '#fbfcfd';
+        ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = '#d7e0e8';
+        ctx.lineWidth = 1;
+
+        for (let i = 0; i < 5; i++) {
+            const y = pad + (height - pad * 2) * i / 4;
+            ctx.beginPath();
+            ctx.moveTo(pad, y);
+            ctx.lineTo(width - pad, y);
+            ctx.stroke();
+        }
+
+        const max = Math.max(1, ...history.flatMap(item => [item[firstKey], item[secondKey]]));
+        const points = history.length > 1 ? history.length - 1 : 1;
+
+        function line(key, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            history.forEach((item, index) => {
+                const x = pad + (width - pad * 2) * index / points;
+                const y = height - pad - (height - pad * 2) * Number(item[key] || 0) / max;
+                if (index === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+        }
+
+        line(firstKey, '#1f6fb2');
+        line(secondKey, '#b7651d');
+
+        ctx.fillStyle = '#607080';
+        ctx.font = '22px Arial';
+        ctx.fillText(formatBytes(max), pad, 27);
+    }
+
+    async function loadStats(force = false) {
+        if (paused && !force) return;
+        try {
+            const response = await fetch('/peer/getConnectionStats', { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const items = await response.json();
+            updateSummary(items);
+            renderRows(items);
+            drawChart('rateChart', 'sendRate', 'recvRate');
+            drawChart('windowChart', 'cwnd', 'inflight');
+            const now = new Date();
+            document.getElementById('updatedAt').textContent = now.toLocaleTimeString();
+            statusText.textContent = paused ? '已暂停' : '自动刷新中';
+        } catch (error) {
+            statusText.textContent = `读取失败: ${error.message}`;
+        }
+    }
+
+    refreshBtn.addEventListener('click', () => loadStats(true));
+    pauseBtn.addEventListener('click', () => {
+        paused = !paused;
+        pauseBtn.textContent = paused ? '继续' : '暂停';
+        statusText.textContent = paused ? '已暂停' : '自动刷新中';
+        if (!paused) loadStats();
+    });
+
+    loadStats(true);
+    setInterval(() => loadStats(), 1000);
+</script>
+</body>
+</html>

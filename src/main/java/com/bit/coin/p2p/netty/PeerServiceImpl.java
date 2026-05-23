@@ -76,6 +76,12 @@ public class PeerServiceImpl {
     private P2PQueryBlockByHeightHandle p2PQueryBlockByHeightHandle;
     @Autowired
     private P2PQueryCommonAncestorHandle p2PQueryCommonAncestorHandle;
+    @Autowired
+    private P2PQueryBlockHeadersHandle p2PQueryBlockHeadersHandle;
+    @Autowired
+    private P2PPeerHintsHandle p2PPeerHintsHandle;
+    @Autowired
+    private P2PNodeStatusHandle p2PNodeStatusHandle;
 
 
 
@@ -94,6 +100,9 @@ public class PeerServiceImpl {
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash,  p2PQueryBlockByHashHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height,  p2PQueryBlockByHeightHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Common_Ancestor,  p2PQueryCommonAncestorHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_Headers,  p2PQueryBlockHeadersHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Peer_Hints, p2PPeerHintsHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Node_Status, p2PNodeStatusHandle);
 
         connectBootstrapNodes();
     }

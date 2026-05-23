@@ -60,8 +60,7 @@ public class ECCWithAESGCM {
 
     static {
         // 初始化固定盐值（类加载时生成一次）
-        HKDF_SALT = new byte[32];
-        new SecureRandom().nextBytes(HKDF_SALT);
+        HKDF_SALT = "bit-coin-p2p-quic-aes-gcm-v1".getBytes(StandardCharsets.UTF_8);
     }
 
     /**

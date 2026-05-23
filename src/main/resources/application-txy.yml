@@ -22,7 +22,8 @@ system:
   server-pubkey:
     - ''
   bootstrap:
-    - '/ip4/127.0.0.1/quic/8333/p2p/8qeR2LbCDfQwu67AVj9Beiairn92KiJrttWG9U8ZKb9k'
+    - '/ip4/127.0.0.1/quic/8334/p2p/7BBnkRzL4ubKXRJgetRnknCMS7GV1LspLQmBSmrmeia7'
+    - '/ip4/127.0.0.1/quic/8333/p2p/ttfyrD2jVDxxJYCfqyH1XgkMc1k5gxgUCxo1MPSp3UN'
 
 
 

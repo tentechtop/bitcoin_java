@@ -40,6 +40,12 @@ public enum ProtocolEnum {
 
     Handshake_Success_V1(16, "/handshakeSuccess/1.0.0",false),
 
+    P2P_Query_Block_Headers(17, "/P2P_Query_Block_Headers/1.0.0",true),
+
+    P2P_Peer_Hints(18, "/P2P_Peer_Hints/1.0.0",false),
+
+    P2P_Node_Status(19, "/P2P_Node_Status/1.0.0",false),
+
 
     ;
 
