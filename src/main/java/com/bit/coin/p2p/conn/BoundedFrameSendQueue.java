@@ -12,7 +12,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *新帧生成  →  【待发送队列】  →  取出发送  →  【已发送未确认队列】
  *                                           ↙          ↓          ↘
  *                                 超时重传（移回待发送）  ACK确认（删除）  数据过期（强制删除）
- * 核心状态：待发送队列（pending）→ 已发送未确认（sentUnAcked）→ 确认完成/超时重传/数据过期删除
+ * 核心状态：待发送队列 → 已发送未确认队列 → 确认完成/超时重传/数据过期删除
  */
 @Slf4j
 public class BoundedFrameSendQueue {
@@ -21,7 +21,7 @@ public class BoundedFrameSendQueue {
     // ========== 核心存储 ==========
     // 待发送队列（优先级：重传帧 > 新帧）
     private final PriorityBlockingQueue<FrameQueueElement> pendingQueue = new PriorityBlockingQueue<>();
-    // 已发送未确认映射表（key=dataId_sequence，value=帧元素）
+    // 已发送未确认映射表（键为数据ID_序列号，值为帧元素）
     private final ConcurrentHashMap<String, FrameQueueElement> sentUnAckedMap = new ConcurrentHashMap<>();
     // 待发送队列已入队的帧（去重）
     private final Set<FrameQueueElement> pendingExistedFrames = Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -38,10 +38,10 @@ public class BoundedFrameSendQueue {
     // 已发送未确认队列操作锁
     private final ReentrantLock sentUnAckedLock = new ReentrantLock();
 
-    // 关联外部的unAckedDataMap（用于查询完整QuicFrame）
+    // 关联外部的未确认数据映射，用于查询完整帧
     private final ConcurrentHashMap<Long, SendQuicData> unAckedDataMap;
 
-    // 构造函数：注入unAckedDataMap，用于查询完整帧
+    // 构造函数：注入未确认数据映射，用于查询完整帧
     public BoundedFrameSendQueue(ConcurrentHashMap<Long, SendQuicData> unAckedDataMap) {
         this.unAckedDataMap = unAckedDataMap;
     }
@@ -57,7 +57,7 @@ public class BoundedFrameSendQueue {
             return false;
         }
 
-        // 【修复点1】入队前检查：如果dataId已过期/全量ACK，直接丢弃
+        // 入队前检查：如果数据已过期或已全量确认，直接丢弃。
         SendQuicData sendQuicData = unAckedDataMap.get(dataId);
         if (sendQuicData == null) {
             log.debug("[帧入队] 丢弃不存在dataId的帧，dataId={}, sequence={}", dataId, sequence);
@@ -123,7 +123,7 @@ public class BoundedFrameSendQueue {
                 return false;
             }
 
-            // 【修复点2】批量预校验时检查：如果dataId已过期/全量ACK，直接失败
+            // 批量预校验时检查：如果数据已过期或已全量确认，直接失败。
             SendQuicData sendQuicData = unAckedDataMap.get(meta.getDataId());
             if (sendQuicData == null) {
                 log.error("[批量帧入队] 第{}帧所属dataId={}不存在，批量入队失败", i, meta.getDataId());
@@ -184,7 +184,7 @@ public class BoundedFrameSendQueue {
 
 
     // ==========================================================================
-    // 新增：帧元数据封装类（用于批量入队）
+    // 帧元数据封装类，用于批量入队。
     // ==========================================================================
     public static class FrameMeta {
         private long dataId;
@@ -197,7 +197,7 @@ public class BoundedFrameSendQueue {
             this.frameSize = frameSize;
         }
 
-        // getter
+        // 访问器
         public long getDataId() { return dataId; }
         public int getSequence() { return sequence; }
         public int getFrameSize() { return frameSize; }
@@ -205,7 +205,7 @@ public class BoundedFrameSendQueue {
 
 
     // ==========================================================================
-    // 核心方法：从待发送队列取帧（返回完整QuicFrame，从unAckedDataMap查询）
+    // 核心方法：从待发送队列取帧，并从未确认数据映射查询完整帧。
     // ==========================================================================
     public List<QuicFrame> takePendingToSent(int maxBytes) {
         if (maxBytes <= 0 || pendingQueue.isEmpty()) {
@@ -222,7 +222,7 @@ public class BoundedFrameSendQueue {
             while ((element = pendingQueue.poll()) != null && totalTakeSize < maxBytes) {
                 long elementSize = element.getFrameSize();
 
-                // 单帧超maxBytes处理
+                // 单帧超过本次最大字节数时留在队列中。
                 if (elementSize > maxBytes) {
                     pendingQueue.add(element);
                     log.warn("[取出待发送帧] 帧(dataId={}, sequence={})大小{}B超过本次发送最大限制{}B，跳过本次发送",
@@ -240,7 +240,7 @@ public class BoundedFrameSendQueue {
                 }
             }
 
-            // 从unAckedDataMap查询完整QuicFrame
+            // 从未确认数据映射查询完整帧。
             for (FrameQueueElement e : takeElements) {
                 pendingExistedFrames.remove(e);
                 QuicFrame frame = getQuicFrameFromMeta(e);
@@ -272,7 +272,7 @@ public class BoundedFrameSendQueue {
     }
 
     // ==========================================================================
-    // 辅助方法：通过元数据查询完整QuicFrame
+    // 辅助方法：通过元数据查询完整帧。
     // ==========================================================================
     private QuicFrame getQuicFrameFromMeta(FrameQueueElement element) {
         long dataId = element.getDataId();
@@ -438,7 +438,7 @@ public class BoundedFrameSendQueue {
                 cleanedPendingSize + cleanedSentUnAckedSize,
                 cleanedPendingSize, cleanedSentUnAckedSize,sentUnAckedTotalSize);
 
-        return totalCleaned;
+        return (int) Math.min(cleanedSentUnAckedSize, Integer.MAX_VALUE);
     }
 
 
@@ -537,7 +537,7 @@ public class BoundedFrameSendQueue {
 
         log.debug("[批量ACK完成] dataId={}，传入{}个序列号，实际清理{}帧，释放总空间{}B",
                 dataId, sequences.length, cleanedCount, cleanedSize);
-        return cleanedCount;
+        return (int) Math.min(cleanedSize, Integer.MAX_VALUE);
     }
 
     public int retransmitFrame(long dataId, long timeoutMs) {
@@ -611,7 +611,7 @@ public class BoundedFrameSendQueue {
             int droppedCount = 0; // 新增：统计因过期丢弃的帧数
 
             for (FrameQueueElement element : elements) {
-                // 【修复点5】加入已发送队列前检查：如果dataId已过期/全量ACK，直接丢弃
+                // 加入已发送队列前检查：如果数据已过期或已全量确认，直接丢弃。
                 SendQuicData sendQuicData = unAckedDataMap.get(element.getDataId());
                 if (sendQuicData == null) {
                     droppedCount++;

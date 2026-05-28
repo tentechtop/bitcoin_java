@@ -47,20 +47,22 @@ public class QuicConnection implements QuicConnectionInterFace{
     private byte[] sharedSecret;//共享加密密钥
     private volatile boolean expired = false;//是否过期
     private volatile long lastSeen = System.currentTimeMillis();//最后访问时间
-    private boolean isOutbound;//true 是出站连接 false是入站连接
+    private boolean isOutbound;// 是否出站连接
 
 
-    //帧最大负载 通过 TODO 通过METU确定
-    public volatile int MAX_FRAME_PAYLOAD = 1400 ;
+    // 单帧最大负载由路径MTU估算器动态收敛。
+    public volatile int MAX_FRAME_PAYLOAD = PathMtuEstimator.DEFAULT_DATAGRAM_BYTES - QuicFrame.FIXED_HEADER_LENGTH;
+    private final PathMtuEstimator pathMtuEstimator = new PathMtuEstimator();
     private volatile long lastActivityTime = lastSeen;
 
-    //待发送数据 每个连接对应一个队列 数据结构BlockingQueue<SendQuicData>
+    // 待发送数据：每个连接对应一个发送队列。
     private ConcurrentHashMap<Long, SendQuicData> unAckedDataMap = new ConcurrentHashMap<>();
-    //数据顺序 新的数据的加入到队尾部 无锁高并发 + 双端有序操作
+    // 数据顺序：新数据加入队尾，重传数据可插入队首。
     private final OrderedConcurrentSet unAckedDataSet = new OrderedConcurrentSet();
 
     //接收数据
     private ConcurrentHashMap<Long, ReceiveQuicData> receiveDataMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, AtomicInteger> receiveWindowReservations = new ConcurrentHashMap<>();
 
 
     /** 坏数据数据阈值（超过则标记连接失效） */
@@ -69,27 +71,27 @@ public class QuicConnection implements QuicConnectionInterFace{
     private volatile int expiredDataCount = 0;
 
 
-    // sentDataSet：key=dataId，value=发送完成时间 或者过期时间 已经发送或者已经
+    // 发送完成记录：键为数据ID，值为发送完成时间或过期时间
     private Map<Long, Long> sendMap = new ConcurrentHashMap<>();
-    // receivedDataSet：key=dataId，value=接收完成时间 或者 过期时间
+    // 接收完成记录：键为数据ID，值为接收完成时间或过期时间
     private Map<Long, Long> receiveMap = new ConcurrentHashMap<>();
 
 
     //发送方「可发送量」= 接收方通告的「剩余窗口」 - 发送方「已发送未确认的数据量」
-    /** 初始窗口大小：1MB */
-    public static final int INIT_WINDOW_SIZE = 1024 * 1024;
+    /** 单连接接收窗口大小，覆盖当前最大分片集合并给重组留出余量。 */
+    public static final int INIT_WINDOW_SIZE = 16 * 1024 * 1024;
 
     // ========== 拆分锁：发送方/接收方各自独立 ==========
-    /** 发送方窗口操作锁：保护remoteRwnd、sentUnAckedBytes */
+    /** 发送方窗口操作锁：保护远端接收窗口与已发送未确认字节数 */
     private final ReentrantLock senderLock = new ReentrantLock();
-    /** 接收方窗口操作锁：保护localRwnd、receivedUnProcessedBytes */
+    /** 接收方窗口操作锁：保护本地接收窗口与待处理字节数 */
     private final ReentrantLock receiverLock = new ReentrantLock();
 
 
-    // 发送方视角：远程接收方的剩余窗口（由B通过ACK帧通告） 剩余
+    // 发送方视角：远程接收方通过确认帧通告的剩余窗口。
     private final AtomicInteger remoteRwnd = new AtomicInteger(INIT_WINDOW_SIZE);
 
-    // 接收方视角：本地剩余接收窗口（初始1MB） 剩余可花费的额度 localRwnd = INIT_WINDOW_SIZE - receivedUnProcessedBytes
+    // 接收方视角：本地剩余接收窗口。
     private final AtomicInteger localRwnd = new AtomicInteger(INIT_WINDOW_SIZE);
     private final LocalCongestionWindow congestionWindow = new LocalCongestionWindow();
     private final AtomicLong sentBytes = new AtomicLong(0);
@@ -169,7 +171,10 @@ public class QuicConnection implements QuicConnectionInterFace{
                 congestionWindow.getSlowStartThreshold(),
                 frameSendQueue.getPendingSizeMB(),
                 frameSendQueue.getSentUnAckedSizeMB(),
-                frameSendQueue.getSentUnAckedSize()
+                frameSendQueue.getSentUnAckedSize(),
+                MAX_FRAME_PAYLOAD,
+                pathMtuEstimator.currentDatagramBytes(),
+                QuicConnectionManager.getGlobalOutboundAvailableBytes()
         );
     }
 
@@ -229,29 +234,27 @@ public class QuicConnection implements QuicConnectionInterFace{
 
     private void handleDataFrame(QuicFrame quicFrame) {
         if (expired) {
-            //发送下线帧
+            // 发送下线帧
             disConnectRemoteByPeerId(peerId);
             return;
         }
-        //是否已经接收过这个数据 这个数据是否已经过期
+        // 已处理或已过期的数据直接取消，避免重复扣减接收窗口。
         if (receiveMap.containsKey(quicFrame.getDataId())) {
-            //包含 该数据处理过 或者 已经过期 直接回复停止发送帧  不扣减窗口也
             sendFrameWithoutResponse(buildCancelFrame(quicFrame,localRwnd.get()));
             return;
         }
         // ========== 1. 基础参数准备 ==========
         long dataId = quicFrame.getDataId();
         int framePayloadSize = quicFrame.getFrameTotalLength();
-        // 标记：是否成功扣减窗口（用于异常回滚）
-        boolean windowDeducted = false;
         ReceiveQuicData receiveQuicData = null;
         if (receiveDataMap.containsKey(quicFrame.getDataId())) {
             receiveQuicData = receiveDataMap.get(quicFrame.getDataId());
-            //检查是否过期
+            // 检查接收中的数据是否已过期。
             if (System.currentTimeMillis() - receiveQuicData.getStartReceiveTime() > receiveQuicData.getExpireTime()) {
                 log.warn("[数据过期] dataId={}已过期，丢弃帧", quicFrame.getDataId());
                 sendFrameWithoutResponse(buildCancelFrame(quicFrame,localRwnd.get()));
                 receiveDataMap.remove(quicFrame.getDataId());
+                releaseReservedReceiveWindow(quicFrame.getDataId());
                 return;
             }
         }else {
@@ -261,38 +264,31 @@ public class QuicConnection implements QuicConnectionInterFace{
             receiveQuicData.setTotal(quicFrame.getTotal());
             receiveQuicData.setRemoteAddress(quicFrame.getRemoteAddress());
             receiveQuicData.setStartReceiveTime(System.currentTimeMillis());
-            receiveQuicData.setExpireTime(5000);//5秒过期
+            receiveQuicData.setExpireTime(5000);// 5秒过期
             receiveDataMap.put(quicFrame.getDataId(), receiveQuicData);
         }
+        boolean newInboundFrame = !receiveQuicData.hasReceivedSequence(quicFrame.getSequence());
         // 仅对非空业务帧扣减窗口
-        if (framePayloadSize > 0) {
+        if (framePayloadSize > 0 && newInboundFrame) {
             // 窗口不足 → 缓存或拒绝
             if (!deductLocalWindow(framePayloadSize)) {
                 handleWindowNotEnough(quicFrame);
                 return;
             }
-            windowDeducted = true;
+            reserveReceiveWindow(dataId, framePayloadSize);
             log.debug("[窗口扣减成功] dataId={}，扣减{}B，剩余窗口{}B",
                     quicFrame.getDataId(), framePayloadSize, localRwnd.get());
         }
         ReceiveResult receiveResult = receiveQuicData.handleFrame(quicFrame, localRwnd.get());
-        //只要处理过就回补
-        if (windowDeducted) {
-            // 原子回补剩余窗口
-            releaseLocalWindow(framePayloadSize);
-            log.debug("[帧处理完成回补窗口] dataId={}，回补{}B，剩余窗口{}B",
-                    dataId, framePayloadSize, localRwnd.get());
-
-            // 窗口回补后，消费缓存队列中的帧（缓解拥塞）
-            consumeWaitQueue();
-        }
+        // 接收窗口在数据完成、失败或过期后统一回补。
         if (!receiveResult.isSuccess()) {
             receiveDataMap.remove(quicFrame.getDataId());
+            releaseReservedReceiveWindow(dataId);
             sendFrameWithoutResponse(buildCancelFrame(quicFrame, localRwnd.get()));
             return;
         }
         if (receiveResult.isCompleted()){
-            
+            releaseReservedReceiveWindow(dataId);
             boolean delivered = deliverCompletedData(receiveQuicData, quicFrame);
             receiveDataMap.remove(quicFrame.getDataId());
             if (!delivered) {
@@ -394,6 +390,28 @@ public class QuicConnection implements QuicConnectionInterFace{
         }
     }
 
+    private void reserveReceiveWindow(long dataId, int bytes) {
+        if (bytes <= 0) {
+            return;
+        }
+        receiveWindowReservations
+                .computeIfAbsent(dataId, key -> new AtomicInteger())
+                .addAndGet(bytes);
+    }
+
+    private void releaseReservedReceiveWindow(long dataId) {
+        AtomicInteger reserved = receiveWindowReservations.remove(dataId);
+        if (reserved == null) {
+            return;
+        }
+        int bytes = reserved.get();
+        if (bytes > 0) {
+            releaseLocalWindow(bytes);
+            consumeWaitQueue();
+            log.debug("[接收窗口回补] dataId={} bytes={} localWindow={}", dataId, bytes, localRwnd.get());
+        }
+    }
+
 
 
     private void handleDataACKFrame(QuicFrame quicFrame) {
@@ -417,8 +435,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                     //将这个ID加入到已经发送
                     sendMap.put(dataId, System.currentTimeMillis());
                     //通知队列
-                    frameSendQueue.ackAllFramesByDataId(dataId);
-                    ackedBytes = MAX_FRAME_PAYLOAD;
+                    ackedBytes = frameSendQueue.ackAllFramesByDataId(dataId);
                 }else {
                     //通知队列
                     ackedBytes = frameSendQueue.ackFrame(dataId, sequence);
@@ -430,9 +447,18 @@ public class QuicConnection implements QuicConnectionInterFace{
             }
         }
         if (acked) {
-            congestionWindow.onAckedBytes(ackedBytes);
+            onAckedOutboundBytes(ackedBytes);
             pickUnAckedFrames();
         }
+    }
+
+    private void onAckedOutboundBytes(int ackedBytes) {
+        if (ackedBytes <= 0) {
+            return;
+        }
+        pathMtuEstimator.onAckedBytes(ackedBytes);
+        MAX_FRAME_PAYLOAD = pathMtuEstimator.currentPayloadBytes();
+        congestionWindow.onAckedBytes(ackedBytes, MAX_FRAME_PAYLOAD);
     }
 
 
@@ -442,6 +468,7 @@ public class QuicConnection implements QuicConnectionInterFace{
         log.info("handleAllACKFrame接收方窗口{}",i);
         SendQuicData sendQuicData = unAckedDataMap.get(dataId);
         boolean acked = false;
+        int ackedBytes = 0;
         if (sendQuicData!=null && !sendQuicData.isExpired() && !sendQuicData.isCompleted()){
             try {
                 //加锁
@@ -453,15 +480,15 @@ public class QuicConnection implements QuicConnectionInterFace{
                 //立即删除不做任何判断
                 removeSendData(dataId);
                 //通知队列
-                frameSendQueue.ackAllFramesByDataId(dataId);
-                acked = true;
+                ackedBytes = frameSendQueue.ackAllFramesByDataId(dataId);
+                acked = ackedBytes > 0;
             }finally {
                 //解锁
                 senderLock.unlock();
             }
         }
         if (acked) {
-            congestionWindow.increaseSmoothly();
+            onAckedOutboundBytes(ackedBytes);
             pickUnAckedFrames();
         }
     }
@@ -471,7 +498,7 @@ public class QuicConnection implements QuicConnectionInterFace{
         int i = quicFrame.readBatchAckFrameWindowSize();
         log.debug("handleBatchACKFrame 窗口大小是{}", i);
         SendQuicData sendQuicData = unAckedDataMap.get(dataId);
-        int ackedCount = 0;
+        int ackedBytes = 0;
         if (sendQuicData!=null && !sendQuicData.isExpired() && !sendQuicData.isCompleted()){
             try {
                 //加锁
@@ -481,7 +508,6 @@ public class QuicConnection implements QuicConnectionInterFace{
                 int[] ints = quicFrame.readBatchAckFrameSequences();
                 AckResult ackResult = sendQuicData.handleBatchACKFrame(ints);
                 if (ackResult.isSuccess()){
-                    ackedCount = ackResult.getAckedFrameCounts();
                     boolean completed = ackResult.isCompleted();
                     if (completed){
                         //将这个ID加入到已经发送
@@ -489,9 +515,9 @@ public class QuicConnection implements QuicConnectionInterFace{
                         //立即删除不做任何判断
                         removeSendData(dataId);
                         //通知队列
-                        frameSendQueue.ackAllFramesByDataId(dataId);
+                        ackedBytes = frameSendQueue.ackAllFramesByDataId(dataId);
                     }else {
-                        frameSendQueue.batchAckFrame(dataId, ints);
+                        ackedBytes = frameSendQueue.batchAckFrame(dataId, ints);
                     }
                 }
             }finally {
@@ -499,8 +525,8 @@ public class QuicConnection implements QuicConnectionInterFace{
                 senderLock.unlock();
             }
         }
-        if (ackedCount > 0) {
-            congestionWindow.onAckedBytes(ackedCount * MAX_FRAME_PAYLOAD);
+        if (ackedBytes > 0) {
+            onAckedOutboundBytes(ackedBytes);
             pickUnAckedFrames();
         }
     }
@@ -509,29 +535,28 @@ public class QuicConnection implements QuicConnectionInterFace{
         long dataId = quicFrame.getDataId();
         int receiveWindow = quicFrame.readBitmapAckFrameWindowSize();
         SendQuicData sendQuicData = unAckedDataMap.get(dataId);
-        int ackedCount = 0;
+        int ackedBytes = 0;
         if (sendQuicData != null && !sendQuicData.isExpired() && !sendQuicData.isCompleted()) {
             try {
                 senderLock.lock();
                 remoteRwnd.set(receiveWindow);
                 AckResult ackResult = sendQuicData.handleBitMapACKFrame(quicFrame.getPayload());
                 if (ackResult.isSuccess()) {
-                    ackedCount = ackResult.getAckedFrameCounts();
                     if (ackResult.isCompleted()) {
                         sendMap.put(dataId, System.currentTimeMillis());
                         removeSendData(dataId);
-                        frameSendQueue.ackAllFramesByDataId(dataId);
+                        ackedBytes = frameSendQueue.ackAllFramesByDataId(dataId);
                     } else {
                         int[] sequences = quicFrame.readBitmapAckFrameReceivedSequences();
-                        frameSendQueue.batchAckFrame(dataId, sequences);
+                        ackedBytes = frameSendQueue.batchAckFrame(dataId, sequences);
                     }
                 }
             } finally {
                 senderLock.unlock();
             }
         }
-        if (ackedCount > 0) {
-            congestionWindow.onAckedBytes(ackedCount * MAX_FRAME_PAYLOAD);
+        if (ackedBytes > 0) {
+            onAckedOutboundBytes(ackedBytes);
             pickUnAckedFrames();
         }
     }
@@ -599,6 +624,7 @@ public class QuicConnection implements QuicConnectionInterFace{
 
         //接收数据
         receiveDataMap.clear();
+        receiveWindowReservations.clear();
     }
 
 
@@ -675,6 +701,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 log.debug("[接收数据完成] dataId={} 清理", dataId);
                 receiveMap.put(dataId, currentTime); // 标记为已处理
                 iterator.remove();
+                releaseReservedReceiveWindow(dataId);
                 continue;
             }
 
@@ -687,6 +714,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 iterator.remove();
                 receiveMap.put(dataId, currentTime); // 标记为已过期
                 // 坏数据计数+1
+                releaseReservedReceiveWindow(dataId);
                 expiredDataCount++;
             }
         }
@@ -736,7 +764,9 @@ public class QuicConnection implements QuicConnectionInterFace{
             // 3. 超时
             if (currentTime > timeoutDeadline && sendData.isNeedRetryWithInterval()) {
                 sendData.incrementRetryCount();
-                congestionWindow.decreaseSmoothly();
+                congestionWindow.onTimeout();
+                pathMtuEstimator.onPotentialBlackHole();
+                MAX_FRAME_PAYLOAD = pathMtuEstimator.currentPayloadBytes();
                 log.debug("[发送数据超时] dataId={} 超时，准备重传（重传次数={}）", dataId, sendData.getRetryCount());
                 // 重传逻辑：将数据ID放回队首，优先发送
                 unAckedDataSet.offerFirst(dataId);
@@ -749,7 +779,9 @@ public class QuicConnection implements QuicConnectionInterFace{
             if (currentTime > expireDeadline) {
                 log.warn("[发送数据过期] dataId={} 超过{}ms未完成", dataId, expireTime);
                 // 删除数据
-                congestionWindow.decreaseSmoothly();
+                congestionWindow.onTimeout();
+                pathMtuEstimator.onPotentialBlackHole();
+                MAX_FRAME_PAYLOAD = pathMtuEstimator.currentPayloadBytes();
                 frameSendQueue.expireDataById(dataId);
                 removeSendData(dataId);
                 sendMap.put(dataId, currentTime); // 标记为已处理
@@ -938,9 +970,11 @@ public class QuicConnection implements QuicConnectionInterFace{
             int inflightBytes = frameSendQueue.getSentUnAckedSize();
             int available = Math.min(remoteRwnd.get(), congestionWindow.get()) - inflightBytes;
             int positiveAvailable = Math.max(available, 0);
-            int pacingBudget = Math.max(MAX_FRAME_PAYLOAD,
-                    Math.min(congestionWindow.get() / 2, MAX_FRAME_PAYLOAD * 32));
-            return Math.min(positiveAvailable, pacingBudget);
+            int frameBudget = MAX_FRAME_PAYLOAD + QuicFrame.FIXED_HEADER_LENGTH;
+            int pacingBudget = Math.max(frameBudget,
+                    Math.min(congestionWindow.get() / 2, frameBudget * 32));
+            int requestedBytes = Math.min(positiveAvailable, pacingBudget);
+            return QuicConnectionManager.reserveGlobalOutboundBytes(requestedBytes);
         } finally {
             senderLock.unlock();
         }
@@ -948,14 +982,27 @@ public class QuicConnection implements QuicConnectionInterFace{
 
 
     public void pickUnAckedFrames() {
-        List<QuicFrame> quicFrames = frameSendQueue.takePendingToSent(calculateAvailableSendBytes());
+        if (expired || frameSendQueue.isPendingEmpty()) {
+            return;
+        }
+        int reservedBytes = calculateAvailableSendBytes();
+        if (reservedBytes <= 0) {
+            return;
+        }
+        List<QuicFrame> quicFrames = frameSendQueue.takePendingToSent(reservedBytes);
+        int submittedBytes = 0;
         for (QuicFrame quicFrame : quicFrames) {
-            sendFrameWithoutResponse(quicFrame);
+            if (sendFrameWithoutResponse(quicFrame)) {
+                submittedBytes += quicFrame.getFrameTotalLength();
+            }
+        }
+        if (reservedBytes > submittedBytes) {
+            QuicConnectionManager.refundGlobalOutboundBytes(reservedBytes - submittedBytes);
         }
     }
 
 
-    //构建数据取消帧
+    // 构建数据取消帧
     private QuicFrame buildCancelFrame(QuicFrame sourceFrame,int receiveWindow) {
         QuicFrame cancelFrame = new QuicFrame();
         cancelFrame.setConnectionId(sourceFrame.getConnectionId());

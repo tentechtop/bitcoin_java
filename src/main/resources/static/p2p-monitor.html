@@ -89,7 +89,7 @@
 
         .summary {
             display: grid;
-            grid-template-columns: repeat(6, minmax(140px, 1fr));
+            grid-template-columns: repeat(7, minmax(128px, 1fr));
             gap: 12px;
             margin: 18px 0;
         }
@@ -147,7 +147,7 @@
 
         table {
             width: 100%;
-            min-width: 1160px;
+            min-width: 1420px;
             border-collapse: collapse;
         }
 
@@ -316,6 +316,10 @@
             <label>平均 RTT</label>
             <strong id="avgRtt">-</strong>
         </div>
+        <div class="metric">
+            <label>全局发送预算</label>
+            <strong id="globalBudget">0 B</strong>
+        </div>
     </section>
 
     <section class="layout">
@@ -344,6 +348,9 @@
                         <th>本地窗口</th>
                         <th>在途字节</th>
                         <th>待发队列</th>
+                        <th>单帧负载</th>
+                        <th>路径 MTU</th>
+                        <th>全局预算</th>
                     </tr>
                     </thead>
                     <tbody id="connectionRows"></tbody>
@@ -413,6 +420,7 @@
         const recvTotal = sum(items, 'receivedBytes');
         const rtts = items.map(item => Number(item.lastRttMillis)).filter(value => value >= 0);
         const avgRtt = rtts.length ? Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length) : -1;
+        const globalBudget = Math.max(0, ...items.map(item => Number(item.globalOutboundAvailableBytes || 0)));
 
         document.getElementById('connCount').textContent = items.length;
         document.getElementById('sendRate').textContent = formatRate(sendRate);
@@ -420,6 +428,7 @@
         document.getElementById('sentTotal').textContent = formatBytes(sentTotal);
         document.getElementById('recvTotal').textContent = formatBytes(recvTotal);
         document.getElementById('avgRtt').textContent = formatMillis(avgRtt);
+        document.getElementById('globalBudget').textContent = formatBytes(globalBudget);
 
         history.push({
             sendRate,
@@ -454,6 +463,9 @@
                     <td>${formatBytes(item.localReceiveWindow)}</td>
                     <td>${formatBytes(item.sentUnAckedBytes)}</td>
                     <td>${formatBytes(pendingBytes)}</td>
+                    <td>${formatBytes(item.maxFramePayloadBytes)}</td>
+                    <td>${formatBytes(item.pathMtuDatagramBytes)}</td>
+                    <td>${formatBytes(item.globalOutboundAvailableBytes)}</td>
                 </tr>
             `;
         }).join('');

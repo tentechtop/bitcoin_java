@@ -69,6 +69,9 @@ public class QuicConnectionManager {
 
 
     // 连接过期时间（ms）：2秒无活跃则清理
+    private static final P2PGlobalTrafficController GLOBAL_OUTBOUND_TRAFFIC =
+            P2PGlobalTrafficController.fromSystemProperties();
+
     private static final long CONNECTION_EXPIRE_TIME = 2000;
 
     // ===================== 定时任务线程池 =====================
@@ -878,31 +881,47 @@ public class QuicConnectionManager {
 
 
 
-    //控制发送速度，每秒最大M数
-    public static void sendFrameWithoutResponse(QuicFrame quicFrame) {
+    // 全局出站流量预算
+    public static int reserveGlobalOutboundBytes(int requestedBytes) {
+        return GLOBAL_OUTBOUND_TRAFFIC.reserve(requestedBytes);
+    }
+
+    public static void refundGlobalOutboundBytes(int bytes) {
+        GLOBAL_OUTBOUND_TRAFFIC.refund(bytes);
+    }
+
+    public static long getGlobalOutboundAvailableBytes() {
+        return GLOBAL_OUTBOUND_TRAFFIC.availableBytes();
+    }
+
+    public static boolean sendFrameWithoutResponse(QuicFrame quicFrame) {
         if (quicFrame == null) {
             log.error("发送帧失败：QuicFrame为空");
-            return;
+            return false;
         }
         long dataId = quicFrame.getDataId();
         long connectionId = quicFrame.getConnectionId();
         ByteBuf buf = null;
         try {
-            // 2. 分配内存并编码帧数据
+            if (Global_Channel == null || !Global_Channel.isActive()) {
+                throw new IllegalStateException("全局UDP通道不可用");
+            }
+            // 分配内存并编码帧数据
             buf = ALLOCATOR.buffer();
             quicFrame.encode(buf);
-            // 3. 构建UDP数据包
+            // 构建UDP数据包
             DatagramPacket packet = new DatagramPacket(buf, quicFrame.getRemoteAddress());
-            // 4. 异步发送
+            // 异步提交到Netty发送队列
             Global_Channel.writeAndFlush(packet);
             QuicConnection connection = getConnection(connectionId);
             if (connection != null) {
                 connection.recordFrameSent(quicFrame.getFrameTotalLength());
             }
-            // 注意：此处返回true仅表示「发送请求已提交到Netty发送队列」，不代表发送成功
+            // 返回成功只表示已提交到Netty发送队列，不代表对端一定收到。
             log.debug("[本地发送请求已提交] 数据ID:{} 连接ID:{}", dataId, connectionId);
+            return true;
         } catch (Exception e) {
-            // 5. 编码异常处理（释放内存，避免泄漏）
+            // 编码或提交异常时释放内存，避免泄漏。
             log.error("[本地发送异常] 数据ID:{} 连接ID:{}，原因：{}",
                     dataId, connectionId, e.getMessage());
             QuicConnection connection = getConnection(connectionId);
@@ -915,11 +934,10 @@ public class QuicConnectionManager {
                     connectionId,
                     e
             ));
-            //打印异常原因
-            log.error("异常原因：{}",e.getMessage());
             if (buf != null) {
                 buf.release(); // 手动释放ByteBuf，防止内存泄漏
             }
+            return false;
         }
     }
 

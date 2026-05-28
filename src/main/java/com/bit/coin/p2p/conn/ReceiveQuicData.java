@@ -151,6 +151,11 @@ public class ReceiveQuicData extends QuicData{
     }
 
 
+    public boolean hasReceivedSequence(int sequence) {
+        return receivedSequences.contains(sequence);
+    }
+
+
     private QuicFrame buildAckFrame(QuicFrame quicFrame,int receiveWindow) {
         long connectionId = quicFrame.getConnectionId();
         long dataId = quicFrame.getDataId();
@@ -288,7 +293,7 @@ public class ReceiveQuicData extends QuicData{
 
     /**
      * 重载方法：获取已接收的帧序列号（支持指定排序规则）
-     * @param reverse 是否倒序（true=倒序，false=升序）
+     * @param reverse 是否倒序（真表示倒序，假表示升序）
      * @return 已接收帧的序列号数组，无数据时返回空数组
      */
     public int[] getReceivedSequencesArray(boolean reverse) {
