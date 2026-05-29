@@ -3667,7 +3667,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         address_ = s;
@@ -3687,7 +3687,7 @@ public final class Structure {
         getAddressBytes() {
       Object ref = address_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         address_ = b;
@@ -3729,7 +3729,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         multiaddr_ = s;
@@ -3749,7 +3749,7 @@ public final class Structure {
         getMultiaddrBytes() {
       Object ref = multiaddr_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         multiaddr_ = b;
@@ -3776,7 +3776,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         protocolVersion_ = s;
@@ -3796,7 +3796,7 @@ public final class Structure {
         getProtocolVersionBytes() {
       Object ref = protocolVersion_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         protocolVersion_ = b;
@@ -3943,7 +3943,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         latestHash_ = s;
@@ -3963,7 +3963,7 @@ public final class Structure {
         getLatestHashBytes() {
       Object ref = latestHash_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         latestHash_ = b;
@@ -4757,7 +4757,7 @@ public final class Structure {
           getAddressBytes() {
         Object ref = address_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           address_ = b;
@@ -4893,7 +4893,7 @@ public final class Structure {
           getMultiaddrBytes() {
         Object ref = multiaddr_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           multiaddr_ = b;
@@ -4985,7 +4985,7 @@ public final class Structure {
           getProtocolVersionBytes() {
         Object ref = protocolVersion_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           protocolVersion_ = b;
@@ -5429,7 +5429,7 @@ public final class Structure {
           getLatestHashBytes() {
         Object ref = latestHash_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           latestHash_ = b;
@@ -5789,7 +5789,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         hardwareInfo_ = s;
@@ -5809,7 +5809,7 @@ public final class Structure {
         getHardwareInfoBytes() {
       Object ref = hardwareInfo_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         hardwareInfo_ = b;
@@ -5866,7 +5866,7 @@ public final class Structure {
       if (ref instanceof String) {
         return (String) ref;
       } else {
-        com.google.protobuf.ByteString bs = 
+        com.google.protobuf.ByteString bs =
             (com.google.protobuf.ByteString) ref;
         String s = bs.toStringUtf8();
         nodeVersion_ = s;
@@ -5886,7 +5886,7 @@ public final class Structure {
         getNodeVersionBytes() {
       Object ref = nodeVersion_;
       if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
+        com.google.protobuf.ByteString b =
             com.google.protobuf.ByteString.copyFromUtf8(
                 (String) ref);
         nodeVersion_ = b;
@@ -6554,7 +6554,7 @@ public final class Structure {
           getHardwareInfoBytes() {
         Object ref = hardwareInfo_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           hardwareInfo_ = b;
@@ -6734,7 +6734,7 @@ public final class Structure {
           getNodeVersionBytes() {
         Object ref = nodeVersion_;
         if (ref instanceof String) {
-          com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString b =
               com.google.protobuf.ByteString.copyFromUtf8(
                   (String) ref);
           nodeVersion_ = b;
@@ -7066,27 +7066,27 @@ public final class Structure {
 
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_ProtoBlockHeader_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ProtoBlockHeader_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_ProtoBlock_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ProtoBlock_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_ProtoP2pMessage_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ProtoP2pMessage_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_ProtoPeer_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ProtoPeer_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_ProtoNetworkHandshake_descriptor;
-  private static final 
+  private static final
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_ProtoNetworkHandshake_fieldAccessorTable;
 

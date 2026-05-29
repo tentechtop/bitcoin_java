@@ -131,7 +131,7 @@ public class SendQuicData extends QuicData{
         // 3. 按字节数筛选重传帧（核心修改：给重传帧打标记）
         List<QuicFrame> resultFrameList = new ArrayList<>();
         int currentTotalSize = 0;
-        // 3.1 处理重传帧：标记isRetransmit=true
+        // 3.1 处理重传帧：标记为重传。
         for (int sequence : timeoutUnAckSequenceList) {
             QuicFrame frame = getFrameBySequence(sequence);
             if (frame == null) {
@@ -160,7 +160,7 @@ public class SendQuicData extends QuicData{
                     unsentSequenceList.add(sequence);
                 }
             }
-            // 补充未发送帧：标记isRetransmit=false
+            // 补充未发送帧：标记为首次发送。
             for (int sequence : unsentSequenceList) {
                 QuicFrame frame = getFrameBySequence(sequence);
                 if (frame == null) {
@@ -245,7 +245,7 @@ public class SendQuicData extends QuicData{
                         sequence, getConnectionId(), getDataId());
                 continue;
             }
-            // ========== 唯一修改：给首次发送帧标记isRetransmit=false ==========
+            // ========== 给首次发送帧标记为非重传 ==========
             frame.setRetransmit(false);
             // ===============================================================
             int frameSize = frame.getSize();
@@ -432,7 +432,7 @@ public class SendQuicData extends QuicData{
     //超时
     /**
      * 修正：判断是否超时（修复nanoTime与ms混用问题）
-     * @return true=已超时（首次发送后超过timeout未收到ACK）
+     * @return 已超时时为真（首次发送后超过超时时间未收到确认）
      */
     public boolean isTimeout() {
         if (sendTime <= 0) {
@@ -446,7 +446,7 @@ public class SendQuicData extends QuicData{
     //过期
     /**
      * 修正：判断是否过期（修复nanoTime与ms混用问题）
-     * @return true=已过期（超过expireTime，直接丢弃）
+     * @return 已过期时为真（超过过期时间后直接丢弃）
      */
     public boolean isExpired() {
         if (sendTime <= 0) {
@@ -459,14 +459,14 @@ public class SendQuicData extends QuicData{
 
     //超时且到了重传次数了 每150ms重传一次
     /**
-     * 核心方法：判断是否需要重传（满足所有条件才返回true）
+     * 核心方法：判断是否需要重传（满足所有条件才返回需要重传）
      * 重传条件：
      * 1. 数据未完成传输（!isCompleted）
      * 2. 数据未过期（!isExpired）
      * 3. 已超时（isTimeout）
      * 4. 重传次数未达上限（retryCount < MAX_RETRY_COUNT）
      * 5. 距离上次重传已过150ms（首次重传无间隔限制）
-     * @return true=需要重传，false=无需重传
+     * @return 需要重传时为真，无需重传时为假
      */
     public boolean isNeedRetryWithInterval() {
         // 1. 基础状态校验：已完成/已过期 → 直接返回false

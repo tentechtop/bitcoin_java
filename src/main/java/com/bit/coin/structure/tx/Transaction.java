@@ -51,7 +51,7 @@ public class Transaction {
      * 锁定时间
      */
     private long lockTime;
-    
+
     /**
      * 交易输入
      */

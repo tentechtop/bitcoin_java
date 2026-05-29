@@ -28,7 +28,7 @@ public class OrderedConcurrentSet {
 
     /**
      * 队尾添加dataId（新增）
-     * @return true=添加成功，false=队列满（有界时）
+     * @return 添加成功时为真，队列满时为假（有界时）
      */
     public boolean offerLast(Long dataId) {
         if (dataId == null) {
@@ -67,7 +67,7 @@ public class OrderedConcurrentSet {
 
     /**
      * 随机删除指定dataId（ACK后核销）
-     * @return true=删除成功，false=不存在
+     * @return 删除成功时为真，不存在时为假
      */
     public boolean remove(Long dataId) {
         if (dataId == null) {
@@ -79,7 +79,7 @@ public class OrderedConcurrentSet {
 
     /**
      * 判断dataId是否存在
-     * @return true=存在（未ACK）
+     * @return 存在且未确认时为真
      */
     public boolean contains(Long dataId) {
         return dataId != null && existMap.containsKey(dataId);
@@ -112,7 +112,7 @@ public class OrderedConcurrentSet {
     /**
      * 队首添加dataId（优先处理该数据）
      * @param dataId 待添加的dataId
-     * @return true=添加成功（或已存在），false=队列满（有界时）/dataId为空
+     * @return 添加成功或已存在时为真，队列满或数据ID为空时为假
      */
     public boolean offerFirst(Long dataId) {
         // 1. 空值校验：dataId为空直接返回失败
@@ -171,7 +171,7 @@ public class OrderedConcurrentSet {
              */
             @Override
             public boolean hasNext() {
-                // 已缓存有效数据，直接返回true
+                // 已缓存有效数据，直接返回成功。
                 if (nextValidDataId != null) {
                     return true;
                 }

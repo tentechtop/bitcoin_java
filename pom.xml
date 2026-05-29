@@ -6,7 +6,7 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>4.0.1</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath/> <!-- 从仓库解析父工程 -->
     </parent>
     <groupId>com.bit.coin</groupId>
     <artifactId>bitcoin_java</artifactId>
@@ -28,6 +28,11 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <skipTests>true</skipTests>
+        <skipITs>true</skipITs>
+        <maven.test.failure.ignore>false</maven.test.failure.ignore>
     </properties>
     <dependencies>
         <dependency>
@@ -49,6 +54,12 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- 显式声明 Mockito 依赖，便于测试 JVM 以 Java 代理方式加载 -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.bitcoinj</groupId>
@@ -59,10 +70,10 @@
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
-            <version>3.1.8</version> <!-- 建议使用最新稳定版 -->
+            <version>3.1.8</version> <!-- 建议使用稳定版本 -->
         </dependency>
 
-        <!-- rocksdb -->
+        <!-- RocksDB 本地存储依赖 -->
         <dependency>
             <groupId>org.rocksdb</groupId>
             <artifactId>rocksdbjni</artifactId>
@@ -72,10 +83,10 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.15.2</version> <!-- 建议使用较新的稳定版本 -->
+            <version>2.15.2</version> <!-- 建议使用稳定版本 -->
         </dependency>
 
-        <!-- 替换为：只引入需要的模块 -->
+        <!-- 只引入当前需要的网络模块 -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-common</artifactId>
@@ -98,15 +109,15 @@
         </dependency>
 
 
-        <!-- Protocol Buffers 核心依赖 -->
+        <!-- 协议缓冲核心依赖 -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
-            <version>4.31.1</version> <!-- 版本号可根据需要调整，建议使用 3.x 最新稳定版 -->
+            <version>4.31.1</version> <!-- 建议使用稳定版本 -->
         </dependency>
 
 
-        <!--  proto 与 Json 互转会用到-->
+        <!-- 协议缓冲与 JSON 互转依赖 -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java-util</artifactId>
@@ -119,8 +130,8 @@
             <version>5.1.0</version>
         </dependency>
 
-        <!--GPU参与运算-->
-        <!--OpenCL 的 Java 绑定-->
+        <!-- GPU 参与运算 -->
+        <!-- OpenCL 的 Java 绑定 -->
         <dependency>
             <groupId>org.jocl</groupId>
             <artifactId>jocl</artifactId>
@@ -141,10 +152,10 @@
 
 
     <build>
-        <!-- 直接定义最终JAR名称，优先级最高 -->
+        <!-- 直接定义最终 JAR 名称，优先级最高 -->
         <finalName>${project.artifactId}-${project.version}</finalName>
         <plugins>
-            <!-- Spring Boot打包插件：生成可执行JAR（repackage目标） -->
+            <!-- Spring Boot 打包插件：生成可执行 JAR -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -155,45 +166,116 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
-                    <!-- 明确指定主类（与你项目的主类路径一致，避免找不到主类错误） -->
+                    <!-- 明确指定主类，避免找不到主类错误 -->
                     <mainClass>com.bit.coin.BitcoinJavaApplication</mainClass>
                 </configuration>
             </plugin>
 
-            <!-- 编译插件：适配Java 21，确保编译兼容性 -->
+            <!-- 编译插件：适配 Java 21，确保编译兼容性 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
                 <configuration>
-                    <!-- 核心：指定 JDK 21 编译 -->
+                    <!-- 指定 JDK 21 编译 -->
                     <release>21</release>
                     <source>21</source>
                     <target>21</target>
-                    <encoding>UTF-8</encoding>
+                    <encoding>${project.build.sourceEncoding}</encoding>
                 </configuration>
             </plugin>
 
-            <!-- 测试插件：跳过测试，避免测试失败阻塞打包 -->
+            <!-- 工程环境校验：提前发现 JDK、Maven、编码不一致问题 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-build-baseline</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>请使用 JDK 21 构建项目。</message>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.8.6,)</version>
+                                    <message>请使用 Maven 3.8.6 或更高版本构建项目。</message>
+                                </requireMavenVersion>
+                                <requireProperty>
+                                    <property>project.build.sourceEncoding</property>
+                                    <regex>UTF-8</regex>
+                                    <message>项目源码编码必须是 UTF-8。</message>
+                                </requireProperty>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 生成测试依赖路径，供 Mockito Java 代理使用 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.9.0</version>
+                <executions>
+                    <execution>
+                        <id>resolve-test-agent-paths</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 单元测试插件：默认本地快速构建跳过测试，CI 配置会打开测试 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version> <!-- 使用最新稳定版本 -->
+                <version>3.2.5</version> <!-- 使用稳定版本 -->
                 <configuration>
-                    <skipTests>true</skipTests> <!-- 全局跳过测试 -->
-                    <testFailureIgnore>false</testFailureIgnore> <!-- 若开启测试，失败则终止构建（可选） -->
+                    <skipTests>${skipTests}</skipTests> <!-- 是否跳过单元测试 -->
+                    <testFailureIgnore>${maven.test.failure.ignore}</testFailureIgnore> <!-- 测试失败是否继续构建 -->
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Dfile.encoding=${project.build.sourceEncoding}</argLine>
                 </configuration>
             </plugin>
-            <!-- 若有集成测试，可添加此插件并同样跳过 -->
+            <!-- 集成测试插件：CI 配置会打开集成测试阶段 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
-                    <skipITs>true</skipITs> <!-- 跳过集成测试 -->
+                    <skipITs>${skipITs}</skipITs> <!-- 是否跳过集成测试 -->
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Dfile.encoding=${project.build.sourceEncoding}</argLine>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- CI 构建：打开全部测试，适合自动化质量门禁 -->
+        <profile>
+            <id>ci</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <skipITs>false</skipITs>
+                <maven.test.failure.ignore>false</maven.test.failure.ignore>
+            </properties>
+        </profile>
+
+        <!-- 本地快速构建：显式跳过测试，适合只验证编译和打包 -->
+        <profile>
+            <id>dev-fast</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <skipITs>true</skipITs>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>
