@@ -426,7 +426,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 //加锁
                 senderLock.lock();
                 //修改远程窗口 将远程窗口 设置为i
-                remoteRwnd.set(i);
+                updateRemoteReceiveWindow(i);
                 //通知数据来处理
                 boolean isCompleted = sendQuicData.onAckReceived(sequence);
                 if (isCompleted){
@@ -474,7 +474,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 //加锁
                 senderLock.lock();
                 //修改远程窗口 将远程窗口 设置为i
-                remoteRwnd.set(i);
+                updateRemoteReceiveWindow(i);
                 //将这个ID加入到已经发送
                 sendMap.put(dataId, System.currentTimeMillis());
                 //立即删除不做任何判断
@@ -504,7 +504,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 //加锁
                 senderLock.lock();
                 //修改远程窗口 将远程窗口 设置为i
-                remoteRwnd.set(i);
+                updateRemoteReceiveWindow(i);
                 int[] ints = quicFrame.readBatchAckFrameSequences();
                 AckResult ackResult = sendQuicData.handleBatchACKFrame(ints);
                 if (ackResult.isSuccess()){
@@ -539,7 +539,7 @@ public class QuicConnection implements QuicConnectionInterFace{
         if (sendQuicData != null && !sendQuicData.isExpired() && !sendQuicData.isCompleted()) {
             try {
                 senderLock.lock();
-                remoteRwnd.set(receiveWindow);
+                updateRemoteReceiveWindow(receiveWindow);
                 AckResult ackResult = sendQuicData.handleBitMapACKFrame(quicFrame.getPayload());
                 if (ackResult.isSuccess()) {
                     if (ackResult.isCompleted()) {
@@ -567,7 +567,7 @@ public class QuicConnection implements QuicConnectionInterFace{
         int i = quicFrame.readAckFrameWindowSize();//窗口大小
         log.info("handleUpdateWindowFrame接收方窗口{}",i);
         //设置窗口
-        remoteRwnd.set(i);
+        updateRemoteReceiveWindow(i);
         pickUnAckedFrames();
     }
 
@@ -931,9 +931,10 @@ public class QuicConnection implements QuicConnectionInterFace{
         SendQuicData sendQuicData = buildSendData(connectionId, dataId, wireData, remoteAddress, MAX_FRAME_PAYLOAD);
         
         sendQuicData.setSendTime(System.currentTimeMillis());
-        //根据数据大小和平均网络时间计算得到数据发送超时 TODO 目前默认5秒
-        sendQuicData.setTimeout(500);//500毫秒过期 会根据平均时间来
-        sendQuicData.setExpireTime(5000);
+        // 发送超时计算：结合最近RTT和数据分片数量，避免固定超时导致误重传。
+        int sendTimeoutMillis = calculateSendTimeoutMillis(wireData.length);
+        sendQuicData.setTimeout(sendTimeoutMillis);
+        sendQuicData.setExpireTime(Math.max(5000, sendTimeoutMillis * 4));
 
         //存入未确认数据映射（唯一存储位置）
         unAckedDataMap.put(dataId, sendQuicData);//存数据
@@ -964,20 +965,64 @@ public class QuicConnection implements QuicConnectionInterFace{
      * 计算发送方可发送的字节数（核心公式）
      * 可发送量 = 远程窗口 - 已发送未确认字节数
      */
+    private int calculateSendTimeoutMillis(int dataBytes) {
+        long rttMillis = lastRttMillis > 0 ? lastRttMillis : 200;
+        int framePayloadBytes = Math.max(1, MAX_FRAME_PAYLOAD);
+        int frameCount = Math.max(1, (dataBytes + framePayloadBytes - 1) / framePayloadBytes);
+        long timeoutMillis = rttMillis * 3 + Math.min(1000L, frameCount * 10L);
+        return (int) Math.max(300, Math.min(3000, timeoutMillis));
+    }
+
     private int calculateAvailableSendBytes() {
         senderLock.lock(); // 仅加发送方锁
         try {
-            int inflightBytes = frameSendQueue.getSentUnAckedSize();
-            int available = Math.min(remoteRwnd.get(), congestionWindow.get()) - inflightBytes;
-            int positiveAvailable = Math.max(available, 0);
-            int frameBudget = MAX_FRAME_PAYLOAD + QuicFrame.FIXED_HEADER_LENGTH;
-            int pacingBudget = Math.max(frameBudget,
-                    Math.min(congestionWindow.get() / 2, frameBudget * 32));
-            int requestedBytes = Math.min(positiveAvailable, pacingBudget);
-            return QuicConnectionManager.reserveGlobalOutboundBytes(requestedBytes);
+            int nextFrameBytes = frameSendQueue.peekNextPendingFrameSize();
+            if (nextFrameBytes <= 0) {
+                return 0;
+            }
+
+            int inflightBytes = Math.max(0, frameSendQueue.getSentUnAckedSize());
+            int remoteWindowBytes = Math.max(0, remoteRwnd.get());
+            int connectionWindowBytes = Math.min(remoteWindowBytes, congestionWindow.get());
+            int availableBytes = Math.max(0, connectionWindowBytes - inflightBytes);
+            if (availableBytes < nextFrameBytes) {
+                return 0;
+            }
+
+            int pacingBytes = calculatePacingBytes(nextFrameBytes);
+            int requestedBytes = Math.min(availableBytes, pacingBytes);
+            int reservedBytes = QuicConnectionManager.reserveGlobalOutboundBytes(requestedBytes);
+            if (reservedBytes >= nextFrameBytes) {
+                return reservedBytes;
+            }
+
+            QuicConnectionManager.refundGlobalOutboundBytes(reservedBytes);
+            return 0;
         } finally {
             senderLock.unlock();
         }
+    }
+
+    private int calculatePacingBytes(int nextFrameBytes) {
+        int frameBudget = Math.max(nextFrameBytes, MAX_FRAME_PAYLOAD + QuicFrame.FIXED_HEADER_LENGTH);
+        int halfCongestionWindow = Math.max(nextFrameBytes, congestionWindow.get() / 2);
+        int burstLimit = safeMultiply(frameBudget, 32);
+        return Math.max(nextFrameBytes, Math.min(halfCongestionWindow, burstLimit));
+    }
+
+    private int safeMultiply(int value, int multiplier) {
+        if (value <= 0 || multiplier <= 0) {
+            return 0;
+        }
+        if (value > Integer.MAX_VALUE / multiplier) {
+            return Integer.MAX_VALUE;
+        }
+        return value * multiplier;
+    }
+
+    private void updateRemoteReceiveWindow(int advertisedWindowBytes) {
+        int normalizedWindow = Math.max(0, Math.min(advertisedWindowBytes, INIT_WINDOW_SIZE));
+        remoteRwnd.set(normalizedWindow);
     }
 
 

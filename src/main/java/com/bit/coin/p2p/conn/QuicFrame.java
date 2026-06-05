@@ -37,6 +37,7 @@ public class QuicFrame {
 
     // 固定头部长度 = connectionId(8) + dataId(8) + total(4) + frameType(1) + sequence(4) + frameTotalLength(4)
     public static final int FIXED_HEADER_LENGTH = 8 + 8 + 4 + 1 + 4 + 4;
+    public static final int MAX_FRAME_TOTAL_LENGTH = PathMtuEstimator.MAX_DATAGRAM_BYTES;
 
     // 无参构造器
     public QuicFrame() {
@@ -203,6 +204,12 @@ public class QuicFrame {
                                 + ", actual " + data.length
                 );
             }
+            if (frame.frameTotalLength > MAX_FRAME_TOTAL_LENGTH) {
+                throw new IllegalArgumentException(
+                        "Frame total length exceeds limit: " + frame.frameTotalLength
+                                + ", limit " + MAX_FRAME_TOTAL_LENGTH
+                );
+            }
 
             // 读取payload（剩余字节）
             int payloadLen = frame.frameTotalLength - FIXED_HEADER_LENGTH;
@@ -307,6 +314,12 @@ public class QuicFrame {
             }
 
             int payloadLen = frame.frameTotalLength - FIXED_HEADER_LENGTH;
+            if (frame.frameTotalLength > MAX_FRAME_TOTAL_LENGTH) {
+                throw new IllegalArgumentException(
+                        "Frame total length exceeds limit: " + frame.frameTotalLength
+                                + ", limit " + MAX_FRAME_TOTAL_LENGTH
+                );
+            }
             if (payloadLen > 0) {
                 if (buf.readableBytes() < payloadLen) {
                     throw new IllegalArgumentException(
@@ -335,6 +348,7 @@ public class QuicFrame {
     // ========== 辅助方法 ==========
     public boolean isValid() {
         return frameTotalLength >= FIXED_HEADER_LENGTH  // 总长度至少包含固定头部
+                && frameTotalLength <= MAX_FRAME_TOTAL_LENGTH
                 && sequence >= 0                       // 序列号非负
                 && total >= 0                          // 分片数允许为0（非分片）
                 && (total == 0 || sequence < total);   // 分片数为0时忽略sequence校验，否则sequence<total
@@ -702,46 +716,6 @@ public class QuicFrame {
     public int getPayloadSize() {
         return this.frameTotalLength - FIXED_HEADER_LENGTH;
     }
-
-
-    // 测试示例
-    public static void main(String[] args) {
-        // 1. 创建测试帧
-        QuicFrame frame = new QuicFrame();
-        frame.setConnectionId(123456789L);
-        frame.setDataId(987654321L);
-        frame.setTotal(3);
-        frame.setFrameType((byte) 1);
-        frame.setSequence(0);
-        frame.setPayload("Hello Custom Serialization".getBytes());
-        frame.setFrameTotalLength(FIXED_HEADER_LENGTH + frame.getPayload().length);
-
-        // 2. 测试自定义序列化/反序列化
-        byte[] serializedBytes = frame.serialize();
-        QuicFrame deserializedFrame = QuicFrame.deserialize(serializedBytes);
-
-        // 验证结果
-        System.out.println("反序列化后ConnectionId: " + deserializedFrame.getConnectionId()); // 123456789
-        System.out.println("反序列化后Payload: " + deserializedFrame.getPayloadAsString()); // Hello Custom Serialization
-        System.out.println("反序列化后Total: " + deserializedFrame.getTotal()); // 3
-
-
-        // 1. 构造普通ACK帧并写入窗口
-        QuicFrame ackFrame = new QuicFrame();
-        ackFrame.setConnectionId(123456789L);
-        ackFrame.setDataId(987654321L);
-        ackFrame.setFrameType(DATA_ACK_FRAME.getCode());
-        ackFrame.writeAckFrameWindowSize(1024); // 窗口大小1024
-        int window = ackFrame.readAckFrameWindowSize(); // 读取1024
-        System.out.println("ACK帧窗口大小: " + window);
-
-        //序列化 反序列化测试
-        byte[] serialized = ackFrame.serialize();
-        QuicFrame deserialized = QuicFrame.deserialize(serialized);
-        System.out.println("序列化后长度: " + serialized.length);
-        //窗口大小
-        System.out.println("反序列化后窗口大小: " + deserialized.readAckFrameWindowSize());
-
-
-    }
 }
+
+

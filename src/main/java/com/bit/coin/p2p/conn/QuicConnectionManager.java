@@ -94,6 +94,20 @@ public class QuicConnectionManager {
 
 
     // 全局最大连接数限制（根据服务器性能调整）
+    private static final ThreadPoolExecutor HANDSHAKE_CALLBACK_EXECUTOR = new ThreadPoolExecutor(
+            2,
+            Math.max(4, Runtime.getRuntime().availableProcessors()),
+            60,
+            TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(1024),
+            runnable -> {
+                Thread thread = new Thread(runnable, "quic-handshake-callback-thread");
+                thread.setDaemon(true);
+                return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+    );
+
     private static final int MAX_GLOBAL_CONNECTIONS = 100;
     // 单IP每秒最大连接请求数（防止短时间高频请求??
     private static final int MAX_REQUEST_PER_IP_PER_SECOND = 10;
@@ -167,10 +181,11 @@ public class QuicConnectionManager {
         shutdownExecutor(connectionHealthExecutor, "connection-health");
         // 关闭发送检查线程池
         shutdownExecutor(connectionSendExecutor, "connection-send");
+        shutdownExecutor(HANDSHAKE_CALLBACK_EXECUTOR, "handshake-callback");
     }
 
     // 抽取通用关闭逻辑
-    private void shutdownExecutor(ScheduledExecutorService executor, String name) {
+    private void shutdownExecutor(ExecutorService executor, String name) {
         log.info("开始关闭{}线程池", name);
         executor.shutdown();
         try {
@@ -191,6 +206,14 @@ public class QuicConnectionManager {
     /**
      * 通过连接ID获取连接
      */
+    private static void submitHandshakeCallback(Runnable task) {
+        try {
+            HANDSHAKE_CALLBACK_EXECUTOR.execute(task);
+        } catch (RejectedExecutionException e) {
+            log.warn("[握手回调提交失败] 队列已满或线程池已关闭", e);
+        }
+    }
+
     public static QuicConnection getConnection(long connectionId) {
         return CONNECTION_MAP.get(connectionId);
     }
@@ -575,7 +598,7 @@ public class QuicConnectionManager {
         registerConnection(peerIdHexString, connectionId, quicConnection);
 
         //使用线程
-        new Thread(() -> {
+        submitHandshakeCallback(() -> {
             Peer peer = new Peer();
             peer.setInetSocketAddress(remoteAddress);
             peer.setId(hexToBytes(peerIdHexString));
@@ -595,7 +618,7 @@ public class QuicConnectionManager {
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
-        }).start();
+        });
         return quicConnection;
     }
 
@@ -717,7 +740,7 @@ public class QuicConnectionManager {
             registerConnection(peerIdHexString, connectionId, quicConnection);
 
             //使用线程
-            new Thread(() -> {
+            submitHandshakeCallback(() -> {
                 RequestConnect responseConnect = new RequestConnect();
                 responseConnect.setPeerId(SelfPeer.getId());
                 responseConnect.setVersion(1);
@@ -763,7 +786,7 @@ public class QuicConnectionManager {
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
-            }).start();
+            });
 
             return quicConnection;
         } catch (Exception e) {

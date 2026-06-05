@@ -213,6 +213,7 @@ public class BoundedFrameSendQueue {
         }
 
         List<FrameQueueElement> takeElements = new ArrayList<>();
+        List<FrameQueueElement> sentElements = new ArrayList<>();
         List<QuicFrame> takeFrames = new ArrayList<>();
         long totalTakeSize = 0;
 
@@ -246,6 +247,7 @@ public class BoundedFrameSendQueue {
                 QuicFrame frame = getQuicFrameFromMeta(e);
                 if (frame != null) {
                     takeFrames.add(frame);
+                    sentElements.add(e);
                 } else {
                     log.warn("[取出待发送帧] 未找到完整帧(dataId={}, sequence={})", e.getDataId(), e.getSequence());
                 }
@@ -261,8 +263,8 @@ public class BoundedFrameSendQueue {
         }
 
         // 加入已发送未确认队列
-        if (!takeElements.isEmpty()) {
-            addToSentUnAcked(takeElements);
+        if (!sentElements.isEmpty()) {
+            addToSentUnAcked(sentElements);
             log.debug("[取出待发送帧] 共{}帧，总大小{}B，待发送队列剩余{}MB，已发送未确认队列总大小{}MB",
                     takeFrames.size(), totalTakeSize, pendingTotalSize.get() / 1024.0 / 1024.0,
                     sentUnAckedTotalSize.get() / 1024.0 / 1024.0);
@@ -682,6 +684,14 @@ public class BoundedFrameSendQueue {
 
     public int getSentUnAckedSize() {
         return (int)sentUnAckedTotalSize.get();
+    }
+
+    int peekNextPendingFrameSize() {
+        FrameQueueElement element = pendingQueue.peek();
+        if (element == null) {
+            return 0;
+        }
+        return element.getFrameSize();
     }
 
     public boolean isPendingEmpty() {
