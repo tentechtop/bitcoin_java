@@ -25,6 +25,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -149,10 +151,10 @@ public class RoutingTable {
         }
 
         // ========== 新增：初始化时恢复路由表节点 ==========
+        initPersistScheduler();
         restoreFromDatabase();
 
         // ========== 新增：启动定时持久化检查任务 ==========
-        initPersistScheduler();
 
         // ========== 新增：启动路由表刷新任务 ==========
         initRefreshScheduler();
@@ -1253,7 +1255,7 @@ public class RoutingTable {
         }
         log.info("路由表恢复完成");
 
-        new Timer().schedule(new TimerTask() {
+        persistScheduler.schedule(new Runnable() {
             @Override
             public void run() {
                 int onlineCount = getOnlinePeerCount();
@@ -1285,7 +1287,7 @@ public class RoutingTable {
                     }
                 }
             }
-        }, 5000);
+        }, 5000, TimeUnit.MILLISECONDS);
     }
 
     // ===================== 序列化/反序列化工具方法（需根据Peer类调整） =====================
@@ -1296,26 +1298,25 @@ public class RoutingTable {
      * @return 序列化后的字节数组
      */
     public byte[] serializePeers(List<Peer> peers) throws Exception {
-        // 这里仅为示例，实际需根据Peer的serialize()方法实现列表序列化
-        // 例如：使用ByteBuffer拼接所有节点的序列化字节
-        List<Byte> byteList = new ArrayList<>();
+        if (peers == null || peers.isEmpty()) {
+            return new byte[0];
+        }
+        ByteArrayOutputStream byteStream = new ByteArrayOutputStream(peers.size() * 128);
+        DataOutputStream dataStream = new DataOutputStream(byteStream);
         for (Peer peer : peers) {
+            if (peer == null) {
+                continue;
+            }
             byte[] peerBytes = peer.serialize();
-            // 先写入长度，再写入数据
-            for (byte b : ByteBuffer.allocate(4).putInt(peerBytes.length).array()) {
-                byteList.add(b);
+            if (peerBytes == null || peerBytes.length == 0) {
+                continue;
             }
-            for (byte b : peerBytes) {
-                byteList.add(b);
-            }
+            dataStream.writeInt(peerBytes.length);
+            dataStream.write(peerBytes);
         }
-        byte[] result = new byte[byteList.size()];
-        for (int i = 0; i < result.length; i++) {
-            result[i] = byteList.get(i);
-        }
-        return result;
+        dataStream.flush();
+        return byteStream.toByteArray();
     }
-
     /**
      * 反序列化节点列表（示例实现，需与serializePeers对应）
      * @param bytes 序列化后的字节数组
@@ -2187,3 +2188,4 @@ public class RoutingTable {
     }
 
 }
+
