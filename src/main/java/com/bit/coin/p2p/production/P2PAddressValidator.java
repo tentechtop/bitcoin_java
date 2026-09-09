@@ -22,6 +22,13 @@ public final class P2PAddressValidator {
         }
 
         String[] segments = rawAddress.trim().split("/");
+        if (segments.length == 10 && "p2p-circuit".equals(segments[7]) && "p2p".equals(segments[8])) {
+            String relayRaw = String.join("/", java.util.Arrays.copyOf(segments, 7));
+            P2PAddress relay = parseQuicAddress(relayRaw);
+            String target = normalizePeerId(segments[9]);
+            if (relay.peerIdHex().equals(target)) throw new IllegalArgumentException("Relay and destination must differ");
+            return new P2PAddress(rawAddress.trim(), relay.ipType(), relay.ipAddress(), relay.port(), segments[9], target, relayRaw);
+        }
         if (segments.length != 7 || !segments[0].isEmpty()) {
             throw new IllegalArgumentException("multiAddress must use /ip4/<ip>/quic/<port>/p2p/<peerId>");
         }

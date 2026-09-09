@@ -228,6 +228,10 @@ public class BlockChainServiceImpl implements BlockChainService{
                 return false;
             }
             accepted = new ChainStateStore(dataBase, this::getBlockByHash).accept(block, mainTipBlock, config.getParams());
+        } catch (ChainStateLimitException resourceLimit) {
+            rejectedBlocks.incrementAndGet();
+            log.debug("Rejected block exceeding local processing limits: {}", resourceLimit.getMessage());
+            return false;
         } catch (IllegalArgumentException | NullPointerException malformed) {
             rejectedBlocks.incrementAndGet();
             log.debug("Rejected block: {}", malformed.getMessage());

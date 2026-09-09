@@ -17,6 +17,21 @@ import static com.bit.coin.p2p.conn.QuicConstants.RETRY_INTERVAL_MS;
 @Slf4j
 @Data
 public class SendQuicData extends QuicData{
+    private int[] frameRetries;
+    static final int MAX_FRAME_RETRIES = 5;
+
+    synchronized long retryDelayMillis(int sequence, long initialDelay) {
+        int retries = frameRetries == null ? 0 : frameRetries[sequence];
+        return Math.min(3000, initialDelay * (1L << Math.min(retries, 3)));
+    }
+
+    synchronized boolean reserveFrameRetry(int sequence) {
+        if (sequence < 0 || sequence >= getTotal()) return false;
+        if (frameRetries == null) frameRetries = new int[getTotal()];
+        if (frameRetries[sequence] >= MAX_FRAME_RETRIES) return false;
+        frameRetries[sequence]++;
+        return true;
+    }
 
     // 重传计数（默认0，最多重传1次）
     private AtomicInteger retryCount = new AtomicInteger(0);

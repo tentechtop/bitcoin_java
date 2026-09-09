@@ -228,7 +228,7 @@ public class BoundedFrameSendQueue {
         pendingLock.lock();
         try {
             FrameQueueElement element;
-            while ((element = pendingQueue.poll()) != null && totalTakeSize < maxBytes) {
+            while (totalTakeSize < maxBytes && (element = pendingQueue.poll()) != null) {
                 long elementSize = element.getFrameSize();
 
                 // 单帧超过本次最大字节数时留在队列中。
@@ -564,7 +564,10 @@ public class BoundedFrameSendQueue {
             while (iterator.hasNext()) {
                 Map.Entry<String, FrameQueueElement> entry = iterator.next();
                 FrameQueueElement element = entry.getValue();
-                if (element.getDataId() == dataId && (currentTime - element.getSendTime() > timeoutMs)) {
+                SendQuicData data = unAckedDataMap.get(dataId);
+                if (element.getDataId() == dataId && data != null && !data.isCompleted() && !data.isExpired()
+                        && currentTime - element.getSendTime() > data.retryDelayMillis(element.getSequence(), timeoutMs)
+                        && data.reserveFrameRetry(element.getSequence())) {
                     retransmitElements.add(element);
                     iterator.remove();
                     sentUnAckedTotalSize.addAndGet(-element.getFrameSize());

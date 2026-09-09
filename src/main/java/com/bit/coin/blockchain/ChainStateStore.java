@@ -82,7 +82,7 @@ public final class ChainStateStore {
             Block retained = oldCursor.getHeight() >= newCursor.getHeight() ? oldCursor : newCursor;
             retainedBlockBytes += blockWeight(retained);
             if (disconnected.size() + connected.size() >= 512 || retainedBlockBytes > 64L * 1024 * 1024)
-                throw new IllegalStateException("Reorganization exceeds automatic resource budget; resynchronize into a new directory");
+                throw new ChainStateLimitException("Candidate branch exceeds automatic reorganization budget");
             if (oldCursor.getHeight() >= newCursor.getHeight()) {
                 disconnected.add(oldCursor);
                 oldCursor = parentOf(oldCursor);
@@ -170,14 +170,14 @@ public final class ChainStateStore {
         return bytes;
     }
     private static void requireOverlayBudget(long bytes) {
-        if (bytes > 64L * 1024 * 1024) throw new IllegalStateException("Reorganization state exceeds automatic memory budget; resynchronize");
+        if (bytes > 64L * 1024 * 1024) throw new ChainStateLimitException("Candidate branch exceeds state overlay memory budget");
     }
     private static final class OperationBuffer extends ArrayList<DbOperation> {
         private long bytes;
         @Override public boolean add(DbOperation operation) {
             bytes += 192L + operation.key.length + (operation.value == null ? 0 : operation.value.length);
             if (bytes > 256L * 1024 * 1024 || size() >= 1_000_000)
-                throw new IllegalStateException("Atomic write exceeds automatic memory budget; manual recovery required");
+                throw new ChainStateLimitException("Candidate exceeds atomic write preparation budget");
             return super.add(operation);
         }
     }

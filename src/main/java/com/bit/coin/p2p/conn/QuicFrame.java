@@ -29,6 +29,8 @@ public class QuicFrame {
 
     // 扩展字段 接收时写入
     private InetSocketAddress remoteAddress;
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private RelayPath relayPath;
     // 发送时间 不参与序列化反序列化
     private long time;
     //是否重传帧

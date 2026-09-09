@@ -55,7 +55,25 @@ public class QuicConnection implements QuicConnectionInterFace{
 
     // 单帧最大负载由路径MTU估算器动态收敛。
     public volatile int MAX_FRAME_PAYLOAD = PathMtuEstimator.DEFAULT_DATAGRAM_BYTES - QuicFrame.FIXED_HEADER_LENGTH - SessionCipher.OVERHEAD_BYTES;
-    private final PathMtuEstimator pathMtuEstimator = new PathMtuEstimator();
+    private PathMtuEstimator pathMtuEstimator = new PathMtuEstimator();
+    private RelayPath relayPath;
+
+    public void setRelayPath(RelayPath path) {
+        this.relayPath = path;
+        if (path != null) {
+            int mtu = RelayTransport.INNER_DATAGRAM_BYTES;
+            pathMtuEstimator = new PathMtuEstimator(mtu, mtu, mtu);
+            MAX_FRAME_PAYLOAD = pathMtuEstimator.currentPayloadBytes();
+        }
+    }
+
+    public synchronized void flushDelayedAcks() {
+        long now = System.currentTimeMillis();
+        for (ReceiveQuicData data : receiveDataMap.values()) {
+            QuicFrame ack = data.pollDelayedAck(now, localRwnd.get());
+            if (ack != null) sendFrameWithoutResponse(ack);
+        }
+    }
     private volatile long lastActivityTime = lastSeen;
 
     // 待发送数据：每个连接对应一个发送队列。
@@ -77,9 +95,14 @@ public class QuicConnection implements QuicConnectionInterFace{
 
 
     // 发送完成记录：键为数据ID，值为发送完成时间或过期时间
-    private Map<Long, Long> sendMap = new ConcurrentHashMap<>();
+    private Map<Long, Long> sendMap = transferHistory();
     // 接收完成记录：键为数据ID，值为接收完成时间或过期时间
-    private Map<Long, Long> receiveMap = new ConcurrentHashMap<>();
+    private Map<Long, Long> receiveMap = transferHistory();
+    static final long TRANSFER_LIFETIME_MS = 30_000;
+    private static Map<Long, Long> transferHistory() {
+        return com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(4096)
+                .expireAfterWrite(60, TimeUnit.SECONDS).<Long, Long>build().asMap();
+    }
 
 
     //发送方「可发送量」= 接收方通告的「剩余窗口」 - 发送方「已发送未确认的数据量」
@@ -244,8 +267,11 @@ public class QuicConnection implements QuicConnectionInterFace{
             return;
         }
         // 已处理或已过期的数据直接取消，避免重复扣减接收窗口。
-        if (receiveMap.containsKey(quicFrame.getDataId())) {
-            sendFrameWithoutResponse(buildCancelFrame(quicFrame,localRwnd.get()));
+        Long finished = receiveMap.get(quicFrame.getDataId());
+        if (finished != null) {
+            QuicFrame reply = buildCancelFrame(quicFrame, localRwnd.get());
+            if (finished > 0) reply.setFrameType(QuicFrameEnum.ALL_ACK_FRAME.getCode());
+            sendFrameWithoutResponse(reply);
             return;
         }
         // ========== 1. 基础参数准备 ==========
@@ -273,7 +299,7 @@ public class QuicConnection implements QuicConnectionInterFace{
             receiveQuicData.setTotal(quicFrame.getTotal());
             receiveQuicData.setRemoteAddress(quicFrame.getRemoteAddress());
             receiveQuicData.setStartReceiveTime(System.currentTimeMillis());
-            receiveQuicData.setExpireTime(5000);// 5秒过期
+            receiveQuicData.setExpireTime(TRANSFER_LIFETIME_MS);
             receiveDataMap.put(quicFrame.getDataId(), receiveQuicData);
         }
         boolean newInboundFrame = !receiveQuicData.hasReceivedSequence(quicFrame.getSequence());
@@ -731,7 +757,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                 log.warn("[接收数据过期] dataId={} 超过{}ms未完成重组", dataId, expireTime);
                 // 删除数据
                 iterator.remove();
-                receiveMap.put(dataId, currentTime); // 标记为已过期
+                receiveMap.put(dataId, -currentTime); // Failed transfers must not be acknowledged as delivered.
                 // 坏数据计数+1
                 releaseReservedReceiveWindow(dataId);
                 expiredDataCount++;
@@ -781,8 +807,9 @@ public class QuicConnection implements QuicConnectionInterFace{
             long expireDeadline = sendTime + expireTime;
 
             // 3. 超时
-            if (currentTime > timeoutDeadline && sendData.isNeedRetryWithInterval()) {
-                sendData.incrementRetryCount();
+            if (currentTime > timeoutDeadline && currentTime <= expireDeadline
+                    && frameSendQueue.retransmitFrame(dataId, timeout) > 0) {
+                sendData.incrementRetryCount(); // Aggregate telemetry; retry limits apply to each frame.
                 congestionWindow.onTimeout();
                 pathMtuEstimator.onPotentialBlackHole();
                 MAX_FRAME_PAYLOAD = pathMtuEstimator.currentPayloadBytes();
@@ -790,7 +817,6 @@ public class QuicConnection implements QuicConnectionInterFace{
                 // 重传逻辑：将数据ID放回队首，优先发送
                 unAckedDataSet.offerFirst(dataId);
                 //单帧超过150ms未ACK的都重新发送
-                frameSendQueue.retransmitFrame(dataId, 150);
                 continue;
             }
 
@@ -966,7 +992,7 @@ public class QuicConnection implements QuicConnectionInterFace{
         // 发送超时计算：结合最近RTT和数据分片数量，避免固定超时导致误重传。
         int sendTimeoutMillis = calculateSendTimeoutMillis(wireData.length);
         sendQuicData.setTimeout(sendTimeoutMillis);
-        sendQuicData.setExpireTime(Math.max(5000, sendTimeoutMillis * 4));
+        sendQuicData.setExpireTime(TRANSFER_LIFETIME_MS);
 
         //存入未确认数据映射（唯一存储位置）
         unAckedDataMap.put(dataId, sendQuicData);//存数据
@@ -999,9 +1025,7 @@ public class QuicConnection implements QuicConnectionInterFace{
      */
     private int calculateSendTimeoutMillis(int dataBytes) {
         long rttMillis = lastRttMillis > 0 ? lastRttMillis : 200;
-        int framePayloadBytes = Math.max(1, MAX_FRAME_PAYLOAD);
-        int frameCount = Math.max(1, (dataBytes + framePayloadBytes - 1) / framePayloadBytes);
-        long timeoutMillis = rttMillis * 3 + Math.min(1000L, frameCount * 10L);
+        long timeoutMillis = rttMillis * 3 + 100; // Includes the receiver's delayed ACK budget.
         return (int) Math.max(300, Math.min(3000, timeoutMillis));
     }
 

@@ -11,6 +11,27 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReceiveQuicDataTest {
+    @Test void duplicateNonzeroSequenceProducesSerializableAck() {
+        ReceiveQuicData receive = new ReceiveQuicData();
+        QuicFrame frame = dataFrame(1, 2, 223, 300, new byte[]{1});
+        receive.handleFrame(frame, 1024);
+        QuicFrame ack = receive.handleFrame(frame, 1024).getAckFrame();
+        assertEquals(223, QuicFrame.deserialize(ack.serialize()).getSequence());
+        assertEquals(QuicFrameEnum.DATA_ACK_FRAME.getCode(), ack.getFrameType());
+    }
+    @Test void flushesPartialAckBatchWithoutWaitingForAnotherPacket() {
+        ReceiveQuicData receive = new ReceiveQuicData();
+        receive.setLastAckTime(System.currentTimeMillis());
+        receive.handleFrame(dataFrame(1, 2, 0, 3, new byte[]{1}), 1024);
+        long lastAck = receive.getLastAckTime();
+        assertNull(receive.pollDelayedAck(lastAck + 99, 512));
+        QuicFrame ack = receive.pollDelayedAck(lastAck + 100, 512);
+        assertNotNull(ack);
+        assertEquals(QuicFrameEnum.BITMAP_ACK_FRAME.getCode(), ack.getFrameType());
+        assertEquals(512, ack.readBitmapAckFrameWindowSize());
+        assertEquals(0, ack.readBitmapAckFrameReceivedSequences()[0]);
+        assertNull(receive.pollDelayedAck(lastAck + 200, 512));
+    }
     private static final InetSocketAddress REMOTE = new InetSocketAddress("127.0.0.1", 8334);
 
     @Test

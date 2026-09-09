@@ -3,6 +3,7 @@ package com.bit.coin.txpool;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.estimate.FeeEstimate;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.Result;
 import com.bit.coin.structure.tx.*;
@@ -42,6 +43,8 @@ public class TxPoolImpl implements TxPool{
     @Autowired private com.bit.coin.config.SystemConfig systemConfig;
     @Autowired private org.springframework.beans.factory.ObjectProvider<com.bit.coin.blockchain.BlockChainServiceImpl> chainProvider;
     private static final long MAX_MEMPOOL_BYTES = 64L * 1024 * 1024;
+    private final int transactionCapacity;
+    private final long memoryCapacityBytes;
     private static final long TX_EXPIRY_MS = TimeUnit.HOURS.toMillis(72);
     private final Map<String, Integer> entryWeights = new HashMap<>();
     private long mempoolMemoryBytes;
@@ -68,7 +71,7 @@ public class TxPoolImpl implements TxPool{
     }
     public synchronized long estimatedMemoryBytes() { return mempoolMemoryBytes; }
     private void enqueueBroadcast(byte[] id) {
-        if (broadcastQueue.size() < MAX_MEMPOOL_SIZE) broadcastQueue.add(bytesToHex(id));
+        if (broadcastQueue.size() < transactionCapacity) broadcastQueue.add(bytesToHex(id));
     }
     private void drainBroadcast() {
         byte[] id;
@@ -100,16 +103,29 @@ public class TxPoolImpl implements TxPool{
     private final Map<String, Set<String>> parentToChildren = new ConcurrentHashMap<>();
 
     // 区块大小限制 1MB
-    private static final long MAX_BLOCK_SIZE = 1024 * 1024;
+    private static final long MAX_BLOCK_SIZE = FeeEstimate.BLOCK_CAPACITY_BYTES;
     // 交易池最大容量
     private static final int MAX_MEMPOOL_SIZE = 10000;
     private static final long TX_REVALIDATE_AGE_MS = TimeUnit.MINUTES.toMillis(10);
     private static final long TX_REBROADCAST_INTERVAL_MS = TimeUnit.MINUTES.toMillis(5);
-    private static final double MIN_RELAY_FEE_RATE = 1D;
+    private static final double MIN_RELAY_FEE_RATE = FeeEstimate.MIN_RELAY_FEE_RATE;
     // RBF手续费增加比例阈值（至少增加25%）
     private static final double RBF_FEE_INCREASE_RATIO = 1.25;
     private static final long RBF_SEQUENCE_THRESHOLD = 0xFFFFFFFEL;
     private static final int MAX_RBF_REPLACEMENT_CANDIDATES = 100;
+
+    public TxPoolImpl() {
+        this(MAX_MEMPOOL_SIZE, MAX_MEMPOOL_BYTES);
+    }
+
+    // Smaller isolated pools exercise the same admission limits without changing node defaults.
+    TxPoolImpl(int transactionCapacity, long memoryCapacityBytes) {
+        if (transactionCapacity < 1 || memoryCapacityBytes < 1) {
+            throw new IllegalArgumentException("Mempool capacities must be positive");
+        }
+        this.transactionCapacity = transactionCapacity;
+        this.memoryCapacityBytes = memoryCapacityBytes;
+    }
 
 
     //花费中待确认UTXO key
@@ -488,7 +504,7 @@ public class TxPoolImpl implements TxPool{
         List<Runnable> rollbackActions = new ArrayList<>();
 
         try {
-            if (txList.size() > MAX_MEMPOOL_SIZE) return false;
+            if (txList.size() > transactionCapacity) return false;
             txList = txList.stream().map(tx -> Transaction.deserialize(wireBytes(tx))).toList();
 
             // 2. 预检查阶段：验证所有交易的有效性（原子性关键：先检查，后执行）
@@ -566,15 +582,15 @@ public class TxPoolImpl implements TxPool{
                 validTxStatuses.put(txIdStr, status);
 
                 // 2.4 检查内存池容量（批量添加后不超过最大值）
-                if (mempool.size() + validTxMap.size() > MAX_MEMPOOL_SIZE) {
+                if (mempool.size() + validTxMap.size() > transactionCapacity) {
                     log.warn("批量添加交易失败：交易池容量不足，当前={}, 待添加={}, 最大={}",
-                            mempool.size(), validTxMap.size(), MAX_MEMPOOL_SIZE);
+                            mempool.size(), validTxMap.size(), transactionCapacity);
                     return false;
                 }
             }
 
             long batchBytes = validTxMap.values().stream().mapToLong(TransactionValidator::memoryWeight).sum();
-            if (mempoolMemoryBytes + batchBytes > MAX_MEMPOOL_BYTES) return false;
+            if (mempoolMemoryBytes + batchBytes > memoryCapacityBytes) return false;
 
             // 3. 原子添加阶段：批量写入所有验证通过的交易
             for (Map.Entry<String, Transaction> entry : validTxMap.entrySet()) {
@@ -661,7 +677,7 @@ public class TxPoolImpl implements TxPool{
 
     @Override
     public long estimateTxFee(Transaction tx) {
-        return calculateFee(tx);
+        return estimateFee(FeeEstimate.DEFAULT_TARGET_BLOCKS, FeeEstimate.transactionSize(tx)).fee();
     }
 
     private static Transaction copyForRead(Transaction source) {
@@ -698,7 +714,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public TxPoolStatusSnapshot getStatusSnapshot() {
+    public synchronized TxPoolStatusSnapshot getStatusSnapshot() {
         long now = System.currentTimeMillis();
         List<TxPoolTransactionSnapshot> transactions = mempool.entrySet().stream()
                 .filter(entry -> entry.getValue() != null)
@@ -722,7 +738,7 @@ public class TxPoolImpl implements TxPool{
 
         return new TxPoolStatusSnapshot(
                 now,
-                MAX_MEMPOOL_SIZE,
+                transactionCapacity,
                 transactions.size(),
                 (int) transactions.stream().filter(TxPoolTransactionSnapshot::available).count(),
                 (int) transactions.stream().filter(TxPoolTransactionSnapshot::packing).count(),
@@ -825,7 +841,7 @@ public class TxPoolImpl implements TxPool{
 
             tx.setFee(newFee);
             long replacedBytes = txsToReplace.stream().mapToLong(id -> entryWeights.getOrDefault(id, 0)).sum();
-            if (!meetsMinimumRelayFee(tx) || mempoolMemoryBytes - replacedBytes + TransactionValidator.memoryWeight(tx) > MAX_MEMPOOL_BYTES
+            if (!meetsMinimumRelayFee(tx) || mempoolMemoryBytes - replacedBytes + TransactionValidator.memoryWeight(tx) > memoryCapacityBytes
                     || dataBase.get(TableEnum.TX_TO_BLOCK, tx.getTxId()) != null) return false;
 
             for (String conflictTxId : directConflicts) {
@@ -1506,23 +1522,52 @@ public class TxPoolImpl implements TxPool{
     }
 
     private boolean ensureCapacityFor(Transaction candidate) {
-        if (mempool.size() < MAX_MEMPOOL_SIZE && mempoolMemoryBytes + TransactionValidator.memoryWeight(candidate) <= MAX_MEMPOOL_BYTES) {
+        int candidateBytes = TransactionValidator.memoryWeight(candidate);
+        if (candidateBytes > memoryCapacityBytes) return false;
+        if (mempool.size() < transactionCapacity && mempoolMemoryBytes + candidateBytes <= memoryCapacityBytes) {
             return true;
         }
 
-        Transaction lowestFeeRateTx = mempool.values().stream()
-                .filter(Objects::nonNull)
-                .filter(tx -> !packingTxs.containsKey(bytesToHex(tx.getTxId())))
-                .min(Comparator.comparingDouble(this::feeRate))
-                .orElse(null);
-        if (lowestFeeRateTx == null || feeRate(candidate) <= feeRate(lowestFeeRateTx)) {
-            return false;
+        // Protect all unconfirmed ancestors, including grandparents, and transactions being mined.
+        Set<String> protectedIds = new HashSet<>(packingTxs.keySet());
+        for (TxInput input : candidate.getInputs()) {
+            for (Transaction ancestor : getPackageInMiningOrder(bytesToHex(input.getTxId()))) {
+                protectedIds.add(bytesToHex(ancestor.getTxId()));
+            }
         }
+        double candidateRate = feeRate(candidate);
+        List<Transaction> evictionCandidates = mempool.values().stream()
+                .filter(Objects::nonNull)
+                .filter(tx -> !protectedIds.contains(bytesToHex(tx.getTxId())))
+                .filter(tx -> feeRate(tx) < candidateRate)
+                .sorted(Comparator.comparingDouble(this::feeRate)
+                        .thenComparing(tx -> bytesToHex(tx.getTxId())))
+                .toList();
 
-        removeTxAndDescendants(bytesToHex(lowestFeeRateTx.getTxId()),
-                TransactionStatusResolver.REJECTED,
-                TransactionStatusResolver.INSUFFICIENT_FEE);
-        return mempool.size() < MAX_MEMPOOL_SIZE && mempoolMemoryBytes + TransactionValidator.memoryWeight(candidate) <= MAX_MEMPOOL_BYTES;
+        // Plan the complete removal before touching indexes or pool entries. Failed admission is a no-op.
+        Set<String> evictionIds = new LinkedHashSet<>();
+        long remainingBytes = mempoolMemoryBytes;
+        int remainingCount = mempool.size();
+        for (Transaction eviction : evictionCandidates) {
+            String evictionId = bytesToHex(eviction.getTxId());
+            if (evictionIds.contains(evictionId)) continue;
+            Set<String> descendants = collectDescendantsIncludingSelf(evictionId);
+            if (!Collections.disjoint(descendants, protectedIds)) continue;
+            for (String id : descendants) {
+                if (mempool.containsKey(id) && evictionIds.add(id)) {
+                    remainingCount--;
+                    remainingBytes -= entryWeights.getOrDefault(id, 0);
+                }
+            }
+            if (remainingCount < transactionCapacity && remainingBytes + candidateBytes <= memoryCapacityBytes) {
+                for (String id : evictionIds) {
+                    removeTxAndDescendants(id, TransactionStatusResolver.REJECTED,
+                            TransactionStatusResolver.INSUFFICIENT_FEE);
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<Transaction> getPackageInMiningOrder(String txIdStr) {

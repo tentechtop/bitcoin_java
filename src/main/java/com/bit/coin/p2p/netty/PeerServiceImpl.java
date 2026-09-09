@@ -92,6 +92,12 @@ public class PeerServiceImpl {
         startQuicServer();
         protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1,  textHandler);
         protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2,  textHandler2);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Probe, request -> {
+            if (request.getData().length > 1_048_576) throw new IllegalArgumentException("Probe exceeds 1 MiB");
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(request.getData());
+            return com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage(
+                    com.bit.coin.config.SystemConfig.SelfPeer.getId(), ProtocolEnum.P2P_Probe, request.getRequestId(), digest).serialize();
+        });
 
         protocolRegistry.registerVoidHandler(ProtocolEnum.Handshake_Success_V1, handshakeSuccessHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Find_Node_Req, p2PFindNodeReqHandle);

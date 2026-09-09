@@ -18,6 +18,8 @@ public enum QuicFrameEnum {
     //批量ACK的负载携带 10个帧的ACK  [1,2,3,4,...][4字节窗口]
     /** 批量ACK帧：多帧确认（最多10帧），payload=1字节数量+N×4字节序号+4字节窗口 */
     BATCH_ACK_FRAME((byte)12, "批量ACK帧"),
+    RELAY_FORWARD_FRAME((byte)13, "中继转发"),
+    RELAY_DELIVER_FRAME((byte)14, "中继投递"),
 
 
     PING_FRAME((byte)5, "ping帧"),

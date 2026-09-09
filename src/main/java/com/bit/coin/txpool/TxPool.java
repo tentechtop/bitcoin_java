@@ -1,6 +1,7 @@
 package com.bit.coin.txpool;
 
 import com.bit.coin.structure.Result;
+import com.bit.coin.estimate.FeeEstimate;
 import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.structure.tx.transfer.TransferDTO;
@@ -32,8 +33,13 @@ public interface TxPool {
 
     Result<String> addTx(TransferDTO tx);
 
-    //估算交易手续费
+    // 按默认确认目标估算所需手续费；交易须预留最终签名空间，不会修改交易或查询输入金额。
     long estimateTxFee(Transaction tx);
+
+    default FeeEstimate.Estimate estimateFee(int targetBlocks, long txSize) {
+        FeeEstimate.validateRequest(targetBlocks, txSize);
+        return FeeEstimate.estimate(getStatusSnapshot(), targetBlocks, txSize);
+    }
 
     //查询内存池中的交易
     Transaction getTx(String txHash);

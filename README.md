@@ -46,6 +46,7 @@
 - ✅ PoW 工作量证明（SHA-256），难度每 2016 个区块动态调整
 - ✅ 链重组与孤块处理，检查点机制保障安全
 - ✅ 交易内存池（TxPool），支持 RBF 手续费替换
+- ✅ 按内存池字节积压估算手续费，支持目标确认区块数与三档报价
 
 ### P2P 网络
 - ✅ 自研 QUIC 传输协议（UDP 承载，分帧/重组/ACK/重传/流量控制/拥塞控制）
@@ -416,8 +417,51 @@ CUDA 内核源码位于 `src/main/resources/cuda/miningKernel.cu`，采用暴力
 | `ExplorerApi` | `/explorer/*` | 区块链浏览器接口 |
 | `ConnectApi` | `/connect/*` | 连接管理 |
 | `TxPoolApi` | `/txpool/*` | 交易池状态查询 |
+| `FeeEstimateApi` | `/txpool/fee-estimate`、`/txpool/fee-estimates` | 手续费估算 |
 | `ChainResultApi` | `/result/*` | 链计算结果 |
 | `MockApi` | `/mock/*` | 测试模拟接口 |
+
+### 手续费估算
+
+```bash
+# 单档：希望在 3 个区块内确认，交易签名后总大小为 250 字节
+curl -H "Authorization: Bearer <READ_TOKEN>" "http://localhost:18333/txpool/fee-estimate?targetBlocks=3&txSize=250"
+
+# 同一份交易池快照下的 1 / 3 / 6 区块三档报价
+curl -H "Authorization: Bearer <READ_TOKEN>" "http://localhost:18333/txpool/fee-estimates?txSize=250"
+```
+
+`targetBlocks` 范围为 1～144，单档接口默认值为 3；`txSize` 必填，范围为 1～1,000,000。
+大小使用本项目 `Transaction.serialize().length` 的完整字节数，包含 32 字节 txId、最终签名和找零输出；
+不是 Bitcoin 主网的 vbyte，也不要使用不含 txId 的 `Transaction.getSize()`。
+接口沿用 `/txpool/**` 的读取权限策略：默认需要 READ 或 ADMIN 凭据，启用 `node.api.public-read` 后允许匿名读取。
+
+空池示例响应：
+
+```json
+{
+  "targetBlocks": 3,
+  "txSize": 250,
+  "feeRate": 1,
+  "fee": 250,
+  "feeRateUnit": "sat/byte",
+  "feeUnit": "sat",
+  "source": "minimum-relay",
+  "sampleCount": 0,
+  "mempoolBytes": 0,
+  "timestampMillis": 0
+}
+```
+
+`timestampMillis` 实际返回快照时间。估算读取完整内存池，包含正在挖矿但尚未确认的交易，
+按独立交易费率从高到低累计字节，使用与当前打包逻辑相同的 1 MiB 交易容量，给新交易预留空间。
+存在积压时返回严格超过截断费率的整数 sat/byte（`source=mempool`）；可容纳全部交易时返回最低中继费率 1 sat/byte
+（`source=minimum-relay`）。总费用 `fee = feeRate × txSize`，单位为 sat；非法参数或超出货币范围的报价返回 HTTP 400。
+
+这是本节点当前积压的启发式估算，尚未使用历史确认统计，也不预测新交易流入、区块装箱碎片或 CPFP 祖先包排序，
+目标区块数不代表确认保证。生产广播仍由客户端构建并签名交易，然后提交 `/tx/broadcast`。
+Java 调用方可使用 `TxPool.estimateFee(targetBlocks, txSize)`；原 `estimateTxFee(tx)` 现在返回默认目标的估算费用，
+不会读取 UTXO 或改写 `tx.fee`。调用时应已填入最终解锁脚本或等长占位数据。
 
 ### 监控面板
 
@@ -449,7 +493,7 @@ mvn clean package -Pdev-fast
 - **区块链**：区块创建、脚本示例（P2PKH/P2SH/P2WPKH/P2WSH）
 - **QUIC 连接**：拥塞窗口、MTU 估算、流量控制、接收失败处理、帧排序
 - **P2P 网络**：Kademlia 路由表、P2P 服务、协议消息
-- **交易池**：RBF 手续费替换
+- **交易池**：RBF 手续费替换、费率与总手续费估算、拥堵边界、完整池采样、估算 API 参数校验
 - **消息广播**：P2P 消息广播与接收
 - **EVM**：完整 EVM 实现测试（教学用途，含 Gas 计算和 EIP 支持）
 

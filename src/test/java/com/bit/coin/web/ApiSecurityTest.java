@@ -1,6 +1,9 @@
 package com.bit.coin.web;
 
+import com.bit.coin.api.FeeEstimateApi;
 import com.bit.coin.config.CorsConfig;
+import com.bit.coin.txpool.TxPool;
+import com.bit.coin.txpool.TxPoolImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +21,7 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 @SpringJUnitConfig(ApiSecurityTest.Config.class)
 @WebAppConfiguration
@@ -27,8 +31,16 @@ import static org.junit.jupiter.api.Assertions.*;
         "node.api.requests-per-second=100", "node.api.max-request-bytes=1024"})
 class ApiSecurityTest {
     @Configuration @EnableWebMvc
-    @Import({ApiSecurityConfig.class, CorsConfig.class, ApiExceptionHandler.class, Endpoints.class})
-    static class Config {}
+    @Import({ApiSecurityConfig.class, CorsConfig.class, ApiExceptionHandler.class, Endpoints.class, FeeEstimateApi.class})
+    static class Config {
+        @Bean TxPool feeEstimationPool() {
+            TxPool pool = mock(TxPool.class, CALLS_REAL_METHODS);
+            TxPoolImpl empty = new TxPoolImpl();
+            try { when(pool.getStatusSnapshot()).thenReturn(empty.getStatusSnapshot()); }
+            finally { empty.close(); }
+            return pool;
+        }
+    }
     @RestController static class Endpoints {
         @GetMapping("/chain/status") String read() { return "ready"; }
         @PostMapping("/p2p/disconnect") String write() { return "disconnected"; }
@@ -50,6 +62,12 @@ class ApiSecurityTest {
         mvc.perform(get("/chain/status").header("Authorization", reader)).andExpect(status().isOk());
         mvc.perform(post("/p2p/disconnect").header("Authorization", reader)).andExpect(status().isForbidden());
         mvc.perform(post("/p2p/disconnect").header("Authorization", admin)).andExpect(status().isOk());
+    }
+    @Test void feeEstimatesUseTheExistingReadPermission() throws Exception {
+        for (String path : new String[]{"/txpool/fee-estimate", "/txpool/fee-estimates"}) {
+            mvc.perform(get(path).param("txSize", "250")).andExpect(status().isUnauthorized());
+            mvc.perform(get(path).param("txSize", "250").header("Authorization", reader)).andExpect(status().isOk());
+        }
     }
     @Test void credentialsAreNeverAcceptedFromQueryParametersOrCookies() throws Exception {
         mvc.perform(get("/chain/status").param("token", admin.substring(7))).andExpect(status().isUnauthorized());

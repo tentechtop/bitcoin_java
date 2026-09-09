@@ -10,6 +10,8 @@ import com.bit.coin.utils.*;
 import org.bitcoinj.base.Base58;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -38,7 +40,7 @@ class ChainStateStoreIT {
         store.initialize(tip, params);
     }
 
-    @AfterEach void close() { database.close(); }
+    @AfterEach void close() { database.close(); BlockChainServiceImpl.mainTipBlock = null; }
 
     private Block block(byte[] hash) {
         byte[] body = database.get(TBLOCK_BODY, hash);
@@ -138,6 +140,51 @@ class ChainStateStoreIT {
         assertNull(database.get(TBLOCK_BODY, candidate.getHash()));
         assertNull(database.get(HEIGHT_TO_HASH, 1));
         assertArrayEquals(tip.getHash(), database.get(CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {512, 513})
+    void losingForkAtReorgBudgetBoundaryDoesNotDisableHealthyNode(int height) {
+        Block genesis = tip;
+        while (tip.getHeight() < height) accept(next(tip));
+        Block fork = next(genesis);
+        fork.getBlockHeader().setTime(fork.getBlockHeader().getTime() + 1);
+        while (!fork.getBlockHeader().verifyProofOfWork(false)) {
+            fork.getBlockHeader().setNonce(fork.getBlockHeader().getNonce() + 1);
+        }
+        fork.setHash(fork.getBlockHeader().calculateHash());
+
+        BlockChainServiceImpl chain = queryService();
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "utxoCache", mock(com.bit.coin.cache.UTXOCache.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "txPool", mock(com.bit.coin.txpool.TxPool.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "routingTable", mock(com.bit.coin.p2p.kad.RoutingTable.class));
+
+        assertEquals(height == 512, chain.verifyBlock(fork));
+        assertTrue(chain.isStateHealthy(), "A candidate's processing budget must not poison local state");
+        assertEquals(height == 512 ? 0 : 1, chain.rejectedBlocks());
+        assertEquals(height == 512, database.get(TBLOCK_BODY, fork.getHash()) != null);
+        assertArrayEquals(tip.getHash(), database.get(CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+        for (UTXO output : tip.getUTXOs()) assertNotNull(database.get(TUTXO, output.getKey()));
+
+        Block successor = next(tip);
+        assertTrue(chain.verifyBlock(successor), "A normal extension must still be accepted");
+        assertTrue(chain.isStateHealthy());
+        assertArrayEquals(successor.getHash(), database.get(CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+        assertEquals(height + 1, BlockChainServiceImpl.mainTipBlock.getHeight());
+    }
+
+    @Test void realCommitFailureStillDisablesNodeWithoutPublishingState() {
+        Block candidate = next(tip);
+        BlockChainServiceImpl chain = queryService();
+        DataBase failing = spy(database);
+        doReturn(false).when(failing).dataTransaction(anyList());
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "dataBase", failing);
+
+        assertFalse(chain.verifyBlock(candidate));
+        assertFalse(chain.isStateHealthy());
+        assertNull(database.get(TBLOCK_BODY, candidate.getHash()));
+        assertArrayEquals(tip.getHash(), database.get(CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+        assertArrayEquals(tip.getHash(), BlockChainServiceImpl.mainTipBlock.getHash());
     }
 
     @Test void restartAndIndependentDatabaseInstancesPreserveState() {

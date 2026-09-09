@@ -14,6 +14,10 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
     @Override protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket packet) {
         ByteBuf input = packet.content();
         InetSocketAddress remote = packet.sender();
+        receiveDatagram(input, remote, null);
+    }
+
+    static void receiveDatagram(ByteBuf input, InetSocketAddress remote, RelayPath route) {
         try {
             if (input.readableBytes() < SessionCipher.PREFIX_BYTES + QuicFrame.FIXED_HEADER_LENGTH
                     || input.readableBytes() > PathMtuEstimator.MAX_DATAGRAM_BYTES) return;
@@ -25,6 +29,7 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
                 QuicFrame frame = QuicFrame.decodeFromByteBuf(input.slice(start + SessionCipher.PREFIX_BYTES,
                         input.readableBytes() - SessionCipher.PREFIX_BYTES), remote);
                 if (frame.getConnectionId() != connectionId) return;
+                frame.setRelayPath(route);
                 if (frame.getFrameType() == QuicFrameEnum.CONNECT_REQUEST_FRAME.getCode())
                     QuicConnectionManager.handleConnectRequestFrame(frame);
                 else if (frame.getFrameType() == QuicFrameEnum.CONNECT_RESPONSE_FRAME.getCode())
@@ -33,6 +38,7 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
             }
             QuicConnection connection = QuicConnectionManager.getConnection(connectionId);
             if (mode != 1 || connection == null || connection.isExpired()
+                    || !java.util.Objects.equals(connection.getRelayPath(), route)
                     || !connection.isExpectedRemoteAddress(remote) || connection.getSessionCipher() == null) return;
             byte[] datagram = new byte[input.readableBytes()];
             input.getBytes(start, datagram);
@@ -42,7 +48,10 @@ public class QuicServiceHandler extends SimpleChannelInboundHandler<DatagramPack
                 if (frame.getConnectionId() != connectionId || frame.getFrameType() == QuicFrameEnum.CONNECT_REQUEST_FRAME.getCode()
                         || frame.getFrameType() == QuicFrameEnum.CONNECT_RESPONSE_FRAME.getCode()) return;
                 connection.recordFrameReceived(datagram.length);
-                connection.handleFrame(frame);
+                frame.setRelayPath(route);
+                if (RelayTransport.isRelayFrame(frame.getFrameType())) {
+                    if (route == null) RelayTransport.receive(connection, frame);
+                } else connection.handleFrame(frame);
             } finally { plaintext.release(); }
         } catch (Exception invalid) {
             log.debug("Rejected datagram from {}: {}", remote, invalid.getClass().getSimpleName());

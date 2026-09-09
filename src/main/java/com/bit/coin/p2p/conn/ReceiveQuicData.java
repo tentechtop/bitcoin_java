@@ -37,6 +37,17 @@ public class ReceiveQuicData extends QuicData{
     private long lastAckTime = System.currentTimeMillis();
     private static final int ACK_BATCH_SIZE = 10;  // 每10帧发送一次批量ACK
     private static final long ACK_MAX_DELAY_MS = 100;  // 最大延迟100ms
+    private QuicFrame lastReceivedFrame;
+
+    /** Flush the tail of an ACK batch even when no further data arrives. */
+    public synchronized QuicFrame pollDelayedAck(long now, int receiveWindow) {
+        if (isCompleted || lastReceivedFrame == null || receivedSequences.size() <= lastAckSize
+                || now - lastAckTime < ACK_MAX_DELAY_MS) return null;
+        QuicFrame ack = buildBitMapAckFrame(lastReceivedFrame, receiveWindow);
+        lastAckSize = receivedSequences.size();
+        lastAckTime = now;
+        return ack;
+    }
 
 
 
@@ -85,6 +96,7 @@ public class ReceiveQuicData extends QuicData{
             log.debug("[初始化数据] 连接ID:{} 数据ID:{} 总帧数:{}", connectionId, dataId, total);
         }
         getFrameArray()[sequence] = quicFrame;
+        lastReceivedFrame = quicFrame;
         receivedSequences.add(sequence);
         updateLatestReceivedSequences(sequence);
         log.debug("[接收帧] 连接ID:{} 数据ID:{} 序列号:{} 已接收:{}/{}",
@@ -164,7 +176,7 @@ public class ReceiveQuicData extends QuicData{
         ackFrame.setConnectionId(connectionId);
         ackFrame.setDataId(dataId);
         ackFrame.setSequence(sequence); // ACK帧序列号使用当前帧序列号
-        ackFrame.setTotal(1); // ACK帧不分片
+        ackFrame.setTotal(quicFrame.getTotal()); // Sequence refers to the original data frame.
         ackFrame.setFrameType(QuicFrameEnum.DATA_ACK_FRAME.getCode()); // 自定义：ACK帧类型
         ackFrame.setRemoteAddress(quicFrame.getRemoteAddress());
         // 计算总长度：固定头部 + 载荷长度
