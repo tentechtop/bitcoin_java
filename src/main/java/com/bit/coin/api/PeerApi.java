@@ -13,9 +13,11 @@ import com.bit.coin.p2p.conn.QuicConnection;
 import com.bit.coin.p2p.conn.QuicConnectionManager;
 import com.bit.coin.p2p.conn.QuicConnectionStats;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -40,67 +42,67 @@ public class PeerApi {
 
 
     //获取路由表中所有的节点
-    @RequestMapping("/getAllNodes")
+    @GetMapping("/getAllNodes")
     public List<Peer> getAllNodes(){
         return peerService.getAllNodes();
     }
 
     //获取在线的所有节点
-    @RequestMapping("/getOnlineNodes")
+    @GetMapping("/getOnlineNodes")
     public List<Peer> getOnlineNodes(){
         return peerService.getOnlineNodes();
     }
 
     //查询节点 参数是base58编码的节点地址
-    @RequestMapping("/getConnectionStats")
+    @GetMapping("/getConnectionStats")
     public List<QuicConnectionStats> getConnectionStats(){
         return QuicConnectionManager.getConnectionStats();
     }
 
-    @RequestMapping("/queryNode")
+    @PostMapping("/queryNode")
     public Peer queryNode(String nodeId){
         return routingTable.getNodeByBase58Id(nodeId);
     }
 
     //迭代查询节点 本地没有就查询最近的并根据返回的数据继续查询
-    @RequestMapping("/iterativeFindNode")
+    @GetMapping("/iterativeFindNode")
     public List<Peer> iterativeFindNode(String nodeId){
         return routingTable.iterativeFindNode(nodeId);
     }
 
     //获取路由表 且按照桶排序 返回list<list<peer>>
-    @RequestMapping("/getRoutingTable")
+    @GetMapping("/getRoutingTable")
     public List<List<Peer>> getRoutingTable(){
         return routingTable.getRoutingTable();
     }
 
-    @RequestMapping("/dht/health")
+    @GetMapping("/dht/health")
     public RoutingTableHealthSnapshot getDhtHealth() {
         return routingTable.getHealthSnapshot();
     }
 
-    @RequestMapping("/dht/coverage")
+    @GetMapping("/dht/coverage")
     public Map<Integer, Integer> getDhtCoverage() {
         return routingTable.getBucketCoverage();
     }
 
-    @RequestMapping("/dht/candidates")
+    @GetMapping("/dht/candidates")
     public List<CandidatePeerSnapshot> getDhtCandidates() {
         return routingTable.getCandidatePeerSnapshots();
     }
 
-    @RequestMapping("/dht/scores")
+    @GetMapping("/dht/scores")
     public List<PeerScoreSnapshot> getDhtScores() {
         return routingTable.getPeerScoreSnapshots();
     }
 
-    @RequestMapping("/dht/refresh")
+    @PostMapping("/dht/refresh")
     public String refreshDhtNow() {
         routingTable.triggerRefreshNow();
         return "ok";
     }
 
-    @RequestMapping("/dht/shareHints")
+    @PostMapping("/dht/shareHints")
     public String shareDhtHintsNow() {
         routingTable.triggerPeerHintShareNow();
         return "ok";
@@ -108,21 +110,21 @@ public class PeerApi {
 
 
 
-    @RequestMapping("/findNode")
+    @PostMapping("/findNode")
     public List<Peer> findNode(String targetId,String searchId){
         return routingTable.sendFindNode(Base58.decode(targetId),Base58.decode(searchId));
     }
 
 
     //向指定节点迭代查询
-    @RequestMapping("/findNodeIterative")
+    @PostMapping("/findNodeIterative")
     public List<Peer> findNodeIterative(String targetId,String searchId){
         return routingTable.findNodeIterative(Base58.decode(targetId),Base58.decode(searchId));
     }
 
 
 
-    @RequestMapping("/findNodeMock")
+    @PostMapping("/findNodeMock")
     public List<Peer> findNodeMock(String targetId,String searchId) throws Exception {
         int count = 20;
         byte[] data = new byte[36];
@@ -141,15 +143,7 @@ public class PeerApi {
 
 
 
-    @RequestMapping("/getTest")
-    public Peer getTest(){
-        Peer p = routingTable.getNodeByBase58Id("CxNZoe5Xsj41eGQzj5g2Njoy9qQiVS2thbHqmF1qCjeQ");
-        //获取节点的连接
-        QuicConnection cxNZoe5Xsj41eGQzj5g2Njoy9qQiVS2thbHqmF1qCjeQ = QuicConnectionManager.getConnectionByPeerId(bytesToHex(Base58.decode("CxNZoe5Xsj41eGQzj5g2Njoy9qQiVS2thbHqmF1qCjeQ")));
-        byte[] sharedSecret = cxNZoe5Xsj41eGQzj5g2Njoy9qQiVS2thbHqmF1qCjeQ.getSharedSecret();
-        log.info("协商密钥{}",bytesToHex(sharedSecret));
-        return p;
-    }
+
 
 
 }

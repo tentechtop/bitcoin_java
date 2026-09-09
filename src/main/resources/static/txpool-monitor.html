@@ -396,6 +396,7 @@
             }
         }
     </style>
+<script src="/node-api.js"></script>
 </head>
 <body>
 <main class="shell">
@@ -572,7 +573,7 @@
         }
         try {
             els.statusText.textContent = '读取中';
-            const response = await fetch('/txpool/status', {cache: 'no-store'});
+            const response = await NodeApi.fetch('/txpool/status', {cache: 'no-store'});
             if (!response.ok) {
                 throw new Error(`${response.status} ${response.statusText}`);
             }

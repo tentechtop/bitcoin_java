@@ -286,6 +286,7 @@
             }
         }
     </style>
+<script src="/node-api.js"></script>
 </head>
 <body>
     <div class="status-bar" id="statusBar"></div>
@@ -721,11 +722,11 @@
                     url += '?' + query.toString();
                 }
 
-                const response = await fetch(url);
+                const response = await NodeApi.fetch(url);
                 const data = await response.json();
 
                 resultArea.classList.add('show');
-                resultArea.innerHTML = '<pre>' + formatResult(data) + '</pre>';
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: formatResult(data)}));
 
                 if (response.ok) {
                     showStatus('请求成功!', 'success');
@@ -734,7 +735,7 @@
                 }
             } catch (error) {
                 resultArea.classList.add('show');
-                resultArea.innerHTML = '<pre style="color: #f56565;">错误: ' + error.message + '</pre>';
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: '错误: ' + error.message}));
                 showStatus('发生错误: ' + error.message, 'error');
             } finally {
                 btn.innerHTML = originalText;
@@ -751,7 +752,7 @@
                 btn.disabled = true;
 
                 const url = `/chain/${apiName}`;
-                const response = await fetch(url, {
+                const response = await NodeApi.fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -762,7 +763,7 @@
                 const data = await response.json();
 
                 resultArea.classList.add('show');
-                resultArea.innerHTML = '<pre>' + formatResult(data) + '</pre>';
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: formatResult(data)}));
 
                 if (response.ok) {
                     showStatus('请求成功!', 'success');
@@ -771,7 +772,7 @@
                 }
             } catch (error) {
                 resultArea.classList.add('show');
-                resultArea.innerHTML = '<pre style="color: #f56565;">错误: ' + error.message + '</pre>';
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: '错误: ' + error.message}));
                 showStatus('发生错误: ' + error.message, 'error');
             } finally {
                 btn.innerHTML = originalText;

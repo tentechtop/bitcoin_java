@@ -14,6 +14,7 @@ import java.util.Set;
  * 3. 区块上链确认后，更新缓存到数据库
  */
 public interface UTXOCache {
+    void invalidateAll();
 
     /**
      * 从缓存或数据库获取 UTXO

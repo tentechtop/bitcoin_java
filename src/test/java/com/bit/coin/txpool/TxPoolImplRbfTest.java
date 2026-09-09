@@ -55,6 +55,8 @@ class TxPoolImplRbfTest {
             return Arrays.equals(key, sourceUtxo.getKey()) ? sourceUtxo : null;
         });
 
+        when(dataBase.get(eq(TableEnum.TUTXO), any(byte[].class))).thenAnswer(invocation ->
+                Arrays.equals((byte[]) invocation.getArgument(1), sourceUtxo.getKey()) ? sourceUtxo.serialize() : null);
         ReflectionTestUtils.setField(txPool, "dataBase", dataBase);
         ReflectionTestUtils.setField(txPool, "utxoCache", utxoCache);
         ReflectionTestUtils.setField(txPool, "routingTable", routingTable);
@@ -62,6 +64,7 @@ class TxPoolImplRbfTest {
         KeyPair keyPair = Ed25519Signer.generateKeyPair();
         privateKey = Ed25519Signer.extractPrivateKeyCore(keyPair.getPrivate());
         publicKey = Ed25519Signer.extractPublicKeyCore(keyPair.getPublic());
+        sourceUtxo.setScript(com.bit.coin.utils.Sha.applyRIPEMD160(com.bit.coin.utils.Sha.applySHA256(publicKey)));
     }
 
     @Test

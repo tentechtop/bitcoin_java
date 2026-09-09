@@ -27,7 +27,8 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @Slf4j
 @Component
 @Data
-public class RocksDb implements DataBase {
+public class RocksDb implements DataBase, AutoCloseable {
+    static { RocksDB.loadLibrary(); }
 
     /**
      * 高写入吞吐量（区块、交易等高频写入）；
@@ -44,84 +45,71 @@ public class RocksDb implements DataBase {
     private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
     private String dbPath;
 
+    private final Map<TableEnum, ColumnFamilyHandle> columnFamilies = new EnumMap<>(TableEnum.class);
+    private final List<ColumnFamilyHandle> ownedHandles = new ArrayList<>();
+    private boolean syncWrites = true;
+    private long minFreeDiskBytes = 256L * 1024 * 1024;
+    private final AtomicLong committedBatches = new AtomicLong();
+    private final AtomicLong failedBatches = new AtomicLong();
+    private final AtomicLong commitNanos = new AtomicLong();
+    public long committedBatches() { return committedBatches.get(); }
+    public long failedBatches() { return failedBatches.get(); }
+    public long commitNanos() { return commitNanos.get(); }
+    public boolean hasWriteSpace() { return dbPath != null && new File(dbPath).getUsableSpace() >= minFreeDiskBytes; }
+    private void requireWriteSpace() {
+        if (!hasWriteSpace()) throw new IllegalStateException("Insufficient free disk space; writes suspended");
+    }
+    private static void closeIterator(RocksIterator iterator) {
+        try { iterator.status(); }
+        catch (RocksDBException failure) { throw new IllegalStateException("Database iteration failed", failure); }
+        finally { iterator.close(); }
+    }
+
+    private void finishRead(RocksIterator iterator, ReadOptions options) {
+        try { if (iterator != null) closeIterator(iterator); }
+        finally { try { if (options != null) options.close(); } finally { rwLock.readLock().unlock(); } }
+    }
+
     @Override
     public boolean createDatabase(SystemConfig config) {
-        String path = config.getPath();
-        if (path == null) {
-            return false;
-        }
-        dbPath = path;
-
-        // 初始化时为每个表创建缓存（在createDatabase中）
-        for (TableEnum table : TableEnum.values()) {
-            if (getCacheMaxSize(table)!=0){
-                Cache<byte[], byte[]> cache = Caffeine.newBuilder()
-                        .maximumSize(getCacheMaxSize(table)) // 按表配置大小
-                        .expireAfterWrite(getCacheTtl(table), TimeUnit.MINUTES) // 按表配置过期时间
-                        .build();
-                tableCaches.put(table, cache);
-            }
-        }
-
+        rwLock.writeLock().lock();
+        List<ColumnFamilyOptions> cfOptions = new ArrayList<>();
         try {
-            File dbDir = new File(dbPath);
-            if (!dbDir.exists() && !dbDir.mkdirs()) {
-                log.error("创建数据库目录失败: {}", dbPath);
-                return false;
-            }
-
-            // 初始化列族描述符列表
-            List<ColumnFamilyDescriptor> cfDescriptors = new ArrayList<>();
-            List<ColumnFamilyHandle> cfHandles = new ArrayList<>();
-
-            // 1. 添加默认列族（索引0）
-            cfDescriptors.add(new ColumnFamilyDescriptor(
-                    RocksDB.DEFAULT_COLUMN_FAMILY,
-                    new ColumnFamilyOptions()
-            ));
-
-            // 2. 获取自定义列族描述符（用LinkedHashMap保证顺序）
-            Map<TableEnum, ColumnFamilyDescriptor> customDescriptors = RTable.getColumnFamilyDescriptors();
-            List<TableEnum> tableEnums = new ArrayList<>(customDescriptors.keySet());
-
-            // 关键：将自定义列族描述符添加到cfDescriptors（否则不会创建）
-            for (TableEnum table : tableEnums) {
-                cfDescriptors.add(customDescriptors.get(table));
-            }
-
-            // 3. 打开数据库（此时cfDescriptors包含：默认列族 + 所有自定义列族）
-            DBOptions options = new DBOptions()
-                    .setCreateIfMissing(true)
-                    .setCreateMissingColumnFamilies(true)
-                    .setInfoLogLevel(InfoLogLevel.ERROR_LEVEL);
-
-            db = RocksDB.open(options, dbPath, cfDescriptors, cfHandles);
-
-            // 4. 绑定列族句柄（cfHandles顺序与cfDescriptors严格一致）
-            // 校验句柄数量是否匹配（避免索引越界）
-            if (cfHandles.size() != cfDescriptors.size()) {
-                throw new RuntimeException("列族句柄数量与描述符不匹配，初始化失败");
-            }
-
-            // 自定义列族从索引1开始绑定
-            for (int i = 0; i < tableEnums.size(); i++) {
-                int handleIndex = i + 1; // 索引0是默认列族
-                if (handleIndex >= cfHandles.size()) {
-                    throw new RuntimeException("列族句柄索引越界，表：" + tableEnums.get(i));
+            if (db != null) throw new IllegalStateException("Database is already open");
+            RocksDB.loadLibrary();
+            dbPath = Objects.requireNonNull(config.getPath(), "Database path");
+            java.nio.file.Files.createDirectories(java.nio.file.Path.of(dbPath));
+            syncWrites = config.isDbSyncWrites();
+            minFreeDiskBytes = config.getMinFreeDiskBytes();
+            Map<String, ColumnFamilyDescriptor> descriptors = new LinkedHashMap<>();
+            ColumnFamilyOptions defaults = new ColumnFamilyOptions().setWriteBufferSize(8 * 1024 * 1024);
+            cfOptions.add(defaults);
+            descriptors.put("default", new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, defaults));
+            for (TableEnum table : TableEnum.values()) {
+                if (!descriptors.containsKey(table.getColumnFamilyName())) {
+                    ColumnFamilyOptions options = new ColumnFamilyOptions()
+                            .setWriteBufferSize(8 * 1024 * 1024).setMaxWriteBufferNumber(2);
+                    cfOptions.add(options);
+                    descriptors.put(table.getColumnFamilyName(), new ColumnFamilyDescriptor(
+                            table.getColumnFamilyName().getBytes(java.nio.charset.StandardCharsets.UTF_8), options));
                 }
-                TableEnum table = tableEnums.get(i);
-                ColumnFamilyHandle handle = cfHandles.get(handleIndex);
-                RTable.setColumnFamilyHandle(table, handle);
-                log.debug("绑定表[{}]的列族句柄，索引: {}", table, handleIndex);
             }
-
-            // 注册关闭钩子
-            Runtime.getRuntime().addShutdownHook(new Thread(this::close));
-            log.info("RocksDB创建成功，路径: {}，列族总数: {}", dbPath, cfDescriptors.size());
+            try (DBOptions options = new DBOptions().setCreateIfMissing(true).setCreateMissingColumnFamilies(true)
+                    .setMaxOpenFiles(256).setInfoLogLevel(InfoLogLevel.WARN_LEVEL)) {
+                db = RocksDB.open(options, dbPath, new ArrayList<>(descriptors.values()), ownedHandles);
+            }
+            List<String> names = new ArrayList<>(descriptors.keySet());
+            for (TableEnum table : TableEnum.values()) {
+                columnFamilies.put(table, ownedHandles.get(names.indexOf(table.getColumnFamilyName())));
+            }
             return true;
-        } catch (RocksDBException e) {
-            log.error("创建RocksDB失败", e);
+        } catch (Exception e) {
+            close();
+            log.error("Cannot open database at {}", dbPath, e);
             return false;
+        } finally {
+            cfOptions.forEach(ColumnFamilyOptions::close);
+            rwLock.writeLock().unlock();
         }
     }
 
@@ -161,10 +149,11 @@ public class RocksDb implements DataBase {
             if (cfHandle == null) {
                 throw new IllegalArgumentException("表不存在: " + table);
             }
-            db.put(cfHandle, key, value);
+            requireWriteSpace();
+            try (WriteOptions options = new WriteOptions().setSync(syncWrites).setDisableWAL(false)) { db.put(cfHandle, options, key, value); }
         } catch (RocksDBException e) {
             log.error("插入数据失败, table={}", table, e);
-            throw new RuntimeException("插入数据失败", e);
+            throw new IllegalStateException("插入数据失败", e);
         } finally {
             rwLock.writeLock().unlock();
         }
@@ -178,10 +167,11 @@ public class RocksDb implements DataBase {
             if (cfHandle == null) {
                 throw new IllegalArgumentException("表不存在: " + table);
             }
-            db.delete(cfHandle, key);
+            requireWriteSpace();
+            try (WriteOptions options = new WriteOptions().setSync(syncWrites).setDisableWAL(false)) { db.delete(cfHandle, options, key); }
         } catch (RocksDBException e) {
             log.error("删除数据失败, table={}", table, e);
-            throw new RuntimeException("删除数据失败", e);
+            throw new IllegalStateException("删除数据失败", e);
         } finally {
             rwLock.writeLock().unlock();
         }
@@ -203,7 +193,7 @@ public class RocksDb implements DataBase {
             return db.get(cfHandle, key);
         } catch (RocksDBException e) {
             log.error("获取数据失败, table={}", table, e);
-            throw new RuntimeException("获取数据失败", e);
+            throw new IllegalStateException("获取数据失败", e);
         } finally {
             rwLock.readLock().unlock();
         }
@@ -239,8 +229,7 @@ public class RocksDb implements DataBase {
             }
             return count;
         } finally {
-            if (iterator != null) iterator.close();
-            rwLock.readLock().unlock();
+            finishRead(iterator, null);
         }
     }
 
@@ -252,7 +241,7 @@ public class RocksDb implements DataBase {
 
         rwLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
-        WriteOptions writeOptions = new WriteOptions();
+        WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
@@ -262,10 +251,11 @@ public class RocksDb implements DataBase {
             for (int i = 0; i < keys.length; i++) {
                 writeBatch.put(cfHandle, keys[i], values[i]);
             }
+            requireWriteSpace();
             db.write(writeOptions, writeBatch);
         } catch (RocksDBException e) {
             log.error("批量插入失败, table={}", table, e);
-            throw new RuntimeException("批量插入失败", e);
+            throw new IllegalStateException("批量插入失败", e);
         } finally {
             writeBatch.close();
             writeOptions.close();
@@ -278,7 +268,7 @@ public class RocksDb implements DataBase {
     public void batchDelete(TableEnum table, byte[][] keys) {
         rwLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
-        WriteOptions writeOptions = new WriteOptions();
+        WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
@@ -288,10 +278,11 @@ public class RocksDb implements DataBase {
             for (byte[] key : keys) {
                 writeBatch.delete(cfHandle, key);
             }
+            requireWriteSpace();
             db.write(writeOptions, writeBatch);
         } catch (RocksDBException e) {
             log.error("批量删除失败, table={}", table, e);
-            throw new RuntimeException("批量删除失败", e);
+            throw new IllegalStateException("批量删除失败", e);
         } finally {
             writeBatch.close();
             writeOptions.close();
@@ -322,26 +313,27 @@ public class RocksDb implements DataBase {
             return results.toArray(new byte[0][]);
         } catch (RocksDBException e) {
             log.error("批量获取失败, table={}", table, e);
-            throw new RuntimeException("批量获取失败", e);
+            throw new IllegalStateException("批量获取失败", e);
         } finally {
             rwLock.readLock().unlock();
         }
     }
 
     @Override
+    @jakarta.annotation.PreDestroy
     public void close() {
-        if (db != null) {
-            // 从TableEnum遍历所有表，释放对应列族句柄（适配新的集中管理逻辑）
-            for (TableEnum table : TableEnum.values()) {
-                ColumnFamilyHandle handle = RTable.getColumnFamilyHandle(table);
-                if (handle != null) {
-                    handle.close();
-                    log.debug("已关闭表[{}]的列族句柄", table);
-                }
+        rwLock.writeLock().lock();
+        try {
+            transactionMap.clear();
+            columnFamilies.clear();
+            ownedHandles.forEach(ColumnFamilyHandle::close);
+            ownedHandles.clear();
+            if (db != null) {
+                db.close();
+                db = null;
             }
-            db.close();
-            db = null;
-            log.info("RocksDB连接已关闭");
+        } finally {
+            rwLock.writeLock().unlock();
         }
     }
 
@@ -360,7 +352,7 @@ public class RocksDb implements DataBase {
             if (db == null) return;
             db.compactRange(start, limit);
         } catch (RocksDBException e) {
-            throw new RuntimeException(e);
+            throw new IllegalStateException(e);
         } finally {
             rwLock.writeLock().unlock();
         }
@@ -430,10 +422,7 @@ public class RocksDb implements DataBase {
             boolean isLastPage = !iterator.isValid();
             return new PageResult<>(dataList, currentLastKey, isLastPage);
         } finally {
-            if (iterator != null) {
-                iterator.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, null);
         }
     }
 
@@ -484,10 +473,7 @@ public class RocksDb implements DataBase {
             boolean isLastPage = !iterator.isValid();
             return new PageResult<>(dataList, currentLastKey, isLastPage);
         } finally {
-            if (iterator != null) {
-                iterator.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, null);
         }
     }
 
@@ -569,14 +555,7 @@ public class RocksDb implements DataBase {
 
             return new PageResult<>(dataList, currentLastKey, isLastPage);
         } finally {
-            // 6. 释放资源
-            if (iterator != null) {
-                iterator.close();
-            }
-            if (readOptions != null) {
-                readOptions.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, readOptions);
         }
     }
 
@@ -655,14 +634,7 @@ public class RocksDb implements DataBase {
 
             return new PageResult<>(keyList, currentLastKey, isLastPage);
         } finally {
-            // 6. 释放资源
-            if (iterator != null) {
-                iterator.close();
-            }
-            if (readOptions != null) {
-                readOptions.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, readOptions);
         }
     }
 
@@ -751,14 +723,7 @@ public class RocksDb implements DataBase {
 
             return new PageResult<>(keyList, currentLastKey, isLastPage);
         } finally {
-            // 6. 释放资源（和原逻辑一致）
-            if (iterator != null) {
-                iterator.close();
-            }
-            if (readOptions != null) {
-                readOptions.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, readOptions);
         }
     }
     @Override
@@ -808,24 +773,8 @@ public class RocksDb implements DataBase {
             // 7. 异常兜底：捕获所有异常，避免程序崩溃
             log.error("existsByPrefix执行异常：表[{}] 前缀[{}]", table, bytesToHex(prefix), e);
             return false;
-        } finally {
-            // 8. 强制释放资源（避免内存泄漏）
-            if (iterator != null) {
-                try {
-                    iterator.close();
-                } catch (Exception e) {
-                    log.warn("关闭RocksIterator失败", e);
-                }
-            }
-            if (readOptions != null) {
-                try {
-                    readOptions.close();
-                } catch (Exception e) {
-                    log.warn("关闭ReadOptions失败", e);
-                }
-            }
-            rwLock.readLock().unlock(); // 必须释放读锁
-        }
+        } finally { finishRead(iterator, readOptions); }
+
     }
 
 
@@ -861,12 +810,13 @@ public class RocksDb implements DataBase {
         }
 
         rwLock.writeLock().lock();
+        long started = System.nanoTime();
         WriteBatch writeBatch = null;
         WriteOptions writeOptions = null;
         try {
             writeBatch = new WriteBatch();
             writeOptions = new WriteOptions();
-            writeOptions.setSync(false); // 非同步写入（性能优先，若需强一致性可设为 true）
+            writeOptions.setSync(syncWrites).setDisableWAL(false);
 
             // 1. 校验所有操作的表（列族）是否存在，并添加到事务批次
             for (DbOperation op : operations) {
@@ -889,14 +839,18 @@ public class RocksDb implements DataBase {
             }
 
             // 2. 执行事务（原子提交）
+            requireWriteSpace();
             db.write(writeOptions, writeBatch);
-            log.info("事务执行成功，操作数: {}", operations.size());
+            log.debug("Transaction committed, operations={}", operations.size());
+            committedBatches.incrementAndGet();
             return true;
 
-        } catch (RocksDBException e) {
+        } catch (RocksDBException | IllegalStateException e) {
+            failedBatches.incrementAndGet();
             log.error("事务执行失败", e);
             return false; // 失败时，RocksDB 会自动回滚（WriteBatch 要么全成功，要么全失败）
         } finally {
+            commitNanos.addAndGet(System.nanoTime() - started);
             // 释放资源
             if (writeBatch != null) {
                 writeBatch.close();
@@ -955,8 +909,7 @@ public class RocksDb implements DataBase {
             }
             return result;
         } finally {
-            if (iterator != null) iterator.close();
-            rwLock.readLock().unlock();
+            finishRead(iterator, null);
         }
     }
 
@@ -977,88 +930,62 @@ public class RocksDb implements DataBase {
 
     }
 
-    private final ConcurrentHashMap<String, WriteBatch> transactionMap = new ConcurrentHashMap<>();
-    private final AtomicLong transactionIdGenerator = new AtomicLong(0);
-
-    @Override
-    public String beginTransaction() {
-        String transactionId = "txn_" + transactionIdGenerator.incrementAndGet();
-        transactionMap.put(transactionId, new WriteBatch());
-        log.debug("开始事务：{}", transactionId);
-        return transactionId;
+    private static final class PendingBatch {
+        final long created = System.nanoTime();
+        final List<DbOperation> operations = new ArrayList<>();
+        long bytes;
     }
+    private final Map<String, PendingBatch> transactionMap = new HashMap<>();
 
-
-    @Override
-    public boolean commitTransaction(String transactionId) {
-        if (transactionId == null || !transactionMap.containsKey(transactionId)) {
-            log.warn("提交事务失败：无效的事务ID[{}]", transactionId);
-            return false;
-        }
+    @Override public String beginTransaction() {
         rwLock.writeLock().lock();
-        WriteBatch writeBatch = transactionMap.get(transactionId);
-        WriteOptions writeOptions = new WriteOptions();
         try {
-            writeOptions.setSync(true); // 事务提交默认使用同步写入保证一致性
-            db.write(writeOptions, writeBatch);
-            transactionMap.remove(transactionId);
-            log.info("事务提交成功：{}", transactionId);
-            return true;
-        } catch (RocksDBException e) {
-            log.error("事务提交失败：{}", transactionId, e);
-            return false;
-        } finally {
-            writeBatch.close();
-            writeOptions.close();
-            rwLock.writeLock().unlock();
-        }
+            if (db == null) throw new IllegalStateException("Database is closed");
+            transactionMap.values().removeIf(batch -> System.nanoTime() - batch.created > TimeUnit.MINUTES.toNanos(1));
+            if (transactionMap.size() >= 16) throw new IllegalStateException("Pending transaction limit reached");
+            String id = UUID.randomUUID().toString(); transactionMap.put(id, new PendingBatch()); return id;
+        } finally { rwLock.writeLock().unlock(); }
     }
 
-    @Override
-    public boolean rollbackTransaction(String transactionId) {
-        if (transactionId == null || !transactionMap.containsKey(transactionId)) {
-            log.warn("回滚事务失败：无效的事务ID[{}]", transactionId);
-            return false;
-        }
-        // 事务回滚只需移除未提交的WriteBatch
-        WriteBatch writeBatch = transactionMap.remove(transactionId);
-        if (writeBatch != null) {
-            writeBatch.close();
-        }
-        log.info("事务回滚成功：{}", transactionId);
-        return true;
+    @Override public boolean commitTransaction(String id) {
+        rwLock.writeLock().lock();
+        try {
+            PendingBatch batch = transactionMap.remove(id);
+            return batch != null && System.nanoTime() - batch.created <= TimeUnit.MINUTES.toNanos(1)
+                    && dataTransaction(batch.operations);
+        } finally { rwLock.writeLock().unlock(); }
     }
 
-    @Override
-    public void addToTransaction(String transactionId, DbOperation operation) {
-        if (transactionId == null || operation == null) {
-            log.warn("添加事务操作失败：事务ID或操作不能为空");
-            return;
-        }
-        WriteBatch writeBatch = transactionMap.get(transactionId);
-        if (writeBatch == null) {
-            log.warn("添加事务操作失败：事务[{}]不存在", transactionId);
-            return;
-        }
+    @Override public boolean rollbackTransaction(String id) {
+        rwLock.writeLock().lock();
+        try { return transactionMap.remove(id) != null; }
+        finally { rwLock.writeLock().unlock(); }
+    }
+
+    @Override public void addToTransaction(String id, DbOperation op) {
+        rwLock.writeLock().lock();
         try {
-            ColumnFamilyHandle cfHandle = getColumnFamilyHandle(operation.table);
-            if (cfHandle == null) {
-                log.warn("添加事务操作失败：表[{}]不存在", operation.table);
-                return;
-            }
-            switch (operation.type) {
-                case INSERT:
-                case UPDATE:
-                    writeBatch.put(cfHandle, operation.key, operation.value);
-                    break;
-                case DELETE:
-                    writeBatch.delete(cfHandle, operation.key);
-                    break;
-            }
-            log.debug("已添加操作到事务[{}]：{}", transactionId, operation.type);
-        } catch (RocksDBException e) {
-            log.error("添加事务操作失败", e);
-        }
+            PendingBatch batch = transactionMap.get(id);
+            if (batch == null || op == null || op.key == null || System.nanoTime() - batch.created > TimeUnit.MINUTES.toNanos(1))
+                throw new IllegalArgumentException("Invalid or expired transaction");
+            long bytes = op.key.length + (op.value == null ? 0L : op.value.length);
+            if (batch.operations.size() >= 10_000 || batch.bytes + bytes > 4L * 1024 * 1024)
+                throw new IllegalArgumentException("Transaction buffer limit reached");
+            batch.operations.add(new DbOperation(op.table, op.key.clone(), op.value == null ? null : op.value.clone(), op.type));
+            batch.bytes += bytes;
+        } finally { rwLock.writeLock().unlock(); }
+    }
+
+    /** RocksDB checkpoint includes a consistent WAL/SST view. The destination must not exist. */
+    public void checkpoint(java.nio.file.Path destination) {
+        rwLock.writeLock().lock();
+        try {
+            java.nio.file.Path target = destination.toAbsolutePath().normalize();
+            if (java.nio.file.Files.exists(target) || target.startsWith(java.nio.file.Path.of(dbPath).toAbsolutePath().normalize()))
+                throw new IllegalArgumentException("Checkpoint destination must be new and outside the source database");
+            try (Checkpoint checkpoint = Checkpoint.create(db)) { checkpoint.createCheckpoint(target.toString()); }
+        } catch (RocksDBException e) { throw new IllegalStateException("Checkpoint failed", e); }
+        finally { rwLock.writeLock().unlock(); }
     }
 
     @Override
@@ -1079,12 +1006,7 @@ public class RocksDb implements DataBase {
         }
         rwLock.readLock().lock();
         try {
-            // 通过简单操作验证数据库可用性
-            byte[] testKey = "health_check".getBytes();
-            db.put(RocksDB.DEFAULT_COLUMN_FAMILY, testKey);
-            db.delete(RocksDB.DEFAULT_COLUMN_FAMILY);
-            log.info("数据库健康检查通过");
-            return true;
+            return db != null && hasWriteSpace() && db.getLongProperty("rocksdb.background-errors") == 0;
         } catch (RocksDBException e) {
             log.error("数据库健康检查失败", e);
             return false;
@@ -1120,10 +1042,7 @@ public class RocksDb implements DataBase {
                 iterator.next();
             }
         } finally {
-            if (iterator != null) {
-                iterator.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, null);
         }
     }
 
@@ -1190,17 +1109,10 @@ public class RocksDb implements DataBase {
 
             log.debug("按前缀遍历完成，前缀: {}", Arrays.toString(prefix));
 
-        } catch (Exception e) {
-            log.error("按前缀遍历异常，前缀: {}", Arrays.toString(prefix), e);
+        } catch (RuntimeException e) {
+            throw e;
         } finally {
-            // 6. 确保资源释放
-            if (iterator != null) {
-                iterator.close();
-            }
-            if (readOptions != null) {
-                readOptions.close();
-            }
-            rwLock.readLock().unlock();
+            finishRead(iterator, readOptions);
         }
     }
 
@@ -1234,7 +1146,7 @@ public class RocksDb implements DataBase {
         }
         rwLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
-        WriteOptions writeOptions = new WriteOptions();
+        WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         RocksIterator iterator = null;
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
@@ -1252,24 +1164,22 @@ public class RocksDb implements DataBase {
                 writeBatch.delete(cfHandle, currentKey);
                 iterator.next();
             }
+            requireWriteSpace();
             db.write(writeOptions, writeBatch);
             log.info("表[{}]中范围[{}, {})的记录已批量删除", table, Arrays.toString(startKey), Arrays.toString(endKey));
         } catch (RocksDBException e) {
             log.error("批量删除范围失败", e);
-            throw new RuntimeException("批量删除范围失败", e);
+            throw new IllegalStateException("批量删除范围失败", e);
         } finally {
-            if (iterator != null) {
-                iterator.close();
-            }
-            writeBatch.close();
-            writeOptions.close();
-            rwLock.writeLock().unlock();
+            try { if (iterator != null) closeIterator(iterator); }
+            finally { writeBatch.close(); writeOptions.close(); rwLock.writeLock().unlock(); }
         }
     }
 
     @Override
     public void enableWAL(boolean enable) {
-        // 通过设置默认WriteOptions修改WAL状态（实际应用中可能需要维护全局WriteOptions）
+        if (!enable) throw new IllegalArgumentException("Disabling the WAL is not supported");
+        // WAL remains enabled for all writes.
         // 这里仅为示例，实际实现需根据业务场景调整
         log.info("{} Write-Ahead Log", enable ? "启用" : "禁用");
         // 注意：RocksDB默认启用WAL，禁用会降低安全性但提高写入性能
@@ -1279,7 +1189,10 @@ public class RocksDb implements DataBase {
      * 获取表对应的列族句柄
      */
     private ColumnFamilyHandle getColumnFamilyHandle(TableEnum table) {
-        return RTable.getColumnFamilyHandle(table);
+        if (db == null) throw new IllegalStateException("Database is closed");
+        ColumnFamilyHandle handle = columnFamilies.get(table);
+        if (handle == null) throw new IllegalArgumentException("Unknown column family: " + table);
+        return handle;
     }
 
     // 内部静态类：封装事务中的单个操作

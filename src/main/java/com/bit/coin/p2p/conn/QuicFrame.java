@@ -37,7 +37,7 @@ public class QuicFrame {
 
     // 固定头部长度 = connectionId(8) + dataId(8) + total(4) + frameType(1) + sequence(4) + frameTotalLength(4)
     public static final int FIXED_HEADER_LENGTH = 8 + 8 + 4 + 1 + 4 + 4;
-    public static final int MAX_FRAME_TOTAL_LENGTH = PathMtuEstimator.MAX_DATAGRAM_BYTES;
+    public static final int MAX_FRAME_TOTAL_LENGTH = PathMtuEstimator.MAX_DATAGRAM_BYTES - SessionCipher.OVERHEAD_BYTES;
 
     // 无参构造器
     public QuicFrame() {

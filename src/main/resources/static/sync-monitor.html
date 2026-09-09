@@ -389,6 +389,7 @@
             }
         }
     </style>
+<script src="/node-api.js"></script>
 </head>
 <body>
 <main class="shell">
@@ -557,7 +558,7 @@
     }
 
     async function fetchJson(url) {
-        const response = await fetch(url, {cache: 'no-store'});
+        const response = await NodeApi.fetch(url, {cache: 'no-store'});
         if (!response.ok) {
             throw new Error(`${response.status} ${response.statusText}`);
         }

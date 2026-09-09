@@ -3,7 +3,7 @@ package com.bit.coin.p2p.protocol;
 
 import com.bit.coin.utils.UUIDv7Generator;
 import lombok.Data;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 
 import java.io.*;
 import java.util.Arrays;
@@ -414,7 +414,7 @@ public class P2PMessage {
      */
     public static P2PMessage deserialize(byte[] data) throws IOException {
         // 前置校验：输入字节数组不能为空
-        if (data == null || data.length < (2 + 32 + 16 + 16 + 1 + 4 + 4)) {
+        if (data == null || data.length > 8_100_000 || data.length < (2 + 32 + 16 + 16 + 1 + 4 + 4)) {
             throw new IllegalArgumentException("反序列化失败：字节数组为空或长度不足（最小长度需75字节）");
         }
 
@@ -452,6 +452,7 @@ public class P2PMessage {
 
             // 7. 读取data长度（int，4字节）
             int length = dis.readInt();
+            if (length < 0 || length != dis.available()) throw new IOException("Invalid message length");
             message.setLength(length); // 先设置length，后续设置data时会自动同步
 
             // 8. 读取业务数据（变长，长度=length）
@@ -466,6 +467,7 @@ public class P2PMessage {
                 throw new IOException("反序列化失败：length字段与实际data长度不一致");
             }
 
+            if (!message.isReqResIdValid() || version != 1) throw new IOException("Invalid message envelope");
             return message;
         } catch (IllegalArgumentException e) {
             return null;

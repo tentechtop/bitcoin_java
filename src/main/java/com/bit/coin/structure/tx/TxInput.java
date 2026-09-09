@@ -272,6 +272,7 @@ public class TxInput {
         long sequence = sequenceInt & 0xFFFFFFFFL;
         input.setSequence(sequence);
         long scriptSigLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptSigLength < 0 || scriptSigLength > TransactionValidator.MAX_SCRIPT_BYTES || scriptSigLength > dis.available()) throw new IOException("Invalid script length");
         if (scriptSigLength > 0) {
             byte[] scriptSig = new byte[(int) scriptSigLength];
             dis.readFully(scriptSig);

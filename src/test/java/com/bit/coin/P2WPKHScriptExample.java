@@ -1,6 +1,8 @@
 package com.bit.coin;
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.base.*;
+import org.bitcoinj.crypto.ECKey;
 import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.script.Script;
@@ -19,7 +21,7 @@ public class P2WPKHScriptExample {
         // 1. 创建密钥对（必须使用压缩公钥）
         ECKey key = new ECKey();
         System.out.println("私钥(WIF): " + key.getPrivateKeyAsWiF(params));
-        System.out.println("公钥(HEX): " + Utils.HEX.encode(key.getPubKey()));
+        System.out.println("公钥(HEX): " + java.util.HexFormat.of().formatHex(key.getPubKey()));
 
         // 2. 创建P2WPKH锁定脚本
         Script lockingScript = ScriptBuilder.createP2WPKHOutputScript(key);
@@ -27,7 +29,7 @@ public class P2WPKHScriptExample {
 
         System.out.println("\n=== P2WPKH锁定脚本 ===");
         System.out.println("SegWit地址: " + segwitAddress);
-        System.out.println("脚本字节: " + Utils.HEX.encode(lockingScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(lockingScript.getProgram()));
 
         // 3. 创建模拟的UTXO
         Transaction previousTx = new Transaction(params);
@@ -70,14 +72,13 @@ public class P2WPKHScriptExample {
             TransactionSignature txSig = new TransactionSignature(ecdsaSig, Transaction.SigHash.ALL, false);
 
             // 7. 创建见证数据
-            TransactionWitness witness = new TransactionWitness(2);
-            witness.setPush(0, txSig.encodeToBitcoin());
-            witness.setPush(1, key.getPubKey());
-            input.setWitness(witness);
+            TransactionWitness witness = TransactionWitness.of(java.util.List.of(txSig.encodeToBitcoin(), key.getPubKey()));
+            input = input.withWitness(witness);
+        spendingTx.replaceInput(0, input);
 
             System.out.println("\n=== P2WPKH见证数据 ===");
-            System.out.println("签名: " + Utils.HEX.encode(txSig.encodeToBitcoin()));
-            System.out.println("公钥: " + Utils.HEX.encode(key.getPubKey()));
+            System.out.println("签名: " + java.util.HexFormat.of().formatHex(txSig.encodeToBitcoin()));
+            System.out.println("公钥: " + java.util.HexFormat.of().formatHex(key.getPubKey()));
 
             // 8. 验证交易
             System.out.println("\n=== P2WPKH脚本执行测试 ===");
@@ -123,7 +124,7 @@ public class P2WPKHScriptExample {
 
             // 提取并验证哈希
             byte[] extractedHash = ScriptPattern.extractHashFromP2WH(lockingScript);
-            byte[] expectedHash = Utils.sha256hash160(pubKey);
+            byte[] expectedHash = org.bitcoinj.crypto.internal.CryptoUtils.sha256hash160(pubKey);
 
             if (!Arrays.equals(expectedHash, extractedHash)) {
                 System.err.println("公钥哈希不匹配");

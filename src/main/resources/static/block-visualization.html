@@ -781,6 +781,7 @@
             }
         }
     </style>
+<script src="/node-api.js"></script>
 </head>
 <body>
 <main class="shell">
@@ -896,7 +897,7 @@
         view: 'height',
         autoRefresh: true,
         timer: null,
-        source: 'mock',
+        source: 'unavailable',
         mempool: null
     };
 
@@ -944,8 +945,8 @@
     function hashShort(hash, head = 18, tail = 10) {
         if (!hash) return '--';
         const text = String(hash);
-        if (text.length <= head + tail + 3) return text;
-        return `${text.slice(0, head)}...${text.slice(-tail)}`;
+        if (text.length <= head + tail + 3) return NodeApi.escape(text);
+        return NodeApi.escape(`${text.slice(0, head)}...${text.slice(-tail)}`);
     }
 
     function formatAge(seconds) {
@@ -974,9 +975,9 @@
 
     function normalizeBlock(raw, index, latestHeight) {
         const height = Number(raw.height ?? raw.blockHeight ?? 0);
-        const hash = String(raw.hash ?? raw.blockHash ?? makeHash(height + index));
+        const hash = String(raw.hash ?? raw.blockHash ?? '');
         const txCount = readTxCount(raw);
-        const time = Number(raw.time ?? raw.timestamp ?? Math.floor(Date.now() / 1000) - (latestHeight - height) * 600);
+        const time = Number(raw.time ?? raw.timestamp ?? 0);
         const confirmations = Math.max(0, latestHeight - height + 1);
         let status = 'history';
         if (confirmations <= 1) status = 'latest';
@@ -1001,7 +1002,7 @@
     }
 
     async function fetchJson(url) {
-        const response = await fetch(url, {cache: 'no-store'});
+        const response = await NodeApi.fetch(url, {cache: 'no-store'});
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
         return response.json();
     }
@@ -1009,7 +1010,7 @@
     async function loadLiveData() {
         const latest = await fetchJson('/chain/getMainLatestBlock');
         const latestHeight = Number(latest.height);
-        if (!Number.isFinite(latestHeight) || latestHeight <= 0) {
+        if (!Number.isFinite(latestHeight) || latestHeight < 0) {
             throw new Error('latest block has no height');
         }
 
@@ -1117,7 +1118,8 @@
         try {
             await loadLiveData();
         } catch (error) {
-            makeMockBlocks();
+            state.source = 'unavailable';
+            state.error = error.message;
         }
         render();
     }
@@ -1133,7 +1135,7 @@
             els.sourceText.textContent = '实时接口';
         } else {
             els.sourceDot.classList.add('mock');
-            els.sourceText.textContent = '演示数据';
+            els.sourceText.textContent = '节点不可用：' + (state.error || '等待连接');
         }
     }
 
@@ -1310,7 +1312,7 @@
             <div class="detail-grid">
                 <div class="detail">
                     <div class="detail-label">Version</div>
-                    <div class="detail-value">${block.version ?? '--'}</div>
+                    <div class="detail-value">${number(block.version)}</div>
                 </div>
                 <div class="detail">
                     <div class="detail-label">Nonce</div>
@@ -1318,7 +1320,7 @@
                 </div>
                 <div class="detail">
                     <div class="detail-label">Bits</div>
-                    <div class="detail-value">${block.bits ?? '--'}</div>
+                    <div class="detail-value">${number(block.bits)}</div>
                 </div>
                 <div class="detail">
                     <div class="detail-label">Chain Work</div>
@@ -1347,7 +1349,7 @@
         return `
             <div class="hash-row" style="--accent:${color}">
                 <div class="hash-label">${label}</div>
-                <div class="hash-value">${value || '--'}</div>
+                <div class="hash-value">${NodeApi.escape(value || '--')}</div>
             </div>
         `;
     }
@@ -1360,14 +1362,14 @@
             return;
         }
         els.txList.innerHTML = transactions.map((tx, index) => {
-            const txId = tx.txId || tx.hash || makeHash(block.height * 1000 + index);
+            const txId = tx.txId || tx.hash || '--';
             const inputs = Array.isArray(tx.inputs) ? tx.inputs.length : 0;
             const outputs = Array.isArray(tx.outputs) ? tx.outputs.length : 0;
             return `
                 <article class="tx-item">
                     <div>
                         <div class="tx-hash">${hashShort(txId, 22, 12)}</div>
-                        <div class="meta-line">${tx.statusStr || 'confirmed'}</div>
+                        <div class="meta-line">${NodeApi.escape(tx.statusStr || 'confirmed')}</div>
                     </div>
                     <div class="tx-meta">${inputs} in · ${outputs} out</div>
                 </article>

@@ -1,6 +1,8 @@
 package com.bit.coin;
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.base.*;
+import org.bitcoinj.crypto.ECKey;
 import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.script.Script;
@@ -31,7 +33,7 @@ public class P2WSHScriptExample {
         Script witnessScript = ScriptBuilder.createMultiSigOutputScript(2, keys);
 
         System.out.println("\n=== 见证脚本 (witnessScript) ===");
-        System.out.println("脚本字节: " + Utils.HEX.encode(witnessScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(witnessScript.getProgram()));
         System.out.println("脚本反汇编: " + witnessScript);
 
         // 3. 创建P2WSH锁定脚本 [1,3](@ref)
@@ -42,7 +44,7 @@ public class P2WSHScriptExample {
 
         System.out.println("\n=== P2WSH锁定脚本 (scriptPubKey) ===");
         System.out.println("P2WSH地址: " + p2wshAddress);
-        System.out.println("脚本字节: " + Utils.HEX.encode(lockingScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(lockingScript.getProgram()));
         System.out.println("脚本反汇编: " + lockingScript);
         System.out.println("地址以'bc1'开头: " + p2wshAddress.toString().startsWith("bc1"));
 
@@ -81,19 +83,16 @@ public class P2WSHScriptExample {
             ECKey.ECDSASignature ecdsaSig = keys.get(i).sign(sigHash);
             TransactionSignature txSig = new TransactionSignature(ecdsaSig, Transaction.SigHash.ALL, false);
             signatures.add(txSig);
-            System.out.println("签名" + (i + 1) + ": " + Utils.HEX.encode(txSig.encodeToBitcoin()));
+            System.out.println("签名" + (i + 1) + ": " + java.util.HexFormat.of().formatHex(txSig.encodeToBitcoin()));
         }
 
         // 8. 创建见证数据（Witness）[3](@ref)
         // P2WSH的见证数据格式: <dummy> <signature1> <signature2> <witnessScript>
         // 注意：由于CHECKMULTISIG的bug，需要添加一个dummy元素
-        TransactionWitness witness = new TransactionWitness(4);
-        witness.setPush(0, new byte[0]); // Dummy元素（由于CHECKMULTISIG bug）
-        witness.setPush(1, signatures.get(0).encodeToBitcoin());
-        witness.setPush(2, signatures.get(1).encodeToBitcoin());
-        witness.setPush(3, witnessScript.getProgram());
-
-        input.setWitness(witness);
+        TransactionWitness witness = TransactionWitness.of(java.util.List.of(new byte[0],
+                signatures.get(0).encodeToBitcoin(), signatures.get(1).encodeToBitcoin(), witnessScript.getProgram()));
+        input = input.withWitness(witness);
+        spendingTx.replaceInput(0, input);
 
         System.out.println("\n=== P2WSH见证数据 ===");
         System.out.println("见证数据包含 " + witness.getPushCount() + " 个元素");
@@ -139,8 +138,8 @@ public class P2WSHScriptExample {
             byte[] extractedHash = ScriptPattern.extractHashFromP2WH(lockingScript);
             byte[] expectedHash = Sha256Hash.hash(expectedWitnessScript.getProgram());
 
-            System.out.println("提取的哈希: " + Utils.HEX.encode(extractedHash));
-            System.out.println("预期的哈希: " + Utils.HEX.encode(expectedHash));
+            System.out.println("提取的哈希: " + java.util.HexFormat.of().formatHex(extractedHash));
+            System.out.println("预期的哈希: " + java.util.HexFormat.of().formatHex(expectedHash));
 
             if (!Arrays.equals(expectedHash, extractedHash)) {
                 System.err.println("见证脚本哈希不匹配");
@@ -210,7 +209,7 @@ public class P2WSHScriptExample {
         // 嵌套在P2SH中（兼容旧节点）
         Script p2shScript = ScriptBuilder.createP2SHOutputScript(p2wshScript);
         Address nestedAddress = LegacyAddress.fromScriptHash(params,
-                Utils.sha256hash160(p2wshScript.getProgram()));
+                org.bitcoinj.crypto.internal.CryptoUtils.sha256hash160(p2wshScript.getProgram()));
 
         System.out.println("=== 嵌套P2SH-P2WSH地址 ===");
         System.out.println("嵌套地址: " + nestedAddress);

@@ -7,4 +7,5 @@ public class QuicMsg {
     private long connectionId;//连接ID
     private long dataId;//数据ID
     private byte[] data;
+    private boolean trustedLocal;
 }

@@ -64,9 +64,13 @@ public class SerializeUtils {
         if (first < 0xFD) {
             return first;
         } else if (first == 0xFD) {
-            return Short.reverseBytes(dis.readShort()) & 0xFFFF;
+            int value = Short.reverseBytes(dis.readShort()) & 0xFFFF;
+            if (value < 0xFD) throw new IOException("Noncanonical varint");
+            return value;
         } else if (first == 0xFE) {
-            return Integer.reverseBytes(dis.readInt());
+            int value = Integer.reverseBytes(dis.readInt());
+            if (value < 0x10000) throw new IOException("Invalid or noncanonical varint");
+            return value;
         } else {
             throw new IOException("不支持的 VarInt 标记: 0xFF");
         }
@@ -147,6 +151,7 @@ public class SerializeUtils {
         if (length == 0) {
             return new byte[0];
         }
+        if (length < 0 || length > 8_000_000 || length > dis.available()) throw new IOException("Invalid byte array length");
         byte[] bytes = new byte[length];
         dis.readFully(bytes);
         return bytes;

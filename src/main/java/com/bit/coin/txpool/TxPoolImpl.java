@@ -10,7 +10,7 @@ import com.bit.coin.structure.tx.transfer.TransferDTO;
 import com.bit.coin.utils.Sha;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +39,51 @@ public class TxPoolImpl implements TxPool{
 
     @Autowired
     private RoutingTable routingTable;
+    @Autowired private com.bit.coin.config.SystemConfig systemConfig;
+    @Autowired private org.springframework.beans.factory.ObjectProvider<com.bit.coin.blockchain.BlockChainServiceImpl> chainProvider;
+    private static final long MAX_MEMPOOL_BYTES = 64L * 1024 * 1024;
+    private static final long TX_EXPIRY_MS = TimeUnit.HOURS.toMillis(72);
+    private final Map<String, Integer> entryWeights = new HashMap<>();
+    private long mempoolMemoryBytes;
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "mempool-maintenance"); thread.setDaemon(true); return thread;
+    });
+    private final LinkedHashSet<String> broadcastQueue = new LinkedHashSet<>();
+
+    private static byte[] wireBytes(Transaction tx) {
+        try { return tx.serialize(); }
+        catch (java.io.IOException e) { throw new IllegalArgumentException("Invalid transaction encoding", e); }
+    }
+    private void storeTx(String id, Transaction tx) {
+        int size = TransactionValidator.memoryWeight(tx);
+        Integer previous = entryWeights.put(id, size);
+        mempoolMemoryBytes += size - (previous == null ? 0 : previous);
+        mempool.put(id, tx);
+    }
+    private Transaction eraseTx(String id) {
+        Integer previous = entryWeights.remove(id);
+        if (previous != null) mempoolMemoryBytes -= previous;
+        broadcastQueue.remove(id);
+        return mempool.remove(id);
+    }
+    public synchronized long estimatedMemoryBytes() { return mempoolMemoryBytes; }
+    private void enqueueBroadcast(byte[] id) {
+        if (broadcastQueue.size() < MAX_MEMPOOL_SIZE) broadcastQueue.add(bytesToHex(id));
+    }
+    private void drainBroadcast() {
+        byte[] id;
+        synchronized (this) {
+            if (broadcastQueue.isEmpty()) return;
+            String next = broadcastQueue.iterator().next(); broadcastQueue.remove(next);
+            Transaction tx = mempool.get(next);
+            if (tx == null) return;
+            id = tx.getTxId().clone();
+        }
+        try { routingTable.BroadcastResource(1, id); }
+        catch (Exception failure) { log.debug("Transaction broadcast deferred: {}", failure.getMessage()); }
+    }
+    @jakarta.annotation.PreDestroy public void close() { scheduler.shutdownNow(); }
+
 
     // 内存池：hex txId -> Transaction
     private final Map<String, Transaction> mempool = new ConcurrentHashMap<>();
@@ -76,27 +121,14 @@ public class TxPoolImpl implements TxPool{
     // 初始化定时任务（Spring容器启动后执行）
     @PostConstruct
     public void initScheduledTasks() {
-        // 10分钟重广播未确认交易
-        ScheduledExecutorService rebroadcastExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "tx-pool-rebroadcast");
-            t.setDaemon(true); // 守护线程，应用关闭时自动退出
-            return t;
-        });
-
-        // 延迟1分钟启动，之后每10分钟执行一次
-        rebroadcastExecutor.scheduleAtFixedRate(
-                this::rebroadcastUnconfirmedTxs,
-                1,  // 初始延迟（分钟）
-                10, // 间隔（分钟）
-                TimeUnit.MINUTES
-        );
+        scheduler.scheduleWithFixedDelay(this::rebroadcastUnconfirmedTxs, 1, 1, TimeUnit.MINUTES);
+        scheduler.scheduleWithFixedDelay(this::drainBroadcast, 0, 10, TimeUnit.MILLISECONDS);
     }
-
 
     /**
      * 重广播交易池中未确认的交易（核心逻辑）
      */
-    private void rebroadcastUnconfirmedTxs() {
+    private synchronized void rebroadcastUnconfirmedTxs() {
         try {
             // 过滤出需要重广播的交易：未确认、未打包、最后广播时间超过5分钟
             long now = System.currentTimeMillis();
@@ -123,8 +155,8 @@ public class TxPoolImpl implements TxPool{
                 }
 
                 Long joinTime = txTimestamps.get(txIdStr);
-                if (joinTime != null && now - joinTime >= TX_REVALIDATE_AGE_MS
-                        && !verifyTx(tx, Collections.singleton(txIdStr))) {
+                if (joinTime != null && (now - joinTime >= TX_EXPIRY_MS || (now - joinTime >= TX_REVALIDATE_AGE_MS
+                        && !verifyTx(tx, Collections.singleton(txIdStr))))) {
                     removeTxAndDescendants(txIdStr, TransactionStatusResolver.REJECTED,
                             TransactionStatusResolver.NON_STANDARD);
                     continue;
@@ -157,31 +189,9 @@ public class TxPoolImpl implements TxPool{
     /**
      * 复用的批量广播逻辑（抽离原broadcastTxPool的逻辑）
      */
-    private void broadcastTxList(List<Transaction> txList) {
-        if (txList.isEmpty()) return;
-
-        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-        AtomicInteger index = new AtomicInteger(0);
-
-        executor.scheduleAtFixedRate(() -> {
-            int i = index.getAndIncrement();
-            if (i >= txList.size()) {
-                executor.shutdown();
-                return;
-            }
-
-            Transaction tx = txList.get(i);
-            try {
-                routingTable.BroadcastResource(1, tx.getTxId());
-                log.debug("重广播交易成功：{}", bytesToHex(tx.getTxId()));
-            } catch (Exception e) {
-                log.error("重广播交易 {} 失败", bytesToHex(tx.getTxId()), e);
-            }
-        }, 0, 10, TimeUnit.MILLISECONDS);
-
-        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    private synchronized void broadcastTxList(List<Transaction> txList) {
+        for (Transaction tx : txList) enqueueBroadcast(tx.getTxId());
     }
-
 
     @Override
     synchronized public boolean verifyTx(Transaction tx) {
@@ -196,6 +206,12 @@ public class TxPoolImpl implements TxPool{
                 log.warn("交易验证失败：交易格式不正确");
                 return false;
             }
+
+            com.bit.coin.structure.block.Block tip = com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
+            if (tip != null && chainProvider != null && !com.bit.coin.blockchain.ConsensusRules.isFinal(tx,
+                    tip.getHeight() + 1, com.bit.coin.blockchain.ConsensusRules.medianTime(tip, chainProvider.getObject()::getHeaderContext))) return false;
+            if (tx.getInputs().size() > TransactionValidator.MAX_INPUTS || tx.getOutputs().size() > TransactionValidator.MAX_OUTPUTS
+                    || wireBytes(tx).length > TransactionValidator.MAX_TRANSACTION_BYTES) return false;
 
             // 2. Coinbase交易单独处理
             if (tx.isCoinbase()) {
@@ -245,16 +261,12 @@ public class TxPoolImpl implements TxPool{
                     tx.setStatus(status);
                     return false;
                 }
-                log.info("UTXOKey{}",bytesToHex(key));
+                log.debug("UTXOKey{}",bytesToHex(key));
 
                 // 3.1 检查UTXO是否存在于数据库
                 UTXO utxo = resolveInputUTXO(txInput, key);
                 if (utxo == null) {
                     log.warn("交易验证失败：UTXO不存在，txId={}, index={}", bytesToHex(txId), index);
-                    return false;
-                }
-                if (!isInputUTXOSpendable(utxo, txInput)){
-                    log.warn("交易验证失败：UTXO不可花费，txId={}, index={}", bytesToHex(txId), index);
                     return false;
                 }
                 utxoMap.put(keyHex, utxo);
@@ -273,6 +285,16 @@ public class TxPoolImpl implements TxPool{
                     return false;
                 }
             }
+            Set<String> ancestors = new HashSet<>();
+            ArrayDeque<String> pending = new ArrayDeque<>();
+            for (TxInput input : tx.getInputs()) if (mempool.containsKey(bytesToHex(input.getTxId()))) pending.add(bytesToHex(input.getTxId()));
+            while (!pending.isEmpty()) {
+                String parent = pending.removeFirst();
+                if (!ancestors.add(parent)) continue;
+                if (ancestors.size() > 25) return false;
+                pending.addAll(txToParents.getOrDefault(parent, Collections.emptySet()));
+            }
+
             // 5. 设置UTXO映射并验证交易
             tx.setUtxoMap(utxoMap);
             //设置每一个输入的引用
@@ -285,6 +307,10 @@ public class TxPoolImpl implements TxPool{
                 txOutput.setScriptPubKey(utxo.getScript());
                 inputs.get(i).setOutput(txOutput);
             }
+
+            if (tip != null && chainProvider != null && !com.bit.coin.blockchain.ConsensusRules.relativeLocksSatisfied(tx,
+                    tip.getHeight() + 1, com.bit.coin.blockchain.ConsensusRules.medianTime(tip, chainProvider.getObject()::getHeaderContext),
+                    chainProvider.getObject()::medianBeforeHeight)) return false;
 
             if (!tx.validate()) {
                 log.warn("交易验证失败：validate()返回false");
@@ -307,7 +333,7 @@ public class TxPoolImpl implements TxPool{
                 return false;
             }
 
-            log.info("交易验证成功：txId={}", bytesToHex(tx.getTxId()));
+            log.debug("交易验证成功：txId={}", bytesToHex(tx.getTxId()));
             return true;
 
         } catch (Exception e) {
@@ -330,6 +356,7 @@ public class TxPoolImpl implements TxPool{
         }
 
         try {
+            tx = Transaction.deserialize(wireBytes(tx));
             // 1. 验证交易
             if (tx.getTxId() == null) {
                 tx.setTxId(tx.calculateTxId());
@@ -405,7 +432,7 @@ public class TxPoolImpl implements TxPool{
             tx.setStatus(status);
 
             // 8. 添加到内存池并构建地址到交易的映射
-            mempool.put(txIdStr, tx);
+            storeTx(txIdStr, tx);
             txTimestamps.put(txIdStr, System.currentTimeMillis());
             indexTransaction(txIdStr, tx);
             buildAddressMapping(tx, tx.getTxId());
@@ -425,7 +452,7 @@ public class TxPoolImpl implements TxPool{
             if (pendingConfirmationOfReceipt != null) {
                 processingSet.addAll(pendingConfirmationOfReceipt);
             }
-            routingTable.BroadcastResource(1,tx.getTxId());
+            enqueueBroadcast(tx.getTxId());
             return true;
         } catch (Exception e) {
             log.error("添加交易异常", e);
@@ -461,6 +488,9 @@ public class TxPoolImpl implements TxPool{
         List<Runnable> rollbackActions = new ArrayList<>();
 
         try {
+            if (txList.size() > MAX_MEMPOOL_SIZE) return false;
+            txList = txList.stream().map(tx -> Transaction.deserialize(wireBytes(tx))).toList();
+
             // 2. 预检查阶段：验证所有交易的有效性（原子性关键：先检查，后执行）
             for (Transaction tx : txList) {
                 if (tx == null) {
@@ -543,6 +573,9 @@ public class TxPoolImpl implements TxPool{
                 }
             }
 
+            long batchBytes = validTxMap.values().stream().mapToLong(TransactionValidator::memoryWeight).sum();
+            if (mempoolMemoryBytes + batchBytes > MAX_MEMPOOL_BYTES) return false;
+
             // 3. 原子添加阶段：批量写入所有验证通过的交易
             for (Map.Entry<String, Transaction> entry : validTxMap.entrySet()) {
                 String txIdStr = entry.getKey();
@@ -556,7 +589,7 @@ public class TxPoolImpl implements TxPool{
                 tx.setStatus(status);
 
                 // 3.2 添加到内存池，并记录回滚操作
-                mempool.put(txIdStr, tx);
+                storeTx(txIdStr, tx);
                 indexTransaction(txIdStr, tx);
                 rollbackActions.add(() -> removeTx(txIdStr));
 
@@ -587,7 +620,7 @@ public class TxPoolImpl implements TxPool{
                 }
 
                 // 3.6 广播交易
-                routingTable.BroadcastResource(1, txId);
+                enqueueBroadcast(txId);
 
                 log.info("批量添加交易成功（单条）：txId={}, fee={}, status={}",
                         txIdStr, fee, TransactionStatusResolver.toString(status));
@@ -631,12 +664,20 @@ public class TxPoolImpl implements TxPool{
         return calculateFee(tx);
     }
 
+    private static Transaction copyForRead(Transaction source) {
+        if (source == null) return null;
+        Transaction copy = Transaction.deserialize(wireBytes(source));
+        copy.setFee(source.getFee()); copy.setStatus(source.getStatus());
+        copy.setJoinTime(source.getJoinTime()); copy.setBroadcastTime(source.getBroadcastTime());
+        return copy;
+    }
+
     @Override
     public Transaction getTx(String txHash) {
         if (txHash == null) {
             return null;
         }
-        return mempool.get(txHash);
+        return copyForRead(mempool.get(txHash));
     }
 
     @Override
@@ -645,13 +686,14 @@ public class TxPoolImpl implements TxPool{
             return null;
         }
         String txIdStr = bytesToHex(txHash);
-        return mempool.get(txIdStr);
+        return copyForRead(mempool.get(txIdStr));
     }
 
     @Override
     public Transaction[] getAllTxs() {
         return mempool.values().stream()
                 .filter(Objects::nonNull)
+                .limit(100)
                 .toArray(Transaction[]::new);
     }
 
@@ -709,6 +751,8 @@ public class TxPoolImpl implements TxPool{
         }
 
         try {
+            tx = Transaction.deserialize(wireBytes(tx));
+
             if (tx.getTxId() == null) {
                 tx.setTxId(tx.calculateTxId());
             }
@@ -779,6 +823,11 @@ public class TxPoolImpl implements TxPool{
                 return false;
             }
 
+            tx.setFee(newFee);
+            long replacedBytes = txsToReplace.stream().mapToLong(id -> entryWeights.getOrDefault(id, 0)).sum();
+            if (!meetsMinimumRelayFee(tx) || mempoolMemoryBytes - replacedBytes + TransactionValidator.memoryWeight(tx) > MAX_MEMPOOL_BYTES
+                    || dataBase.get(TableEnum.TX_TO_BLOCK, tx.getTxId()) != null) return false;
+
             for (String conflictTxId : directConflicts) {
                 removeTxAndDescendants(conflictTxId, TransactionStatusResolver.REPLACED, 0L);
             }
@@ -794,90 +843,7 @@ public class TxPoolImpl implements TxPool{
         }
     }
 
-    private boolean replaceTxLegacy(Transaction tx) {
-        if (tx == null || tx.isCoinbase()) {
-            log.warn("替换交易失败：交易为null或为Coinbase交易");
-            return false;
-        }
 
-        try {
-            String txIdStr = bytesToHex(tx.getTxId());
-            String originalTxIdStr = getOriginalTxId(tx);
-
-            if (originalTxIdStr == null) {
-                log.warn("替换交易失败：找不到原始交易");
-                return false;
-            }
-
-            Transaction originalTx = mempool.get(originalTxIdStr);
-            if (originalTx == null) {
-                log.warn("替换交易失败：原始交易不在内存池中");
-                return false;
-            }
-
-            // 1. 验证新交易
-            if (!verifyTx(tx)) {
-                log.warn("替换交易失败：新交易验证失败");
-                return false;
-            }
-
-            // 2. 检查是否替换相同的输入（双花检测）
-            if (!hasSameInputs(tx, originalTx)) {
-                log.warn("替换交易失败：新交易和原交易输入不一致");
-                return false;
-            }
-
-            // 3. 计算手续费
-            long newFee = calculateFee(tx);
-            long originalFee = originalTx.getFee();
-
-            // 4. 检查手续费是否满足RBF规则（至少增加25%）
-            if (newFee < originalFee * RBF_FEE_INCREASE_RATIO) {
-                log.warn("替换交易失败：手续费增加不足，原始={}, 新={}, 要求={}",
-                        originalFee, newFee, (long)(originalFee * RBF_FEE_INCREASE_RATIO));
-                return false;
-            }
-
-            // 5. 标记原交易为REPLACED（被替换）
-            long originalStatus = originalTx.getStatus();
-            originalStatus = TransactionStatusResolver.setLifecycleStatus(originalStatus, TransactionStatusResolver.REPLACED);
-            originalTx.setStatus(originalStatus);
-            log.info("标记原交易为被替换：{}", originalTxIdStr);
-
-            // 6. 移除原交易
-            removeTx(originalTxIdStr);
-
-            // 7. 添加新交易到内存池
-            long status = 0L;
-            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.IN_POOL);
-            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.VERIFIED);
-            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.SIG_CHECKED);
-            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.SCRIPT_CHECKED);
-            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.RBF_ENABLED);
-
-            if (newFee > 10000) {
-                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.HIGH_FEE);
-                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.PRIORITY_HIGH);
-            }
-
-            tx.setFee(newFee);
-            tx.setStatus(status);
-
-            mempool.put(txIdStr, tx);
-            txTimestamps.put(txIdStr, System.currentTimeMillis());
-
-            // 8. 重建地址映射
-            buildAddressMapping(tx, tx.getTxId());
-
-            log.info("交易替换成功：原始={}, 新={}, 原始手续费={}, 新手续费={}",
-                    originalTxIdStr, txIdStr, originalFee, newFee);
-            return true;
-
-        } catch (Exception e) {
-            log.error("替换交易异常", e);
-            return false;
-        }
-    }
 
     @Override
     synchronized public Transaction[] getBestTxs() {
@@ -914,7 +880,7 @@ public class TxPoolImpl implements TxPool{
             currentSize += txSize;
         }
 
-        return selectedTxs.toArray(new Transaction[0]);
+        return selectedTxs.stream().map(TxPoolImpl::copyForRead).toArray(Transaction[]::new);
     }
 
     @Override
@@ -977,11 +943,32 @@ public class TxPoolImpl implements TxPool{
         }
 
         log.info("从交易池提取 {} 笔交易到区块", selectedTxs.size());
-        return selectedTxs.toArray(new Transaction[0]);
+        return selectedTxs.stream().map(TxPoolImpl::copyForRead).toArray(Transaction[]::new);
     }
 
     @Override
-    public Transaction[] getTxsByAddress(String address) {
+    public synchronized void overlayAddressUtxos(byte[] script, Map<String, UTXO> outputs) {
+        for (Transaction tx : mempool.values()) {
+            for (int i = 0; i < tx.getOutputs().size(); i++) {
+                TxOutput output = tx.getOutputs().get(i);
+                if (!Arrays.equals(script, output.getScriptPubKey())) continue;
+                String key = UTXO.getKeyStr(tx.getTxId(), i);
+                // Pending outputs already consumed by descendants are not pending receipts.
+                if (spentOutpointToTx.containsKey(key)) continue;
+                if (outputs.size() >= 10_000) throw new IllegalArgumentException("Address exceeds legacy query limit");
+                UTXO utxo = new UTXO();
+                utxo.setTxId(tx.getTxId().clone()); utxo.setIndex(i); utxo.setValue(output.getValue());
+                utxo.setScript(script.clone()); utxo.setHeight(0); utxo.setCoinbase(false);
+                utxo.setStatus(UTXOStatusResolver.setLifecycleStatus(0, UTXOStatusResolver.UNCONFIRMED_OUTPUT));
+                outputs.put(key, utxo);
+            }
+        }
+        for (var entry : outputs.entrySet()) if (spentOutpointToTx.containsKey(entry.getKey()))
+            entry.getValue().setStatus(UTXOStatusResolver.setLifecycleStatus(entry.getValue().getStatus(), UTXOStatusResolver.PENDING_SPENT));
+    }
+
+    @Override
+    public synchronized Transaction[] getTxsByAddress(String address) {
         byte[] decode = Base58.decode(address);
         address = bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(decode)));
         Set<byte[]> txIds = addressToTxs.get(address);
@@ -991,9 +978,10 @@ public class TxPoolImpl implements TxPool{
         return txIds.stream()
                 .map(txId -> {
                     String txIdStr = bytesToHex(txId);
-                    return mempool.get(txIdStr);
+                    return copyForRead(mempool.get(txIdStr));
                 })
                 .filter(Objects::nonNull)
+                .limit(100)
                 .toArray(Transaction[]::new);
     }
 
@@ -1273,8 +1261,12 @@ public class TxPoolImpl implements TxPool{
         if (input == null || input.getTxId() == null || key == null) {
             return null;
         }
-        UTXO confirmed = utxoCache.getUTXO(key);
+        byte[] confirmedBytes = dataBase.get(TableEnum.TUTXO, key);
+        UTXO confirmed = confirmedBytes == null ? null : UTXO.deserialize(confirmedBytes);
         if (confirmed != null) {
+            var tip = com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
+            if (confirmed.isCoinbase() && (tip == null || systemConfig == null
+                    || tip.getHeight() + 1 - confirmed.getHeight() < systemConfig.getParams().getCoinbaseMaturity())) return null;
             return confirmed;
         }
         Transaction parentTx = mempool.get(bytesToHex(input.getTxId()));
@@ -1292,21 +1284,10 @@ public class TxPoolImpl implements TxPool{
         utxo.setValue(parentOutput.getValue());
         utxo.setScript(parentOutput.getScriptPubKey());
         utxo.setCoinbase(false);
-        utxo.setHeight(0);
+        var tip = com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
+        utxo.setHeight(tip == null ? 1 : tip.getHeight() + 1);
         utxo.setStatus(UTXOStatusResolver.setLifecycleStatus(0L, UTXOStatusResolver.UNCONFIRMED_OUTPUT));
         return utxo;
-    }
-
-    private boolean isInputUTXOSpendable(UTXO utxo, TxInput input) {
-        if (utxo == null) {
-            return false;
-        }
-        if (utxo.isSpendable()) {
-            return true;
-        }
-        return input != null && input.getTxId() != null
-                && mempool.containsKey(bytesToHex(input.getTxId()))
-                && UTXOStatusResolver.hasLifecycle(utxo.getStatus(), UTXOStatusResolver.UNCONFIRMED_OUTPUT);
     }
 
     private Set<String> getConflictingTxIds(Transaction tx) {
@@ -1490,7 +1471,7 @@ public class TxPoolImpl implements TxPool{
             }
         }
 
-        return selectedTxs.toArray(new Transaction[0]);
+        return selectedTxs.stream().map(TxPoolImpl::copyForRead).toArray(Transaction[]::new);
     }
 
     private boolean isSelectableForBlock(Transaction tx) {
@@ -1525,7 +1506,7 @@ public class TxPoolImpl implements TxPool{
     }
 
     private boolean ensureCapacityFor(Transaction candidate) {
-        if (mempool.size() < MAX_MEMPOOL_SIZE) {
+        if (mempool.size() < MAX_MEMPOOL_SIZE && mempoolMemoryBytes + TransactionValidator.memoryWeight(candidate) <= MAX_MEMPOOL_BYTES) {
             return true;
         }
 
@@ -1541,7 +1522,7 @@ public class TxPoolImpl implements TxPool{
         removeTxAndDescendants(bytesToHex(lowestFeeRateTx.getTxId()),
                 TransactionStatusResolver.REJECTED,
                 TransactionStatusResolver.INSUFFICIENT_FEE);
-        return mempool.size() < MAX_MEMPOOL_SIZE;
+        return mempool.size() < MAX_MEMPOOL_SIZE && mempoolMemoryBytes + TransactionValidator.memoryWeight(candidate) <= MAX_MEMPOOL_BYTES;
     }
 
     private List<Transaction> getPackageInMiningOrder(String txIdStr) {
@@ -1646,7 +1627,7 @@ public class TxPoolImpl implements TxPool{
      * 移除交易
      */
     private void removeTx(String txIdStr) {
-        Transaction tx = mempool.remove(txIdStr);
+        Transaction tx = eraseTx(txIdStr);
         if (tx != null) {
             txTimestamps.remove(txIdStr);
             packingTxs.remove(txIdStr);
@@ -1691,13 +1672,24 @@ public class TxPoolImpl implements TxPool{
      */
     private int estimateTxSize(Transaction tx) {
         try {
-            return tx.serialize().length;
+            return wireBytes(tx).length;
         } catch (Exception e) {
             // 如果序列化失败，使用估算值
             int baseSize = 10; // 版本、lockTime等固定开销
             int inputSize = tx.getInputs().size() * 133; // 每个输入约133字节
             int outputSize = tx.getOutputs().size() * 28; // 每个输出约28字节
             return baseSize + inputSize + outputSize;
+        }
+    }
+
+    @Override
+    public int transactionCount() { return mempool.size(); }
+
+    @Override
+    public synchronized void revalidate() {
+        for (Transaction tx : getAllTxs()) {
+            if (!verifyTx(tx, Collections.singleton(bytesToHex(tx.getTxId())))) removeTxAndDescendants(bytesToHex(tx.getTxId()), TransactionStatusResolver.REJECTED,
+                    TransactionStatusResolver.DOUBLE_SPEND_FLAG);
         }
     }
 
@@ -1736,52 +1728,11 @@ public class TxPoolImpl implements TxPool{
             }
             log.info("Block confirmed: removed {} confirmed txs and cleaned conflicts", confirmedIds.size());
         } catch (Exception e) {
-            log.error("Failed to update tx pool after block confirmation", e);
+            throw new IllegalStateException("Failed to reconcile committed block with mempool", e);
         }
     }
 
-    private void onBlockConfirmedLegacy(Transaction[] confirmedTxs,int height) {
-        if (confirmedTxs == null || confirmedTxs.length == 0) {
-            return;
-        }
-        try {
-            for (Transaction tx : confirmedTxs) {
-                if (tx == null || tx.isCoinbase()) {
-                    continue;
-                }
-                String txIdStr = bytesToHex(tx.getTxId());
 
-                // 更新交易状态为CONFIRMED（已确认）
-                long status = tx.getStatus();
-                status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
-                status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.CONFIRMED_SAFE);
-                tx.setStatus(status);
-
-                // 从内存池删除
-                Transaction removed = mempool.remove(txIdStr);
-                if (removed != null) {
-                    // 删除时间戳
-                    txTimestamps.remove(txIdStr);
-                    // 从打包状态删除
-                    packingTxs.remove(txIdStr);
-                    // 删除地址映射
-                    removeAddressMapping(removed);
-                    log.info("区块上链成功，从交易池删除交易：{}，状态={}",
-                            txIdStr, TransactionStatusResolver.toString(status));
-                }
-                utxoCache.addConfirmedTx(tx,height);
-
-                List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
-                //去除
-                spendingUTXOKeyList.forEach(spendingSet::remove);
-                List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
-                pendingConfirmationOfReceipt.forEach(processingSet::remove);
-            }
-            log.info("区块上链成功，共删除 {} 笔交易", confirmedTxs.length);
-        } catch (Exception e) {
-            log.error("处理区块上链成功异常", e);
-        }
-    }
 
     @Override
     synchronized public void onBlockConfirmed(Transaction tx,int height) {
@@ -1790,46 +1741,7 @@ public class TxPoolImpl implements TxPool{
         }
     }
 
-    private void onBlockConfirmedLegacy(Transaction tx,int height) {
-        if (tx == null) {
-            return;
-        }
-        try {
-            if (tx.isCoinbase()) {
-              return;
-            }
-            String txIdStr = bytesToHex(tx.getTxId());
 
-            // 更新交易状态为CONFIRMED（已确认）
-            long status = tx.getStatus();
-            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
-            status = TransactionStatusResolver.addFlag(status, TransactionStatusResolver.CONFIRMED_SAFE);
-            tx.setStatus(status);
-
-            // 从内存池删除
-            Transaction removed = mempool.remove(txIdStr);
-            if (removed != null) {
-                // 删除时间戳
-                txTimestamps.remove(txIdStr);
-                // 从打包状态删除
-                packingTxs.remove(txIdStr);
-                // 删除地址映射
-                removeAddressMapping(removed);
-                log.info("区块上链成功，从交易池删除交易：{}，状态={}",
-                        txIdStr, TransactionStatusResolver.toString(status));
-            }
-            utxoCache.addConfirmedTx(tx,height);
-
-            List<String> spendingUTXOKeyList = tx.getSpendingUTXOKeyList();
-            //去除
-            spendingUTXOKeyList.forEach(spendingSet::remove);
-            List<String> pendingConfirmationOfReceipt = tx.getPendingConfirmationOfReceipt();
-            pendingConfirmationOfReceipt.forEach(processingSet::remove);
-            log.info("区块上链成功，共删除 1 笔交易");
-        } catch (Exception e) {
-            log.error("处理区块上链成功异常", e);
-        }
-    }
 
 
     @Override
@@ -1897,38 +1809,8 @@ public class TxPoolImpl implements TxPool{
     }
 
     @Override
-    public void broadcastTxPool() {
-        // 先过滤出需要广播的交易
-        List<Transaction> txList = new ArrayList<>(mempool.values()).stream()
-                .filter(tx -> tx != null && !tx.isCoinbase())
-                .collect(Collectors.toList());
-
-        if (txList.isEmpty()) {
-            return;
-        }
-
-        // 使用 ScheduledExecutorService 实现精准的 10ms 间隔广播
-        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-        AtomicInteger index = new AtomicInteger(0);
-
-        executor.scheduleAtFixedRate(() -> {
-            int i = index.getAndIncrement();
-            // 所有交易广播完成后关闭线程池
-            if (i >= txList.size()) {
-                executor.shutdown();
-                return;
-            }
-
-            Transaction tx = txList.get(i);
-            try {
-                routingTable.BroadcastResource(1, tx.getTxId());
-            } catch (Exception e) {
-                log.error("广播交易 {} 失败", bytesToHex(tx.getTxId()), e);
-            }
-        }, 0, 10, TimeUnit.MILLISECONDS);
-
-        // 优雅关闭（可选）
-        Runtime.getRuntime().addShutdownHook(new Thread(executor::shutdownNow));
+    public synchronized void broadcastTxPool() {
+        broadcastTxList(new ArrayList<>(mempool.values()));
     }
 
     @Override

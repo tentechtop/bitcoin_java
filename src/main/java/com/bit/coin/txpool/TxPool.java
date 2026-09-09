@@ -9,6 +9,10 @@ import java.util.List;
 import java.util.Map;
 
 public interface TxPool {
+    void overlayAddressUtxos(byte[] script, Map<String, UTXO> outputs);
+    long estimatedMemoryBytes();
+    void revalidate();
+    int transactionCount();
 
     //提交一笔交易
 

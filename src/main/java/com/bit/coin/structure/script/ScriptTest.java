@@ -247,7 +247,6 @@ public class ScriptTest {
             byte[] publicKey = hexToBytes("dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1");
             byte[] pubKeyHash = Sha.applyRIPEMD160(Sha.applySHA256(publicKey)); // 公钥哈希 = RIPEMD160(SHA256(公钥))
 
-            log.info("私钥: {}", bytesToHex(privateKey));
             log.info("公钥: {}", bytesToHex(publicKey));
             log.info("公钥哈希: {}", bytesToHex(pubKeyHash));
 
@@ -512,8 +511,6 @@ public class ScriptTest {
             System.arraycopy(signature2, 0, signatureWithHashType2, 0, signature2.length);
             signatureWithHashType2[signature2.length] = SIGHASH_ALL;
 
-            log.info("签名1 (使用私钥1): {}...", bytesToHex(signature1).substring(0, 20));
-            log.info("签名2 (使用私钥2): {}...\n", bytesToHex(signature2).substring(0, 20));
 
             // ========== 8. 构造P2SH解锁脚本 ==========
             log.info("======= 8. 构造P2SH解锁脚本 =======");

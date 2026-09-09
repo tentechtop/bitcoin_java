@@ -1,0 +1,52 @@
+{
+  "testedAt": "2026-09-08T00:04:47.383159+00:00",
+  "jarSha256": "8f959d70b122dba51008b80510c83575233a87feae905506bbe79c97be3cd0ed",
+  "expectedHeight": 7,
+  "commands": [
+    {
+      "name": "checkpoint",
+      "exitCode": 0
+    },
+    {
+      "name": "restore",
+      "exitCode": 0
+    },
+    {
+      "name": "reindex",
+      "exitCode": 0
+    },
+    {
+      "name": "restored-healthy-probe",
+      "exitCode": 0
+    },
+    {
+      "name": "restored-unhealthy-probe",
+      "exitCode": 1
+    },
+    {
+      "name": "rebuilt-healthy-probe",
+      "exitCode": 0
+    },
+    {
+      "name": "rebuilt-unhealthy-probe",
+      "exitCode": 1
+    }
+  ],
+  "nodes": [
+    {
+      "name": "restored",
+      "height": 7,
+      "tip": "5144c929761dc6c8311cc669c9c4196b5c56f122f03e0a2c57054a952d28d033",
+      "peerId": "6P5jT28F4gkSPkjEKxBMwQ4JrAfQvWk5XYmHtagG7yBw",
+      "readiness": "UP"
+    },
+    {
+      "name": "rebuilt",
+      "height": 7,
+      "tip": "5144c929761dc6c8311cc669c9c4196b5c56f122f03e0a2c57054a952d28d033",
+      "peerId": "6P5jT28F4gkSPkjEKxBMwQ4JrAfQvWk5XYmHtagG7yBw",
+      "readiness": "UP"
+    }
+  ],
+  "passed": true
+}

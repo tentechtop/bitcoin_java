@@ -2,7 +2,7 @@ package com.bit.coin.utils;
 
 
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.bitcoinj.crypto.MnemonicCode;
 import org.bitcoinj.crypto.MnemonicException;
 import org.bouncycastle.crypto.digests.SHA512Digest;
@@ -120,10 +120,8 @@ public class Ed25519HDWallet {
      */
     public static KeyInfo getSolanaKeyPair(List<String> mnemonic, int accountIndex, int addressIndex) {
         byte[] seed = generateSeed(mnemonic, "");
-        log.info("种子(hex): {}", Hex.toHexString(seed));
 
         byte[] rootPrivateKey = generateRootPrivateKey(seed);
-        log.info("根私钥(hex): {}", Hex.toHexString(rootPrivateKey));
 
         // 派生路径：m/44'/501'/account'/0/addressIndex
         byte[] childKey = rootPrivateKey;
@@ -155,11 +153,9 @@ public class Ed25519HDWallet {
     // 测试方法
     public static void main(String[] args) {
         List<String> mnemonic = generateMnemonic();
-        System.out.println("助记词: " + String.join(" ", mnemonic));
 
         KeyInfo keyInfo = getSolanaKeyPair(mnemonic, 0, 0);
         System.out.println("派生路径: " + keyInfo.getPath());
-        System.out.println("私钥(hex): " + Hex.toHexString(keyInfo.getPrivateKey()));
         System.out.println("公钥(hex): " + Hex.toHexString(keyInfo.getPublicKey()));
         System.out.println("Solana地址: " + keyInfo.getAddress());
         System.out.println("Solana地址长度"+keyInfo.getAddress().length());

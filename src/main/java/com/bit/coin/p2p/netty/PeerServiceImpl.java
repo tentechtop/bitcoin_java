@@ -87,6 +87,8 @@ public class PeerServiceImpl {
 
     @PostConstruct
     public void init() throws IOException, CertificateException, InterruptedException {
+        if (!systemConfig.isNetworkingEnabled()) return;
+        configureNetwork(systemConfig.getParams().getNet());
         startQuicServer();
         protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1,  textHandler);
         protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2,  textHandler2);
@@ -104,7 +106,7 @@ public class PeerServiceImpl {
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Peer_Hints, p2PPeerHintsHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Node_Status, p2PNodeStatusHandle);
 
-        connectBootstrapNodes();
+
     }
 
     public void startQuicServer() {
@@ -150,7 +152,7 @@ public class PeerServiceImpl {
                     });
 
             // 3. 绑定端口并启动（同步等待绑定完成）
-            ChannelFuture bindFuture = bootstrap.bind(SelfPeer.getPort()).sync();
+            ChannelFuture bindFuture = bootstrap.bind(systemConfig.getP2pBindAddress(), SelfPeer.getPort()).sync();
             if (bindFuture.isSuccess()) {
                 // 赋值全局UDP通道（确保后续发送可用）
                 Global_Channel = (DatagramChannel) bindFuture.channel();
@@ -188,6 +190,7 @@ public class PeerServiceImpl {
     }
 
     // ========== 新增：优雅关闭方法（配套使用） ==========
+    @jakarta.annotation.PreDestroy
     public void shutdownQuicServer() {
         log.info("开始关闭QUIC服务器...");
         // 关闭全局通道
@@ -208,10 +211,14 @@ public class PeerServiceImpl {
         log.info("QUIC服务器关闭完成");
     }
 
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
     public void connectBootstrapNodes() {
+        if (!systemConfig.isNetworkingEnabled()) return;
         try {
             List<String> bootstrap = systemConfig.getBootstrap();
+            if (bootstrap == null) return;
             for (String bootstrapNode : bootstrap){
+                if (bootstrapNode == null || bootstrapNode.isBlank()) continue;
                 QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
                 if (quicConnection!=null){
                     log.info("连接成功");

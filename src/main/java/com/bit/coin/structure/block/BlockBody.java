@@ -3,6 +3,7 @@ package com.bit.coin.structure.block;
 import com.bit.coin.structure.tx.Transaction;
 import lombok.Data;
 
+import java.io.IOException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -58,8 +59,8 @@ public class BlockBody {
      */
     public static BlockBody deserialize(byte[] data)  {
         try {
-            if (data == null || data.length == 0) {
-                return null;
+            if (data == null || data.length == 0 || data.length > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_BYTES) {
+                throw new IllegalArgumentException("Invalid block size");
             }
 
             ByteArrayInputStream bais = new ByteArrayInputStream(data);
@@ -73,10 +74,13 @@ public class BlockBody {
 
                 // 反序列化 Transaction 列表
                 int txCount = dis.readInt();
+                if (txCount < 1 || txCount > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_TRANSACTIONS || txCount > dis.available() / 40) throw new IOException("Invalid transaction count");
+                if (txCount != blockBody.getTxCount()) throw new IOException("Mismatched transaction count");
                 if (txCount > 0) {
                     List<Transaction> txList = new ArrayList<>(txCount);
                     for (int i = 0; i < txCount; i++) {
                         int txLength = dis.readInt();
+                        if (txLength < 40 || txLength > com.bit.coin.structure.tx.TransactionValidator.MAX_TRANSACTION_BYTES || txLength > dis.available()) throw new IOException("Invalid transaction size");
                         byte[] txBytes = new byte[txLength];
                         dis.readFully(txBytes);
                         Transaction tx = Transaction.deserialize(txBytes);
@@ -87,6 +91,7 @@ public class BlockBody {
                     blockBody.setTransactions(new ArrayList<>());
                 }
 
+                if (dis.available() != 0) throw new IOException("Trailing block data");
             } finally {
                 dis.close();
                 bais.close();

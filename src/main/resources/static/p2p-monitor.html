@@ -276,6 +276,7 @@
             }
         }
     </style>
+<script src="/node-api.js"></script>
 </head>
 <body>
 <main class="shell">
@@ -447,8 +448,8 @@
             const pendingBytes = Number(item.pendingQueueMB || 0) * 1024 * 1024;
             return `
                 <tr>
-                    <td class="peer" title="${item.peerId || ''}">${item.peerId || '-'}</td>
-                    <td>${item.remoteAddress || '-'}</td>
+                    <td class="peer" title="${NodeApi.escape(item.peerId || '')}">${NodeApi.escape(item.peerId || '-')}</td>
+                    <td>${NodeApi.escape(item.remoteAddress || '-')}</td>
                     <td>${item.outbound ? '出站' : '入站'}</td>
                     <td><span class="badge ${stateClass}">${stateText}</span></td>
                     <td>${formatMillis(idle)}</td>
@@ -523,7 +524,7 @@
     async function loadStats(force = false) {
         if (paused && !force) return;
         try {
-            const response = await fetch('/peer/getConnectionStats', { cache: 'no-store' });
+            const response = await NodeApi.fetch('/peer/getConnectionStats', { cache: 'no-store' });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const items = await response.json();
             updateSummary(items);

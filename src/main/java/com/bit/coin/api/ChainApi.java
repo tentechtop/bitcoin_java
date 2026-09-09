@@ -15,7 +15,6 @@ import com.bit.coin.structure.tx.Transaction;
 import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.txpool.TxPool;
 import lombok.extern.slf4j.Slf4j;
-import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -114,6 +113,12 @@ public class ChainApi {
     /**
      * 根据地址查询地址下所有的UTXO
      */
+    @GetMapping("/utxos")
+    public Map<String, Object> utxoPage(@RequestParam String address, @RequestParam(defaultValue = "100") int limit,
+                                      @RequestParam(required = false) String cursor, @RequestParam(required = false) String expectedTip) {
+        return blockChainService.utxoPage(address, limit, cursor, expectedTip);
+    }
+
     @GetMapping("/getUTXOListByAddres")
     public Map<String,Object> getUTXOs(String address) {
         return blockChainService.getUTXOs(address);
@@ -149,7 +154,7 @@ public class ChainApi {
 
     @GetMapping("/getUTXOsByAddres2")
     public Map<String, Object> getUTXOsByAddres2(String address) {
-        return utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT | COINBASE_MATURED | COINBASE_MATURING);
+        return utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT);
     }
 
 
@@ -197,22 +202,22 @@ public class ChainApi {
 
 
     //开始同步
-    @GetMapping("/startSync")
+    @PostMapping("/startSync")
     public SyncProgress startSync() {
         return netService.startSyncBlock();
     }
 
-    @GetMapping("/sync/start")
+    @PostMapping("/sync/start")
     public SyncProgress startSyncV2() {
         return netService.startSyncBlock();
     }
 
-    @GetMapping("/sync/startHeadersFirst")
+    @PostMapping("/sync/startHeadersFirst")
     public SyncProgress startHeadersFirstSync() {
         return netService.startSyncBlockHeadersFirst();
     }
 
-    @GetMapping("/startSyncHeadersFirst")
+    @PostMapping("/startSyncHeadersFirst")
     public SyncProgress startSyncHeadersFirst() {
         return netService.startSyncBlockHeadersFirst();
     }
@@ -267,21 +272,25 @@ public class ChainApi {
     }
 
 
-    @GetMapping("/startMining")
+    @PostMapping("/startMining")
     public Block startMining() throws Exception {
         miningService.startMining();
         return blockChainService.getMainLatestBlock();
     }
 
-    @GetMapping("/mingOneBlock")
+    @PostMapping("/stopMining")
+    public void stopMining() { miningService.stopMining(); }
+
+    @PostMapping("/mingOneBlock")
     public Block mingOneBlock() throws Exception {
         miningService.initAllResources();
         Block block = miningService.mineOneBlock();
         return block;
     }
 
-    @GetMapping("/mingOneBlockByCount")
+    @PostMapping("/mingOneBlockByCount")
     public List<Block> mingOneBlock(int count) throws Exception {
+        if (count < 1 || count > 100 || !"regtest".equals(blockChainService.getNetworkName())) throw new IllegalArgumentException("Batch mining requires regtest and count 1..100");
         ArrayList<Block> blocks = new ArrayList<>();
         for (int i = 0; i < count; i++){
             miningService.initAllResources();
@@ -316,7 +325,7 @@ public class ChainApi {
 
 
     //指定广播一个区块 参数hashhex
-    @GetMapping("/broadcastResource")
+    @PostMapping("/broadcastResource")
     public void broadcastResource(String hashHex) {
         byte[] hash = hexToBytes(hashHex);
         routingTable.BroadcastResource(0, hash);
@@ -324,7 +333,7 @@ public class ChainApi {
 
 
     //广播交易池中的交易
-    @GetMapping("/broadcastTxPool")
+    @PostMapping("/broadcastTxPool")
     public void broadcastTxPool() {
         txPool.broadcastTxPool();
     }

@@ -26,7 +26,7 @@ public class PathMtuEstimator {
     }
 
     public PathMtuEstimator(int minDatagramBytes, int initialDatagramBytes, int maxDatagramBytes) {
-        int headerBytes = QuicFrame.FIXED_HEADER_LENGTH;
+        int headerBytes = QuicFrame.FIXED_HEADER_LENGTH + SessionCipher.OVERHEAD_BYTES;
         if (minDatagramBytes <= headerBytes
                 || initialDatagramBytes < minDatagramBytes
                 || maxDatagramBytes < initialDatagramBytes) {
@@ -43,7 +43,7 @@ public class PathMtuEstimator {
     }
 
     public int currentDatagramBytes() {
-        return currentPayloadBytes() + QuicFrame.FIXED_HEADER_LENGTH;
+        return currentPayloadBytes() + QuicFrame.FIXED_HEADER_LENGTH + SessionCipher.OVERHEAD_BYTES;
     }
 
     public void onAckedBytes(int ackedBytes) {

@@ -7,7 +7,7 @@ import com.bit.coin.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import tools.jackson.databind.annotation.JsonSerialize;
 
 import java.math.BigInteger;
@@ -36,7 +36,8 @@ public class Peer {
     private byte[] id;
 
     //只有自己才保存
-    @JsonSerialize(using = HexByteArraySerializer.class)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.ToString.Exclude
     private byte[] privateKey;
 
 
@@ -166,7 +167,11 @@ public class Peer {
      * 序列化当前Peer对象为字节数组
      * 采用BigEndian字节序，保证跨平台兼容性
      */
-    public byte[] serialize() {
+    public byte[] serialize() { return serialize(false); }
+
+    public byte[] serializeLocal() { return serialize(true); }
+
+    private byte[] serialize(boolean includePrivateKey) {
         try {
             // 1. 先计算序列化总长度，初始化ByteBuffer
             int totalSize = getSerializedSize();
@@ -177,7 +182,7 @@ public class Peer {
             // id: int(长度) + byte[]，null则长度为-1
             serializeByteArray(buffer, id);
             // privateKey: int(长度) + byte[]
-            serializeByteArray(buffer, privateKey);
+            serializeByteArray(buffer, includePrivateKey ? privateKey : null);
 
             // 3. 序列化网络信息字段
             // address: int(长度) + UTF-8字节数组
@@ -229,7 +234,7 @@ public class Peer {
      */
     public static Peer deserialize(byte[] data){
         try {
-            if (data == null || data.length == 0) {
+            if (data == null || data.length == 0 || data.length > 4096) {
                 throw new IllegalArgumentException("反序列化数据不能为空");
             }
 
@@ -273,9 +278,11 @@ public class Peer {
                 peer.setInetSocketAddress(new InetSocketAddress(peer.getAddress(), peer.getPort()));
             }
 
+            if (peer.getId() == null || peer.getId().length != 32 || peer.getPort() < 1 || peer.getPort() > 65535
+                    || peer.getHeight() < 0 || buffer.hasRemaining()) throw new IllegalArgumentException("Invalid peer record");
             return peer;
         }catch (Exception e){
-            log.error("反序列化Peer对象失败",e);
+            log.debug("Invalid peer record: {}", e.getClass().getSimpleName());
             return null;
         }
     }
@@ -352,6 +359,7 @@ public class Peer {
         if (length == -1) {
             return null;
         }
+        if (length < 0 || length > 32 || length > buffer.remaining()) throw new IllegalArgumentException("Invalid peer key length");
         byte[] array = new byte[length];
         buffer.get(array);
         return array;
@@ -365,6 +373,7 @@ public class Peer {
         if (length == -1) {
             return null;
         }
+        if (length < 0 || length > 256 || length > buffer.remaining()) throw new IllegalArgumentException("Invalid peer string length");
         byte[] strBytes = new byte[length];
         buffer.get(strBytes);
         return new String(strBytes, StandardCharsets.UTF_8);

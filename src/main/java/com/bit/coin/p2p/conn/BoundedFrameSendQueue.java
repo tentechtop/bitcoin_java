@@ -47,6 +47,14 @@ public class BoundedFrameSendQueue {
     }
 
 
+    public void clear() {
+        pendingLock.lock(); sentUnAckedLock.lock();
+        try {
+            pendingQueue.clear(); pendingExistedFrames.clear(); sentUnAckedMap.clear();
+            pendingTotalSize.set(0); sentUnAckedTotalSize.set(0);
+        } finally { sentUnAckedLock.unlock(); pendingLock.unlock(); }
+    }
+
     // ==========================================================================
     // 核心方法1：帧元数据入队到「待发送队列」
     // ==========================================================================

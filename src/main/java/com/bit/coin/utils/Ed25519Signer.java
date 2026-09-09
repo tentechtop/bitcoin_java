@@ -3,7 +3,7 @@ package com.bit.coin.utils;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -586,14 +586,12 @@ public class Ed25519Signer {
         // 1. 生成助记词（固定助记词用于测试对比，实际使用时保持随机生成）
         List<String> mnemonic = generateMnemonic();
         System.out.println("===== 基础信息 =====");
-        System.out.println("助记词: " + String.join(" ", mnemonic));
         System.out.println("---------------------");
 
         // 2. 生成基准密钥对（路径：m/44'/501'/0'/0/0）
         KeyInfo baseKey = getSolanaKeyPair(mnemonic, 0, 0);
         System.out.println("===== 基准密钥对（账户0，地址0） =====");
         System.out.println("派生路径: " + baseKey.getPath());
-        System.out.println("私钥(hex): " + Hex.toHexString(baseKey.getPrivateKey()));
         System.out.println("公钥(hex): " + Hex.toHexString(baseKey.getPublicKey()));
         System.out.println("Solana地址: " + baseKey.getAddress());
         System.out.println("Solana地址: " + bytesToHex(Base58.decode(baseKey.getAddress())));
@@ -606,7 +604,6 @@ public class Ed25519Signer {
         String addressFromPub = Base58.encode(corePub);
         System.out.println("===== 公钥与地址一致性验证 =====");
         System.out.println("公钥长度: " + corePub.length + "字节（应为32）");
-        System.out.println("私钥长度: " + corePriv.length + "字节（应为32）");
         System.out.println("公钥派生地址: " + addressFromPub);
         System.out.println("地址一致性: " + addressFromPub.equals(baseKey.getAddress()) + "（应为true）");
         System.out.println("---------------------");

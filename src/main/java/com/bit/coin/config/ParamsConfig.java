@@ -97,11 +97,11 @@ public final class ParamsConfig {
         // --- 主网 (MainNet) ---
         MainNetParams = new Params(
                 "mainnet",
-                0xD9B4BEF9,
+                0xB14A0201,
                 "8333",
-                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
-                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE), // 工作量证明难度上限
-                0x1d00ffffL, // 难度上限的紧凑格式
+                hexStringToByteArray("00009541df5d2011d46ca0d32f4fc9163369434122566f28a9ba36a607ffcf5d"),
+                new BigInteger("0000ffff0000000000000000000000000000000000000000000000000000000000", 16), // 工作量证明难度上限
+                0x1f00ffffL, // 难度上限的紧凑格式
                 false, // 是否禁用难度调整
                 10, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
@@ -115,11 +115,11 @@ public final class ParamsConfig {
         // --- 测试网3 (TestNet3) ---
         TestNet3Params = new Params(
                 "testnet3",
-                0x0709110B,
+                0xB14A0202,
                 "18333",
-                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
-                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
-                0x1d00ffffL,
+                hexStringToByteArray("0000ff19c2fd0e94c4366a0a2d1dd4c9612e40c1541aa52d256e40d2029399dc"),
+                new BigInteger("0000ffff0000000000000000000000000000000000000000000000000000000000", 16),
+                0x1f00ffffL,
                 false,
                 10, // Coinbase 交易成熟度
                 210000, // 区块奖励减半间隔
@@ -133,10 +133,10 @@ public final class ParamsConfig {
         // --- 回归测试网 (RegressionNet) ---
         RegressionNetParams = new Params(
                 "regtest",
-                0xDAB5BFFA,
+                0xB14A0203,
                 "18444",
-                hexStringToByteArray("0000d4324c64e6620bb662ba137a72608545a3aff9224646b1b6cfc132d0cc38"),
-                BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE),
+                hexStringToByteArray("21086e77a61c65eac56cef1d96d1737ca1d5866f87df1da967a041c69d65d098"),
+                new BigInteger("7fffff000000000000000000000000000000000000000000000000000000000000", 16),
                 0x207fffffL,
                 true, // 是否禁用难度调整
                 10, // Coinbase 交易成熟度

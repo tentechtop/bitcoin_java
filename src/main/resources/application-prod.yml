@@ -1,33 +1,15 @@
-#http-json
-server:
-  port: 18333
-
+# Independent consensus revision 2 network. HTTP is private by default.
+node:
+  api:
+    public-read: false
 system:
-  mining-type: 1 # 1CPU 2GPU
-  miner-address-list:
-    - 'AYRNAzJs9qNpL2PRSKoteh2Mg1SQSmqoHzY1Siyd5Qcz'
-  net-params: 'MainNetParams'
-  #数据存储路径 按照网络前缀分类
-  path: "/bitcoin/proddb"
-  #数据库缓存大小 单位MB 基于LRU策略实现的一级缓存
-  db-cache-size: 500
-  #节点与节点之间的通信 TCP通信 支持P2P网络
-  quic-port: 8333
-  is-stun: true
-  stun-port: 3479
-  stun-address:
-    - '127.0.0.1:3479'
-  web-socket: 28333
-  #用户在启动时可以配置公钥 对于隐私接口必须签名才能访问 也就是节点所有者
-  server-pubkey:
-    - ''
-  bootstrap:
-
-
-
-
+  readiness-min-peers: ${NODE_READINESS_MIN_PEERS:1}
+  path: ${NODE_DATA_DIR:./data/mainnet-v2}
+  net-params: MainNetParams
+  quic-port: ${NODE_P2P_PORT:8333}
+  p2p-bind-address: ${NODE_P2P_ADDRESS:0.0.0.0}
+  miner-address-list: ${NODE_MINER_ADDRESSES:}
+  bootstrap: ${NODE_BOOTSTRAP:}
 logging:
   level:
     root: INFO
-
-

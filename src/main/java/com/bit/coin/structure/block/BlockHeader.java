@@ -61,9 +61,11 @@ public class BlockHeader {
     public BlockHeader(int version, byte[] previousHash, byte[] merkleRoot, long time, int bits, int nonce) {
         this.version = version;
         // 校验并处理前一区块哈希：确保是32字节（不符合则替换为32字节空数组）
-        this.previousHash = (previousHash != null && previousHash.length == 32) ? previousHash : new byte[32];
+        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32 || time < 0 || time > 0xFFFFFFFFL)
+            throw new IllegalArgumentException("Invalid block header fields");
+        this.previousHash = previousHash.clone();
         // 校验并处理默克尔根哈希：确保是32字节（不符合则替换为32字节空数组）
-        this.merkleRoot = (merkleRoot != null && merkleRoot.length == 32) ? merkleRoot : new byte[32];
+        this.merkleRoot = merkleRoot.clone();
         this.time = time;
         this.bits = bits;
         this.nonce = nonce;
@@ -78,28 +80,8 @@ public class BlockHeader {
      */
     @JsonIgnore
     public BigInteger getTargetFromBits() {
-        // bits是4字节，以小端序存储
-        // 在Java中，bits已经是int类型，我们需要从中提取指数和系数
-        // 提取指数（最高位字节）
-        int exponent = (this.bits >>> 24) & 0xFF;
-        // 提取系数（低3个字节）
-        int coefficient = this.bits & 0x00FFFFFF;
-        // 计算目标值 = 系数 * 256^(指数-3)
-        BigInteger target = BigInteger.valueOf(coefficient);
-        // 计算指数偏移
-        int shift = 8 * (exponent - 3);
-        if (shift > 0) {
-            // 左移，表示乘以256^(指数-3)
-            target = target.shiftLeft(shift);
-        } else if (shift < 0) {
-            // 右移，表示除以256^(3-指数)
-            // 在比特币中，指数小于3的情况很少，但理论上存在
-            target = target.shiftRight(-shift);
-        }
-        // 如果shift=0，target保持不变
-        return target;
+        return com.bit.coin.blockchain.ConsensusRules.target(bits);
     }
-
 
     /**
      * 序列化区块头（严格遵循比特币协议）
@@ -107,6 +89,8 @@ public class BlockHeader {
      * 所有数值字段采用小端字节序（Little-Endian）
      */
     public byte[] serialize() {
+        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32 || time < 0 || time > 0xFFFFFFFFL)
+            throw new IllegalArgumentException("Invalid block header fields");
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream(80)) {
             // 1. 版本号：4字节、小端
             bos.write(intToLittleEndian(this.version));
@@ -164,7 +148,7 @@ public class BlockHeader {
 
             // 4. 时间戳：读取4字节并转为小端int
             bis.read(buffer);
-            header.setTime(littleEndianToInt(buffer));
+            header.setTime(Integer.toUnsignedLong(littleEndianToInt(buffer)));
 
             // 5. 难度目标：读取4字节并转为小端int
             bis.read(buffer);
@@ -314,52 +298,16 @@ public class BlockHeader {
      * 目标值 = 系数 * 256^(指数-3)
      */
     public static int convertTargetToBits(BigInteger target) {
-        // 特殊情况处理
-        if (target.signum() == 0) {
-            return 0;
+        if (target.signum() < 0 || target.bitLength() > 256) throw new IllegalArgumentException("Invalid target");
+        if (target.signum() == 0) return 0;
+        int size = (target.bitLength() + 7) / 8;
+        int compact = size <= 3 ? target.intValue() << (8 * (3 - size)) : target.shiftRight(8 * (size - 3)).intValue();
+        if ((compact & 0x00800000) != 0) {
+            compact >>>= 8;
+            size++;
         }
-
-        // 将目标值转换为字节数组（大端序）
-        byte[] targetBytes = target.toByteArray();
-
-        // 去掉前导零
-        int start = 0;
-        while (start < targetBytes.length && targetBytes[start] == 0) {
-            start++;
-        }
-
-        if (start == targetBytes.length) {
-            return 0; // 目标值为0
-        }
-
-        int length = targetBytes.length - start;
-
-        // 获取前三个有效字节（或更少）
-        byte[] coefficientBytes = new byte[3];
-        int exponent = length;
-
-        if (length <= 3) {
-            // 如果目标值长度小于等于3字节
-            System.arraycopy(targetBytes, start, coefficientBytes, 3 - length, length);
-            exponent = 3;
-        } else {
-            // 如果目标值长度大于3字节
-            System.arraycopy(targetBytes, start, coefficientBytes, 0, 3);
-        }
-
-        // 将系数转换为整数
-        int coefficient = ((coefficientBytes[0] & 0xFF) << 16) |
-                ((coefficientBytes[1] & 0xFF) << 8) |
-                (coefficientBytes[2] & 0xFF);
-
-        // 计算bits
-        int bits = (exponent << 24) | coefficient;
-
-        return bits;
+        return (size << 24) | (compact & 0x007fffff);
     }
-
-
-
 
     public static void main(String[] args) {
         System.out.println("=== 比特币区块挖矿测试 ===\n");

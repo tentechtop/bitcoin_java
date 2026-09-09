@@ -26,6 +26,7 @@ public class QuicDataProcessor {
 
     @Autowired
     private ProtocolRegistry protocolRegistry;
+    @Autowired private com.bit.coin.config.SystemConfig systemConfig;
 
     // 消费线程池
     private ExecutorService consumerExecutor;
@@ -43,6 +44,7 @@ public class QuicDataProcessor {
      */
     @PostConstruct
     public void initConsumer() {
+        if (!systemConfig.isNetworkingEnabled()) return;
         // 构建线程池（有界队列+拒绝策略，避免OOM/消息丢失）
         consumerExecutor = new ThreadPoolExecutor(
                 CORE_POOL_SIZE,
@@ -122,6 +124,19 @@ public class QuicDataProcessor {
      * @param msg 单条Quic消息
      * @param index 批量中的序号（便于排查问题）
      */
+    public static boolean completeResponse(QuicMsg msg) throws java.io.IOException {
+        P2PMessage response = P2PMessage.deserialize(msg.getData());
+        if (response == null || !response.isResponse()) return false;
+        QuicConnection connection = getConnection(msg.getConnectionId());
+        String id = bytesToHex(response.getRequestId());
+        Long expected = QuicConstants.MSG_EXPECTED_CONNECTIONS.getIfPresent(id);
+        if (connection == null || !connection.getPeerId().equals(bytesToHex(response.getSenderId()))
+                || expected == null || expected != msg.getConnectionId()) return true;
+        CompletableFuture<QuicMsg> future = MSG_RESPONSE_FUTURECACHE.asMap().remove(id);
+        if (future != null) future.complete(msg);
+        return true;
+    }
+
     private void processSingleMsg(QuicMsg msg, int index) {
         try {
             log.debug("处理数据时间{}", System.currentTimeMillis());
@@ -130,6 +145,10 @@ public class QuicDataProcessor {
             log.debug("处理第{}条消息，字节长度：{} ", index, msg.getData().length);
             P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
             if (deserialize != null){
+                QuicConnection authenticated = getConnection(msg.getConnectionId());
+                if (!msg.isTrustedLocal() && (authenticated == null
+                        || !authenticated.getPeerId().equals(bytesToHex(deserialize.getSenderId()))
+                        || deserialize.getType() == ProtocolEnum.Handshake_Success_V1.getCode())) return;
                 if (deserialize.isRequest()) {
                     Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
                     ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
@@ -149,10 +168,7 @@ public class QuicDataProcessor {
                 }else if (deserialize.isResponse()) {
                     log.debug("处理响应时间{}", System.currentTimeMillis());
                     log.debug("收到响应 时间: {}", System.currentTimeMillis());
-                    CompletableFuture<QuicMsg> ifPresent = MSG_RESPONSE_FUTURECACHE.asMap().remove(bytesToHex(deserialize.getRequestId()));
-                    if (ifPresent != null) {
-                        ifPresent.complete(msg);
-                    }
+                    completeResponse(msg);
                 }else {
                     log.info("收到普通消息: {}", deserialize);
                 }
@@ -174,7 +190,7 @@ public class QuicDataProcessor {
         if (consumerExecutor == null) return;
 
         log.info("开始关闭Quic消费线程池");
-        consumerExecutor.shutdown(); // 停止接收新任务
+        consumerExecutor.shutdownNow(); // 停止接收新任务
         try {
             // 等待5秒让现有任务执行完毕，超时则强制关闭
             if (!consumerExecutor.awaitTermination(5, TimeUnit.SECONDS)) {

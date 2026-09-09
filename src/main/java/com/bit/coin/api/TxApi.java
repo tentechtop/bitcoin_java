@@ -14,7 +14,7 @@ import com.bit.coin.txpool.TxPool;
 import com.bit.coin.utils.Sha;
 import com.bit.coin.utils.SerializeUtils;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -29,6 +29,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 @Slf4j
+@org.springframework.context.annotation.Profile("dev & !prod")
 @RestController
 @RequestMapping("/tx")
 public class TxApi {
@@ -51,25 +52,10 @@ public class TxApi {
     @Autowired
     private DataBase dataBase;
 
-    /**
-     * ===== 基础信息 =====
-     * 助记词: mass danger foster party drive afraid dance bottom exhaust win wrestle language
-     * ---------------------
-     * 10:53:57.458 [main] INFO org.bitcoinj.crypto.MnemonicCode -- PBKDF2 took 105.3 ms
-     * ===== 基准密钥对（账户0，地址0） =====
-     * 派生路径: m/44'/501'/0'/0/0
-     * 私钥(hex): 1ed02d6a330a20ae961a2bd921e80b9373874dd248d354e7c2410f67cef5cbc8
-     * 公钥(hex): dd5dbac2d2e1a7a9b849adc1dc89acb44c9f9518259933d031950cf2f1e17cd1
-     * 地址: Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz
-     */
 
 
-    /**
-     * 私钥(hex): 2d342afca014aafdb29b1f5c46df5d075f17211bb59867bc97a0ab0d657688e9
-     * 公钥(hex): 2b6998339d42f3d6ad529a931e689cb6e8829f691c835a7df95a834f0fc3c95e
-     * Solana地址: 3vTvKgqexhYRXMimkchzMoeHExXBzAyogzxbJDDvT2pu
-     * Solana地址: 2b6998339d42f3d6ad529a931e689cb6e8829f691c835a7df95a834f0fc3c95e
-     */
+
+
 
 
     @PostMapping("/transfer")

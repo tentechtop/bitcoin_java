@@ -8,6 +8,7 @@ import com.bit.coin.p2p.production.P2PNodeSnapshot;
 import com.bit.coin.p2p.production.P2PTransferErrorRecord;
 import com.bit.coin.p2p.production.ProductionP2PService;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,12 +25,12 @@ public class P2PAdminApi {
         this.p2pService = p2pService;
     }
 
-    @GetMapping("/connect")
+    @PostMapping("/connect")
     public P2PConnectResult connect(@RequestParam String addr) {
         return p2pService.connect(addr);
     }
 
-    @GetMapping("/disconnect")
+    @PostMapping("/disconnect")
     public P2PDisconnectResult disconnect(@RequestParam String peerId) {
         return p2pService.disconnect(peerId);
     }
@@ -49,26 +50,26 @@ public class P2PAdminApi {
         return p2pService.blacklistEntries();
     }
 
-    @GetMapping("/blacklist/peer/add")
+    @PostMapping("/blacklist/peer/add")
     public P2PBlacklistEntry blacklistPeer(@RequestParam String peerId,
                                            @RequestParam(required = false) String reason,
                                            @RequestParam(required = false) Long ttlSeconds) {
         return p2pService.blacklistPeer(peerId, reason, ttl(ttlSeconds));
     }
 
-    @GetMapping("/blacklist/ip/add")
+    @PostMapping("/blacklist/ip/add")
     public P2PBlacklistEntry blacklistIp(@RequestParam String ip,
                                          @RequestParam(required = false) String reason,
                                          @RequestParam(required = false) Long ttlSeconds) {
         return p2pService.blacklistIp(ip, reason, ttl(ttlSeconds));
     }
 
-    @GetMapping("/blacklist/peer/remove")
+    @PostMapping("/blacklist/peer/remove")
     public boolean unblockPeer(@RequestParam String peerId) {
         return p2pService.unblockPeer(peerId);
     }
 
-    @GetMapping("/blacklist/ip/remove")
+    @PostMapping("/blacklist/ip/remove")
     public boolean unblockIp(@RequestParam String ip) {
         return p2pService.unblockIp(ip);
     }
@@ -83,7 +84,7 @@ public class P2PAdminApi {
         return p2pService.flowControl(peerId);
     }
 
-    @GetMapping("/flow/reserve")
+    @PostMapping("/flow/reserve")
     public boolean reserveOutbound(@RequestParam String peerId, @RequestParam long bytes) {
         return p2pService.reserveOutboundBytes(peerId, bytes);
     }

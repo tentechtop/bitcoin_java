@@ -1,28 +1,66 @@
 server:
+  address: ${NODE_HTTP_ADDRESS:127.0.0.1}
+  port: ${NODE_HTTP_PORT:18333}
+  shutdown: graceful
+  max-http-request-header-size: 8KB
+  tomcat:
+    max-http-form-post-size: 2MB
+    max-swallow-size: 2MB
+    threads:
+      max: 64
+      min-spare: 4
+    max-connections: 256
+    accept-count: 64
+  error:
+    include-message: never
+    include-stacktrace: never
   servlet:
     encoding:
       charset: UTF-8
       enabled: true
       force: true
-      force-request: true
-      force-response: true
-
 spring:
   application:
-    name: Bitcoin
-    version: 1.0.0
+    name: bitcoin-java
   profiles:
-    active: prod
-
-
-
+    default: local
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+node:
+  api:
+    admin-token: ${NODE_ADMIN_TOKEN:}
+    read-token: ${NODE_READ_TOKEN:}
+    public-read: false
+system:
+  path: ${NODE_DATA_DIR:./data/local-v2}
+  net-params: RegressionNetParams
+  quic-port: ${NODE_P2P_PORT:18444}
+  p2p-bind-address: ${NODE_P2P_ADDRESS:127.0.0.1}
+  networking-enabled: ${NODE_NETWORKING_ENABLED:true}
+  db-sync-writes: true
+  min-free-disk-bytes: ${NODE_MIN_FREE_DISK_BYTES:268435456}
+  readiness-min-peers: ${NODE_READINESS_MIN_PEERS:0}
+  readiness-max-sync-lag: ${NODE_READINESS_MAX_SYNC_LAG:2}
+  mining-type: 1
+  miner-address-list: []
+  bootstrap: []
+  is-stun: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,node
 protocol:
-  # 本地节点支持的版本范围（核心）
   min_supported_version: 1
   max_supported_version: 3
-  # 发送消息时的默认首选版本（优先用高版本）
   default_send_version: 3
-  # 废弃的版本（收到该版本消息直接拒绝）
   deprecated_versions: [0]
-  # 版本降级开关（对方不支持新版时，自动降为兼容版本）
-  enable_version_fallback: true
+  enable_version_fallback: false

@@ -3,7 +3,7 @@ package com.bit.coin.p2p.production;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.conn.QuicConnectionStats;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -2,6 +2,8 @@ package com.bit.coin;
 
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.base.*;
+import org.bitcoinj.crypto.ECKey;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.script.Script;
@@ -122,7 +124,7 @@ public class TestMain {
             System.out.println("\nOP_ROT执行后栈内容（栈顶→栈底）：");
             int index = 0;
             for (byte[] data : stack) {
-                System.out.printf("栈元素[%d]: %s%n", index++, Utils.HEX.encode(data));
+                System.out.printf("栈元素[%d]: %s%n", index++, java.util.HexFormat.of().formatHex(data));
             }
 
         } catch (ScriptException | IOException e) {

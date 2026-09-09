@@ -23,40 +23,40 @@ public class QuicConstants {
 
 
     //将完整的二进制数据放在缓存中 等待消费者消费 一次全部取走
-    private static final BlockingQueue<QuicMsg> MSG_QUEUE = new LinkedBlockingQueue<>(1000_0);
+    private static final BlockingQueue<QuicMsg> MSG_QUEUE = new LinkedBlockingQueue<>(256);
 
     /**
      * 推送完整Quic消息到静态队列（非阻塞，避免阻塞Netty IO线程）
      * @param msg 完整消息体
      * @return 是否推送成功
      */
+    private static final java.util.concurrent.atomic.AtomicLong QUEUED_BYTES = new java.util.concurrent.atomic.AtomicLong();
+    private static final long MAX_QUEUE_BYTES = 64L * 1024 * 1024;
     public static boolean pushCompleteMsg(QuicMsg msg) {
-        try {
-            // 非阻塞推送：队列满时等待100ms，仍失败则返回false
-            boolean success = MSG_QUEUE.offer(msg, 100, TimeUnit.MILLISECONDS);
-            if (!success) {
-                log.error("[消息推送失败] 队列已满");
-            }
-            return success;
-        } catch (InterruptedException e) {
-            log.error("[消息推送中断] ", e);
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        if (msg == null || msg.getData() == null || msg.getData().length > 8_100_000) return false;
+        int length = msg.getData().length;
+        long total = QUEUED_BYTES.addAndGet(length);
+        if (total > MAX_QUEUE_BYTES || !MSG_QUEUE.offer(msg)) { QUEUED_BYTES.addAndGet(-length); return false; }
+        return true;
     }
+    private static QuicMsg released(QuicMsg msg) {
+        if (msg != null) QUEUED_BYTES.addAndGet(-msg.getData().length);
+        return msg;
+    }
+    public static long queuedBytes() { return QUEUED_BYTES.get(); }
 
     // ========== 消费者API：从静态队列取消息（供Spring消费者Bean调用） ==========
     /**
      * 阻塞取消息：无数据则挂起，有数据立即返回（核心，CPU≈0消耗）
      */
     public static QuicMsg takeMsg() throws InterruptedException {
-        return MSG_QUEUE.take();
+        return released(MSG_QUEUE.take());
     }
     /**
      * 带超时的取消息：避免永久阻塞（可选）
      */
     public static QuicMsg pollMsg(long timeout, TimeUnit unit) throws InterruptedException {
-        return MSG_QUEUE.poll(timeout, unit);
+        return released(MSG_QUEUE.poll(timeout, unit));
     }
 
     // ========== 辅助：获取队列当前长度（供监控用） ==========
@@ -71,7 +71,8 @@ public class QuicConstants {
     public static List<QuicMsg> drainAllMsg() {
         List<QuicMsg> msgList = new ArrayList<>();
         // drainTo：原子性将队列中所有元素移到集合，返回移走的数量
-        MSG_QUEUE.drainTo(msgList);
+        MSG_QUEUE.drainTo(msgList, 16);
+        msgList.forEach(QuicConstants::released);
         return msgList;
     }
 
@@ -87,10 +88,14 @@ public class QuicConstants {
      * Key：请求ID，Value：响应Future
      * 16字节的UUIDV7 - > CompletableFuture<byte[]>
      */
+    public static final Cache<String, Long> MSG_EXPECTED_CONNECTIONS = Caffeine.newBuilder()
+            .maximumSize(10000).expireAfterWrite(30, TimeUnit.SECONDS).build();
+
     public static Cache<String, CompletableFuture<QuicMsg>> MSG_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
-            .weakValues() // 弱引用存储Future，GC时可回收
+            // strong references until bounded expiry
+            // .weakValues() // 弱引用存储Future，GC时可回收
             .recordStats()
             .build();
 
@@ -101,7 +106,8 @@ public class QuicConstants {
     public static Cache<Long, CompletableFuture<QuicFrame>> QUICFRAME_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
-            .weakValues() // 弱引用存储Future，GC时可回收
+            // strong references until bounded expiry
+            // .weakValues() // 弱引用存储Future，GC时可回收
             .recordStats()
             .build();
 
@@ -110,7 +116,8 @@ public class QuicConstants {
     public static Cache<Long, CompletableFuture<byte[]>> BYTE_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
-            .weakValues() // 弱引用存储Future，GC时可回收
+            // strong references until bounded expiry
+            // .weakValues() // 弱引用存储Future，GC时可回收
             .recordStats()
             .build();
 

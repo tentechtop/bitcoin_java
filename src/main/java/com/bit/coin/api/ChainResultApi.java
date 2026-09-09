@@ -11,7 +11,7 @@ import com.bit.coin.structure.tx.UTXO;
 import com.bit.coin.txpool.TxPool;
 import com.bit.coin.utils.Sha;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 

@@ -1,0 +1,35 @@
+services:
+  node:
+    build: .
+    image: bitcoin-java:consensus-2
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 40s
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 256
+    # RocksDB extracts its JNI library here; executable mappings must be allowed.
+    tmpfs: ["/tmp:rw,nosuid,size=128m"]
+    environment:
+      NODE_ADMIN_TOKEN: ${NODE_ADMIN_TOKEN:?Set a random admin token of at least 32 characters}
+      NODE_READ_TOKEN: ${NODE_READ_TOKEN:?Set a distinct random read token of at least 32 characters}
+      NODE_BOOTSTRAP: ${NODE_BOOTSTRAP:-}
+      NODE_MINER_ADDRESSES: ${NODE_MINER_ADDRESSES:-}
+      NODE_READINESS_MIN_PEERS: ${NODE_READINESS_MIN_PEERS:-1}
+      NODE_MIN_FREE_DISK_BYTES: ${NODE_MIN_FREE_DISK_BYTES:-1073741824}
+    ports:
+      - "127.0.0.1:18333:18333/tcp"
+      - "8333:8333/udp"
+    volumes:
+      - chain-data:/var/lib/bitcoin-java
+      - node-logs:/var/log/bitcoin-java
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+volumes:
+  chain-data:
+  node-logs:

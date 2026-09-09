@@ -108,6 +108,7 @@ public class TxOutput {
         output.setValue(com.bit.coin.utils.SerializeUtils.littleEndianToLong(valueBytes));
 
         long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptPubKeyLength < 0 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES || scriptPubKeyLength > dis.available()) throw new IOException("Invalid script length");
         if (scriptPubKeyLength > 0) {
             byte[] scriptSig = new byte[(int) scriptPubKeyLength];
             dis.readFully(scriptSig);

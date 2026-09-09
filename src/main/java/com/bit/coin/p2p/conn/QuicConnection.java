@@ -44,6 +44,9 @@ public class QuicConnection implements QuicConnectionInterFace{
     private String peerId;// 节点ID
     private long connectionId;// 连接ID
     private  volatile InetSocketAddress remoteAddress;  // 远程地址,支持连接迁移
+    @com.fasterxml.jackson.annotation.JsonIgnore @lombok.ToString.Exclude
+    private SessionCipher sessionCipher;
+    @com.fasterxml.jackson.annotation.JsonIgnore @lombok.ToString.Exclude
     private byte[] sharedSecret;//共享加密密钥
     private volatile boolean expired = false;//是否过期
     private volatile long lastSeen = System.currentTimeMillis();//最后访问时间
@@ -51,7 +54,7 @@ public class QuicConnection implements QuicConnectionInterFace{
 
 
     // 单帧最大负载由路径MTU估算器动态收敛。
-    public volatile int MAX_FRAME_PAYLOAD = PathMtuEstimator.DEFAULT_DATAGRAM_BYTES - QuicFrame.FIXED_HEADER_LENGTH;
+    public volatile int MAX_FRAME_PAYLOAD = PathMtuEstimator.DEFAULT_DATAGRAM_BYTES - QuicFrame.FIXED_HEADER_LENGTH - SessionCipher.OVERHEAD_BYTES;
     private final PathMtuEstimator pathMtuEstimator = new PathMtuEstimator();
     private volatile long lastActivityTime = lastSeen;
 
@@ -62,6 +65,8 @@ public class QuicConnection implements QuicConnectionInterFace{
 
     //接收数据
     private ConcurrentHashMap<Long, ReceiveQuicData> receiveDataMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> receiveMemory = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> sendMemory = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicInteger> receiveWindowReservations = new ConcurrentHashMap<>();
 
 
@@ -180,7 +185,7 @@ public class QuicConnection implements QuicConnectionInterFace{
 
 
 
-    public void handleFrame(QuicFrame quicFrame) {
+    public synchronized void handleFrame(QuicFrame quicFrame) {
         if (expired){
             return;
         }
@@ -258,6 +263,10 @@ public class QuicConnection implements QuicConnectionInterFace{
                 return;
             }
         }else {
+            if (receiveDataMap.size() >= 16) { sendFrameWithoutResponse(buildCancelFrame(quicFrame, localRwnd.get())); return; }
+            int memory = Math.multiplyExact(quicFrame.getTotal(), QuicFrame.MAX_FRAME_TOTAL_LENGTH + 256);
+            if (!TransportMemoryBudget.reserve(memory)) { sendFrameWithoutResponse(buildCancelFrame(quicFrame, localRwnd.get())); return; }
+            receiveMemory.put(dataId, memory);
             receiveQuicData = new ReceiveQuicData();
             receiveQuicData.setDataId(quicFrame.getDataId());
             receiveQuicData.setConnectionId(quicFrame.getConnectionId());
@@ -316,7 +325,7 @@ public class QuicConnection implements QuicConnectionInterFace{
             quicMsg.setConnectionId(connectionId);
             quicMsg.setDataId(sourceFrame.getDataId());
             quicMsg.setData(plainData);
-            return pushCompleteMsg(quicMsg);
+            return QuicDataProcessor.completeResponse(quicMsg) || pushCompleteMsg(quicMsg);
         } catch (Exception e) {
             expiredDataCount++;
             log.error("[decrypt received data failed] connectionId={} peerId={} dataId={} badDataCount={}",
@@ -400,6 +409,8 @@ public class QuicConnection implements QuicConnectionInterFace{
     }
 
     private void releaseReservedReceiveWindow(long dataId) {
+        Integer memory = receiveMemory.remove(dataId);
+        if (memory != null) TransportMemoryBudget.release(memory);
         AtomicInteger reserved = receiveWindowReservations.remove(dataId);
         if (reserved == null) {
             return;
@@ -615,12 +626,20 @@ public class QuicConnection implements QuicConnectionInterFace{
     /**
      * 释放连接  停止所有的数据发送
      */
-    public void release(){
+    public synchronized void release(){
+        if (expired) return;
+        receiveMemory.values().forEach(TransportMemoryBudget::release); receiveMemory.clear();
+        sendMemory.values().forEach(TransportMemoryBudget::release); sendMemory.clear();
+        windowWaitQueue.clear(); pingSendTimeMap.clear(); sendMap.clear(); receiveMap.clear();
+        if (sharedSecret != null) Arrays.fill(sharedSecret, (byte) 0);
+        if (sessionCipher != null) sessionCipher.close();
+
         expired = true;
 
         //发送数据
         unAckedDataMap.clear();
         unAckedDataSet.clear();
+        frameSendQueue.clear();
 
         //接收数据
         receiveDataMap.clear();
@@ -631,7 +650,7 @@ public class QuicConnection implements QuicConnectionInterFace{
     /**
      * 给目标节点发送ping
      */
-    public void ping(){
+    public synchronized void ping(){
         //发送ping
         QuicFrame pingFrame = new QuicFrame();
         try {
@@ -659,7 +678,7 @@ public class QuicConnection implements QuicConnectionInterFace{
      * 3. 接收数据：超期未完成重组 → 删除+窗口回补
      * 4. 坏数据计数：超过阈值则标记连接失效
      */
-    public void cleanExpiredData() {
+    public synchronized void cleanExpiredData() {
         // 1. 频率控制：每秒最多清理1次，避免高频执行
         long currentTime = System.currentTimeMillis();
         // 连接已过期，直接返回（无需清理）
@@ -797,6 +816,7 @@ public class QuicConnection implements QuicConnectionInterFace{
      * @param dataId 数据ID（允许null，null时直接返回）
      */
     private void removeSendData(Long dataId) {
+        if (dataId != null) { Integer memory = sendMemory.remove(dataId); if (memory != null) TransportMemoryBudget.release(memory); }
         // 前置null校验：避免无意义的移除操作，同时打日志便于排查
         if (dataId == null) {
             log.warn("[移除已完成数据] 数据ID为null，跳过移除操作");
@@ -894,6 +914,7 @@ public class QuicConnection implements QuicConnectionInterFace{
             CompletableFuture<QuicMsg> responseFuture = null;
             if (protocol.isHasResponse()){
                 responseFuture = new CompletableFuture<>();
+                MSG_EXPECTED_CONNECTIONS.put(requestId, connectionId);
                 MSG_RESPONSE_FUTURECACHE.put(requestId, responseFuture);
             }
             sendData(serialize);
@@ -904,6 +925,7 @@ public class QuicConnection implements QuicConnectionInterFace{
                     return data;
                 } finally {
                     MSG_RESPONSE_FUTURECACHE.invalidate(requestId);
+                    MSG_EXPECTED_CONNECTIONS.invalidate(requestId);
                 }
             }else {
                 return null;
@@ -915,7 +937,12 @@ public class QuicConnection implements QuicConnectionInterFace{
     }
 
     @Override
-    public void sendData(byte[] data) {
+    public synchronized void sendData(byte[] data) {
+        if (data == null || data.length == 0 || data.length > 8_100_000 || unAckedDataMap.size() >= 32
+                || unAckedDataMap.values().stream().mapToLong(value -> value.getFrameArray() == null ? 0 :
+                    (long) value.getFrameArray().length * QuicFrame.MAX_FRAME_TOTAL_LENGTH).sum() + data.length > 16L * 1024 * 1024) {
+            throw new IllegalArgumentException("Per-connection send budget exceeded");
+        }
         if (expired) {
             log.warn("[send data skipped] connectionId={} peerId={} is expired", connectionId, peerId);
             return;
@@ -928,7 +955,12 @@ public class QuicConnection implements QuicConnectionInterFace{
             return;
         }
         long dataId = ID_Generator.nextId();
-        SendQuicData sendQuicData = buildSendData(connectionId, dataId, wireData, remoteAddress, MAX_FRAME_PAYLOAD);
+        int memory = Math.addExact(wireData.length * 2, ((wireData.length + MAX_FRAME_PAYLOAD - 1) / MAX_FRAME_PAYLOAD) * 256);
+        if (!TransportMemoryBudget.reserve(memory)) throw new IllegalStateException("Global transport memory budget reached");
+        sendMemory.put(dataId, memory);
+        SendQuicData sendQuicData;
+        try { sendQuicData = buildSendData(connectionId, dataId, wireData, remoteAddress, MAX_FRAME_PAYLOAD); }
+        catch (RuntimeException failed) { removeSendData(dataId); throw failed; }
         
         sendQuicData.setSendTime(System.currentTimeMillis());
         // 发送超时计算：结合最近RTT和数据分片数量，避免固定超时导致误重传。
@@ -1026,7 +1058,7 @@ public class QuicConnection implements QuicConnectionInterFace{
     }
 
 
-    public void pickUnAckedFrames() {
+    public synchronized void pickUnAckedFrames() {
         if (expired || frameSendQueue.isPendingEmpty()) {
             return;
         }

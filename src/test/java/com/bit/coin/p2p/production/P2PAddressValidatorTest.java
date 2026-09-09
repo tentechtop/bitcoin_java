@@ -1,6 +1,6 @@
 package com.bit.coin.p2p.production;
 
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.junit.jupiter.api.Test;
 
 import java.util.HexFormat;

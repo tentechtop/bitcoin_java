@@ -63,7 +63,8 @@ public class MiningServiceImpl {
     // 用于GPU挖矿 和 CPU挖矿 超时控制的调度器
     private ThreadPoolExecutor miningExecutor;
     private volatile Block currentMiningBlock;
-    private static int threadCount =  Runtime.getRuntime().availableProcessors();
+    private static final int threadCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors()));
+    private volatile Future<?> miningLoop;
 
     // CPU挖矿性能控制（0-100，默认85%）
     private volatile int miningPerformance = 15;
@@ -83,36 +84,44 @@ public class MiningServiceImpl {
     /**
      * 启动挖矿
      */
-    public Result<String> startMining() throws Exception {
-        if (isMining) {
-            return Result.error("ERROR: The node is already mining ! ");
-        }
+    public synchronized Result<String> startMining() throws Exception {
+        if (isMining || (miningLoop != null && !miningLoop.isDone())) return Result.error("Mining already active");
+        validateMiningConfiguration();
         initAllResources();
-        // 首次启动时初始化所有资源（仅执行一次）
-        log.info("开始初始化挖矿服务...");
         isMining = true;
-        miningExecutor.submit(() -> {
-            while (true){
-                if (!isMining) {
-                    Thread.sleep(1000); // 未挖矿时休眠，减少CPU占用
-                    continue;
+        miningLoop = miningExecutor.submit(() -> {
+            try {
+                while (isMining && !Thread.currentThread().isInterrupted()) {
+                    try { mineOneBlock(); }
+                    catch (InterruptedException stop) { Thread.currentThread().interrupt(); break; }
+                    catch (Exception failure) {
+                        log.warn("Mining attempt failed: {}", failure.getMessage());
+                        try { Thread.sleep(1000); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); break; }
+                    }
                 }
-                try {
-                    mineOneBlock();
-                } catch (Exception e) {
-                    log.error("挖矿异常，将重试", e);
-                    Thread.sleep(1000);
-                }
-            }
+            } finally { isMining = false; }
         });
         return Result.ok();
     }
 
+    public void stopMining() {
+        isMining = false;
+        Future<?> active = miningLoop;
+        if (active != null) active.cancel(true);
+    }
+
+    private void validateMiningConfiguration() {
+        if (!blockChainService.isStateHealthy()) throw new IllegalStateException("Node is not ready for mining");
+        if (systemConfig.getMinerAddressList() == null || systemConfig.getMinerAddressList().isEmpty()
+                || systemConfig.getMinerAddressList().getFirst().isBlank()
+                || org.bitcoinj.base.Base58.decode(systemConfig.getMinerAddressList().getFirst()).length != 32)
+            throw new IllegalArgumentException("Configure a Base58 encoded 32-byte reward public key before mining");
+    }
 
     /**
      * 初始化所有静态资源（线程池、CUDA、超时调度器），仅在首次启动时执行
      */
-    public void initAllResources() throws Exception {
+    public synchronized void initAllResources() throws Exception {
         if (isResourcesInitialized) {
             log.debug("资源已初始化，无需重复创建");
             return;
@@ -125,116 +134,52 @@ public class MiningServiceImpl {
     }
 
     private void initMiningExecutor() {
-        if (isExecutorsInitialized) {
-            log.debug("线程池已初始化，无需重复创建");
-            return;
-        }
-        if (miningExecutor == null || miningExecutor.isShutdown() || miningExecutor.isTerminated()) {
-            // 线程工厂：增加异常处理，明确线程属性
-            ThreadFactory threadFactory = r -> {
-                Thread thread = new Thread(r, "mining-main-thread");
-                thread.setPriority(Thread.NORM_PRIORITY);
-                thread.setDaemon(false);
-                thread.setUncaughtExceptionHandler((t, e) ->
-                        log.error("挖矿线程[" + t.getName() + "]发生未捕获异常", e)
-                );
-                return thread;
-            };
-
-            // 拒绝策略：自定义策略，更贴合挖矿场景
-            RejectedExecutionHandler rejectedHandler = (r, executor) -> {
-                if (!executor.isShutdown()) {
-                    try {
-                        log.warn("挖矿线程池忙碌，提交线程将直接执行任务（当前队列已满）");
-                        // 让提交任务的线程自己执行，避免任务丢失
-                        r.run();
-                    } catch (Exception e) {
-                        log.error("提交线程执行挖矿任务时发生异常", e);
-                    }
-                } else {
-                    log.warn("挖矿线程池已关闭，无法提交新任务");
-                }
-            };
-
-            // 线程池参数
-            miningExecutor = new ThreadPoolExecutor(
-                    1,       // 核心线程数=1（固定单线程）
-                    1,                  // 最大线程数=1（禁止扩容，确保串行）
-                    0L,                 // 空闲时间=0（核心线程永不回收）
-                    TimeUnit.MILLISECONDS,
-                    new ArrayBlockingQueue<>(5),
-                    threadFactory,
-                    rejectedHandler
-            );
-
-            // 5. 预启动核心线程：避免首次任务的启动延迟
-            miningExecutor.prestartCoreThread();
-        }
-        if (executor == null || executor.isShutdown() || executor.isTerminated()) {
-            int corePoolSize = Runtime.getRuntime().availableProcessors(); // CPU核心数
-            int maximumPoolSize = corePoolSize * 2; // 固定线程数
-            long keepAliveTime = 0L; // 核心线程不超时（因长期运行）
-            TimeUnit unit = TimeUnit.MILLISECONDS;
-            BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>();
-            ThreadFactory threadFactory = r -> {
-                Thread t = new Thread(r, "mining-thread-" + UUID.randomUUID().toString().substring(0, 8));
-                t.setPriority(Thread.NORM_PRIORITY); // 挖矿线程优先级设为正常（避免抢占系统资源）
-                t.setDaemon(false); // 非守护线程（确保挖矿可独立运行，不受主线程影响）
-                return t;
-            };
-            RejectedExecutionHandler handler = new ThreadPoolExecutor.CallerRunsPolicy();
-            executor = new ThreadPoolExecutor(
-                    corePoolSize,
-                    maximumPoolSize,
-                    keepAliveTime,
-                    unit,
-                    workQueue,
-                    threadFactory,
-                    handler
-            );
-        }
-        isExecutorsInitialized = true; // 标记初始化完成
+        if (isExecutorsInitialized) return;
+        miningExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(1),
+                task -> { Thread t = new Thread(task, "mining-coordinator"); t.setDaemon(true); return t; },
+                new ThreadPoolExecutor.AbortPolicy());
+        executor = new ThreadPoolExecutor(threadCount, threadCount, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(threadCount),
+                task -> { Thread t = new Thread(task, "mining-worker"); t.setDaemon(true); return t; },
+                new ThreadPoolExecutor.AbortPolicy());
+        isExecutorsInitialized = true;
     }
 
     public synchronized Block mineOneBlock() throws Exception {
-        // 1. 获取最新区块信息（确保基于最新主链打包）
-        byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
-        byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-        Block latestBlock = blockChainService.getBlockByHash(tipHash);
-        int newBlockHeight = bytesToInt(tipHeight) + 1;
-
-        // 2. 从交易池提取交易到区块（自动标记为打包中）
-        Transaction[] extractedTxs = txPool.extractTxsForBlock();
-        List<Transaction> selectedTxs = new ArrayList<>(extractedTxs.length);
-        selectedTxs.addAll(Arrays.asList(extractedTxs));
-
-        // 3. 构建新区块（含CoinBase交易、Merkle根等）
-        assert latestBlock != null;
-        Block newBlock = buildNewBlock(latestBlock, selectedTxs, newBlockHeight);
-        MiningResult result = executeMining(newBlock);
-        handleMiningResult(newBlock, result, selectedTxs);
-        return newBlock;
+        validateMiningConfiguration();
+        initAllResources();
+        Block latest = mainTipBlock;
+        Transaction[] extracted = txPool.extractTxsForBlock();
+        List<Transaction> selected = new ArrayList<>(Arrays.asList(extracted));
+        try {
+            Block block = buildNewBlock(latest, selected, Math.addExact(latest.getHeight(), 1));
+            MiningResult result = executeMining(block);
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException("Mining cancelled");
+            if (result == null || !result.found) throw new IllegalStateException("Mining timed out or tip changed");
+            block.getBlockHeader().setNonce(result.nonce);
+            block.setHash(result.hash);
+            if (!blockChainService.verifyBlock(block)) throw new IllegalStateException("Mined block was rejected");
+            return block;
+        } finally {
+            // Also unlock transactions after a rejected/stale block or an exception before submission.
+            txPool.onBlockFailed(extracted);
+        }
     }
-
-
-
 
     private Block buildNewBlock(Block latestBlock, List<Transaction> selectedTxs, int newBlockHeight) {
         Block newBlock = new Block();
-        BlockHeader blockHeader = new BlockHeader(1, latestBlock.getHash(), null, System.currentTimeMillis() / 1000, blockChainService.calculateNextBlockDifficulty(), 0);
-
-        String first = systemConfig.getMinerAddressList().getFirst();
-        if (first.isEmpty()){
-            log.info("未配置挖矿地址");
-            first = "Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz";
-        }
-        Transaction coinBase = BlockChainServiceImpl.createCoinBaseTransaction(systemConfig.getMinerAddressList().getFirst(), newBlockHeight, blockChainService.calculateTransactionFee(selectedTxs));
+        long time = Math.max(System.currentTimeMillis() / 1000,
+                com.bit.coin.blockchain.ConsensusRules.medianTime(latestBlock, blockChainService::getHeaderContext) + 1);
+        int bits = com.bit.coin.blockchain.ConsensusRules.expectedBits(latestBlock, time,
+                systemConfig.getParams(), blockChainService::getHeaderContext);
+        Transaction coinBase = BlockChainServiceImpl.createCoinBaseTransaction(systemConfig.getMinerAddressList().getFirst(),
+                newBlockHeight, blockChainService.calculateTransactionFee(selectedTxs), systemConfig.getParams());
         List<Transaction> blockTxs = new ArrayList<>(selectedTxs);
         blockTxs.addFirst(coinBase); // CoinBase放在首位
         newBlock.setTransactions(blockTxs);
         newBlock.setTxCount(blockTxs.size());
         byte[] bytes = calculateMerkleRoot(blockTxs);
-        blockHeader.setMerkleRoot(bytes);
+        BlockHeader blockHeader = new BlockHeader(1, latestBlock.getHash(), bytes, time, bits, 0);
         newBlock.setBlockHeader(blockHeader);
         newBlock.setHeight(newBlockHeight);
         return newBlock;
@@ -245,7 +190,7 @@ public class MiningServiceImpl {
     static class MiningResult {
         byte[] hash;
         int nonce;
-        boolean found = false;
+        volatile boolean found = false;
     }
 
 
@@ -273,87 +218,33 @@ public class MiningServiceImpl {
      */
     public MiningResult cpuMineBlock(BlockHeader blockHeader) {
         MiningResult result = new MiningResult();
-        Future<?>[] futures = new Future[threadCount];
-        int nonceRange = Integer.MAX_VALUE / threadCount;
-        // 重置结果状态
-        result.found = false;
-        // 提交所有线程任务
-        for (int i = 0; i < threadCount; i++) {
-            BlockHeader clone = blockHeader.clone();
-            final int startNonce = i * nonceRange;
-            final int endNonce = (i == threadCount - 1) ? Integer.MAX_VALUE : (i + 1) * nonceRange;
-            futures[i] = executor.submit(() -> {
-                int bits = clone.getBits();
-                try {
-                    for (int nonce = startNonce; nonce < endNonce && !result.found; nonce++) {
-                        // 每5000次计算执行一次概率休眠
-                        if (nonce % 1000 == 0 && miningPerformance < 100) {
-                            // 性能控制：计算休眠概率（性能越低，休眠概率越高）
-                            double sleepProbability = (100.0 - miningPerformance) / 100.0;
-                            // 生成0-1之间的随机数，判断是否需要休眠
-                            if (Math.random() < sleepProbability) {
-                                try {
-                                    // 休眠时长：性能越低，基础休眠时间越长（50ms ~ 200ms）
-                                    // 性能为0时休眠200ms，性能100时休眠0ms（实际不会进入此分支）
-                                    long sleepMs = (long) (200 - (miningPerformance * 1.5));
-                                    sleepMs = Math.max(50, sleepMs); // 确保最小休眠50ms，避免频繁切换
-                                    sleep(sleepMs);
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt(); // 保留中断状态
-                                    return; // 中断时退出当前线程的挖矿任务
-                                }
-                            }
-                        }
-                        clone.setNonce(nonce);
-                        byte[] hash = clone.calculateHash();
-                        if (clone.verifyProofOfWork()) {
-                            synchronized (result) {
-                                if (!result.found) {
-                                    result.hash = hash;
-                                    result.nonce = nonce;
-                                    result.found = true;
-                                    log.info("线程 " + Thread.currentThread().getName() + " 找到有效哈希! {}",bytesToHex(hash));
-                                }
-                            }
-                            return;
-                        }
-                    }
-                } catch (Exception e) {
-                    log.error("线程 " + Thread.currentThread().getName() + " 计算哈希时异常", e);
-                    Thread.currentThread().interrupt();
-                }
-            });
-        }
-
-        // 等待所有任务完成或找到结果（保持原有逻辑不变）
+        List<Future<?>> workers = new ArrayList<>();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         try {
-            boolean allCompleted = false;
-            while (!allCompleted && !result.found) {
-                allCompleted = true;
-                for (Future<?> future : futures) {
-                    if (future != null && !future.isDone()) {
-                        allCompleted = false;
-                        sleep(100);
-                        break;
+            for (int i = 0; i < threadCount; i++) {
+                final int lane = i;
+                workers.add(executor.submit(() -> {
+                    BlockHeader header = blockHeader.clone();
+                    for (long nonce = lane; nonce <= 0xFFFFFFFFL && !result.found && !Thread.currentThread().isInterrupted(); nonce += threadCount) {
+                        if ((nonce / threadCount) % 1024 == 0) {
+                            if (System.nanoTime() >= deadline || !Arrays.equals(mainTipBlock.getHash(), header.getPreviousHash())) break;
+                            if (miningPerformance < 100) java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
+                        }
+                        header.setNonce((int) nonce);
+                        if (header.verifyProofOfWork(false)) {
+                            synchronized (result) {
+                                if (!result.found) { result.nonce = (int) nonce; result.hash = header.calculateHash(); result.found = true; }
+                            }
+                            break;
+                        }
                     }
-                }
+                }));
             }
-            for (Future<?> future : futures) {
-                if (future != null && !future.isDone()) {
-                    future.cancel(true);
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            for (Future<?> future : futures) {
-                if (future != null) {
-                    future.cancel(true);
-                }
-            }
-        }
-        return result.found ? result : null;
+            while (!result.found && workers.stream().anyMatch(worker -> !worker.isDone()) && System.nanoTime() < deadline) Thread.sleep(10);
+        } catch (InterruptedException stop) { Thread.currentThread().interrupt(); }
+        finally { workers.forEach(worker -> worker.cancel(true)); }
+        return result;
     }
-
 
     public MiningResult gpuMineBlock(BlockHeader blockHeader) {
         // 检查静态资源是否有效，无效则降级到CPU
@@ -468,23 +359,6 @@ public class MiningServiceImpl {
     /**
      * 处理挖矿结果（成功则提交区块，失败则回退交易到交易池）
      */
-    private void handleMiningResult(Block newBlock, MiningResult result, List<Transaction> selectedTxs) {
-        if (result != null && result.found) {
-            log.info("区块 #{} 挖矿成功", newBlock.getHeight());
-            // 挖矿成功：提交区块（上链后自动删除交易池交易）
-            newBlock.getBlockHeader().setNonce(result.nonce);
-            newBlock.setHash(result.hash);
-            blockChainService.verifyBlock(newBlock);
-        } else {
-            // 挖矿失败：回退交易到交易池，允许重新参与打包
-            log.info("区块 #{} 挖矿失败，回退交易到交易池", newBlock.getHeight());
-            if (!selectedTxs.isEmpty()) {
-                txPool.onBlockFailed(selectedTxs.toArray(new Transaction[0]));
-            }
-        }
-    }
-
-
     /**
      * 释放CUDA相关资源（严格按依赖顺序释放）
      * 释放顺序：内核函数 → 模块 → 上下文 → 临时文件
@@ -608,18 +482,13 @@ public class MiningServiceImpl {
 
     @PreDestroy
     public void destroy() {
-        log.info("开始释放所有挖矿资源...");
+        stopMining();
+        if (miningExecutor != null) miningExecutor.shutdownNow();
+        if (executor != null) executor.shutdownNow();
         try {
-            // 1. 停止所有线程池（先停止任务，避免资源被占用）
-
-            // 2. 释放CUDA相关资源（计算资源依赖线程池已停止）
-            cleanCudaResources();
-
-
-            log.info("所有挖矿资源释放完成");
-        } catch (Exception e) {
-            log.error("资源释放过程中发生异常", e);
-        }
+            if (miningExecutor != null) miningExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            if (executor != null) executor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException stop) { Thread.currentThread().interrupt(); }
+        cleanCudaResources();
     }
-
 }

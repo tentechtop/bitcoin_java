@@ -31,8 +31,15 @@ import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
 @Order(0)
 @ConfigurationProperties(prefix = "system")
 public class SystemConfig {
+    private boolean dbSyncWrites = true;
+    private long minFreeDiskBytes = 256L * 1024 * 1024;
+    private int readinessMinPeers = 0;
+    private int readinessMaxSyncLag = 2;
+    private boolean networkingEnabled = true;
+    private String p2pBindAddress = "127.0.0.1";
     private String path;//保存路径
     private String username;
+    @com.fasterxml.jackson.annotation.JsonIgnore @lombok.ToString.Exclude
     private String password;
     private Integer maxSize;//最大内存占用大小 MB
     private Integer quicPort;
@@ -83,6 +90,11 @@ public class SystemConfig {
 
     @PostConstruct
     public void init() {
+        initializeNetworkParams();
+        if (minFreeDiskBytes < 0 || readinessMinPeers < 0 || readinessMinPeers > 100 || readinessMaxSyncLag < 0)
+            throw new IllegalArgumentException("Invalid readiness or storage thresholds");
+        if (quicPort == null || quicPort < 1 || quicPort > 65535 || path == null || path.isBlank())
+            throw new IllegalArgumentException("Invalid node port or data directory");
         log.info("端口{}",quicPort);
         log.info("系统数据路径:{}",path);
 
@@ -96,25 +108,27 @@ public class SystemConfig {
             SelfPeer = new Peer();
             SelfPeer.setAddress("127.0.0.1");
             SelfPeer.setPort(getQuicPort());
-            List<String> mnemonic = generateMnemonic();
-            KeyInfo baseKey = getSolanaKeyPair(mnemonic, 0, 0);
-            byte[] alicePrivateKey = baseKey.getPrivateKey();
-            byte[] alicePublicKey =  Ed25519Signer.derivePublicKeyFromPrivateKey(alicePrivateKey);
+            var keys = Ed25519Signer.generateKeyPair();
+            byte[] alicePrivateKey = Ed25519Signer.extractPrivateKeyCore(keys.getPrivate());
+            byte[] alicePublicKey = Ed25519Signer.extractPublicKeyCore(keys.getPublic());
             SelfPeer.setId(alicePublicKey);
             SelfPeer.setPrivateKey(alicePrivateKey);
             //保存到本地数据库
-            byte[] serialize = SelfPeer.serialize();
+            byte[] serialize = SelfPeer.serializeLocal();
             if (serialize==null){
                 //报异常
                 throw new RuntimeException("节点信息序列化失败");
             }
-            dataBase.insert(TableEnum.PEER, PEER_KEY, serialize);
+            persistIdentity(serialize);
         } else {
             //反序列化
             SelfPeer = Peer.deserialize(peerData);
             if (SelfPeer!=null){
                 SelfPeer.setPort(getQuicPort());
-                dataBase.update(TableEnum.PEER, PEER_KEY, SelfPeer.serialize());
+                if (SelfPeer.getPrivateKey() == null || SelfPeer.getPrivateKey().length != 32
+                        || !java.util.Arrays.equals(SelfPeer.getId(), Ed25519Signer.derivePublicKeyFromPrivateKey(SelfPeer.getPrivateKey())))
+                    throw new IllegalStateException("Stored node identity is invalid");
+                persistIdentity(SelfPeer.serializeLocal());
             }else {
                 //报异常
                 throw new RuntimeException("节点信息反序列化失败");
@@ -125,13 +139,18 @@ public class SystemConfig {
     }
 
 
+    private void persistIdentity(byte[] encoded) {
+        var operation = new com.bit.coin.database.rocksDb.RocksDb.DbOperation(TableEnum.PEER, PEER_KEY, encoded,
+                com.bit.coin.database.rocksDb.RocksDb.DbOperation.OpType.INSERT);
+        if (!dataBase.dataTransaction(java.util.List.of(operation))) throw new IllegalStateException("Cannot persist node identity");
+    }
+
     /**
      * 根据 netParams 配置初始化网络参数
      */
     private void initializeNetworkParams() {
         if (netParams == null || netParams.isEmpty()) {
-            log.warn("未配置网络参数，默认使用主网");
-            this.params = ParamsConfig.MainNetParams;
+            throw new IllegalArgumentException("An explicit network configuration is required");
         } else {
             this.params = NETWORK_MAP.get(netParams);
             if (this.params == null) {
@@ -148,6 +167,8 @@ public class SystemConfig {
     public ParamsConfig.Params getParams() {
         if (this.params == null) {
             initializeNetworkParams();
+        if (minFreeDiskBytes < 0 || readinessMinPeers < 0 || readinessMinPeers > 100 || readinessMaxSyncLag < 0)
+            throw new IllegalArgumentException("Invalid readiness or storage thresholds");
         }
         return this.params;
     }

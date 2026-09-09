@@ -24,7 +24,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.primitives.Bytes;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -81,207 +81,67 @@ public class BlockChainServiceImpl implements BlockChainService{
     //咖啡因交易缓存 缓存20000笔交易 查询时先查询缓存 缓存中没有再查询交易
     private final Cache<String, Transaction> TransactionCache = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
-            .maximumSize(20000)
+            .maximumWeight(32L * 1024 * 1024)
+            .weigher((String key, Transaction value) -> TransactionValidator.memoryWeight(value))
             .recordStats()
             .build();
 
 
+
+    private volatile boolean stateHealthy;
+    private final AtomicLong acceptedBlocks = new AtomicLong(), rejectedBlocks = new AtomicLong(), reorganizations = new AtomicLong();
+    public long acceptedBlocks() { return acceptedBlocks.get(); }
+    public long rejectedBlocks() { return rejectedBlocks.get(); }
+    public long reorganizations() { return reorganizations.get(); }
+    public long medianBeforeHeight(int sourceHeight) {
+        Block ancestor = getHeaderContext(dataBase.get(HEIGHT_TO_HASH, Math.max(0, sourceHeight - 1)));
+        if (ancestor == null) throw new IllegalStateException("Missing relative-lock ancestry");
+        return ConsensusRules.medianTime(ancestor, this::getHeaderContext);
+    }
+
+    @Autowired
+    private UTXOCache utxoCache;
+
+    public String getNetworkName() { return config.getParams().getName(); }
+
+    public boolean isStateHealthy() { return stateHealthy; }
 
     @PostConstruct
-    public void init() {
-        //检查创世区块 int转字节
-        byte[] hash = dataBase.get(TableEnum.HEIGHT_TO_HASH, 0);
-        if (hash==null){
-            //初始化
-            Block genesisBlock = createGenesisBlock();
-            addBlockToChain(genesisBlock,true,true);
-            log.info("新创建创世区块高度{} 最新Hash{}",genesisBlock.getHeight(),bytesToHex(genesisBlock.getHash()));
-        }else {
-            byte[] tipHash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
-            byte[] tipHeight = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-            Block deserialize = getBlockByHash(tipHash);
-            deserialize.setHeight(bytesToInt(tipHeight));
-            deserialize.setHash(tipHash);
-            mainTipBlock=deserialize;
-            //设置区块中交易
-            deserialize.getTransactions().forEach(tx -> {
-                //区块Hash
-                tx.setHash(deserialize.getBlockHeader().getHash());
-                //区块高度
-                tx.setHeight(deserialize.getHeight());
-                //区块时间
-                tx.setTime(deserialize.getBlockHeader().getTime());
-            });
-            log.info("最新区块高度{} 最新Hash{}",deserialize.getHeight(),bytesToHex(tipHash));
+    public synchronized void init() {
+        mainTipBlock = null;
+        Block genesis = createGenesisBlock(config.getParams());
+        byte[] existing = dataBase.get(HEIGHT_TO_HASH, 0);
+        if (existing == null) {
+            new ChainStateStore(dataBase, this::getBlockByHash).initialize(genesis, config.getParams());
+            mainTipBlock = genesis;
+        } else {
+            byte[] revision = dataBase.get(CHAIN, ChainStateStore.REVISION_KEY);
+            if (revision == null || revision.length != 4 || bytesToInt(revision) != ConsensusRules.REVISION) {
+                throw new IllegalStateException("Database uses an incompatible consensus revision. Preserve it and rebuild into a new data directory; see docs/OPERATIONS.md");
+            }
+            if (!Arrays.equals(existing, genesis.getHash())) throw new IllegalStateException("Database genesis mismatch");
+            byte[] hash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
+            byte[] height = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
+            Block tip = hash == null ? null : getBlockByHash(hash);
+            if (tip == null || height == null || height.length != 4 || tip.getHeight() != bytesToInt(height)
+                    || !Arrays.equals(dataBase.get(HEIGHT_TO_HASH, tip.getHeight()), hash)) {
+                throw new IllegalStateException("Inconsistent chain tip; restore or reindex before starting");
+            }
+            UtxoTransition.deserialize(dataBase.get(BLOCK_UNDO, hash));
+            mainTipBlock = tip;
         }
+        stateHealthy = true;
     }
-
-
 
     //孤块缓存: previousHash -> 等待处理的区块列表
-    private final Cache<String, List<Block>> orphanBlocks = Caffeine.newBuilder()
+    private final Cache<String, Block> orphanBlocks = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .initialCapacity(100)
-            .maximumSize(100)
+            .maximumWeight(32L * 1024 * 1024)
+            .weigher((String key, Block value) -> (int) Math.min(Integer.MAX_VALUE,
+                    4096L + value.getTransactions().stream().mapToLong(TransactionValidator::memoryWeight).sum()))
             .recordStats()
             .build();
-
-    //将区块加入到主链
-    synchronized public void addBlockToChain(Block block,boolean isMainChain,boolean isTip) {
-        List<RocksDb.DbOperation> operations = new ArrayList<>();
-        BlockHeader blockHeader = block.getBlockHeader();
-        BlockBody blockBody = block.getBlockBody();
-        UInt256 chainWork = block.getChainWork();
-        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
-
-        operations.add(new RocksDb.DbOperation(
-                TBLOCK_HEADER,
-                block.getHash(),
-                blockHeader.serialize(),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-                TBLOCK_BODY,
-                block.getHash(),
-                blockBody.serialize(),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-                HASH_TO_CHAIN_WORK,
-                block.getHash(),
-                chainWork.toBytes(),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-                HASH_TO_HEIGHT,
-                block.getHash(),
-                intHeightToBytes,
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        if (isMainChain){
-            operations.add(new RocksDb.DbOperation(
-                    TableEnum.HEIGHT_TO_HASH,
-                    intHeightToBytes,
-                    block.getHash(),
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
-
-            if (isTip){
-                operations.add(new RocksDb.DbOperation(
-                        TableEnum.CHAIN,
-                        MAIN_CHAIN_TIP_HEIGHT_KEY,
-                        intHeightToBytes,
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-                operations.add(new RocksDb.DbOperation(
-                        TableEnum.CHAIN,
-                        MAIN_CHAIN_TIP_HASH_KEY,
-                        block.getHash(),
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-            }
-
-            //花费的
-            List<UTXO> spentUTXOKeys = block.getSpentUTXOKeys();
-            for (UTXO utxo : spentUTXOKeys){
-                operations.add(new RocksDb.DbOperation(
-                        TableEnum.TUTXO,
-                        utxo.getKey(),
-                        null,
-                        RocksDb.DbOperation.OpType.DELETE
-                ));
-                operations.add(new RocksDb.DbOperation(
-                        ADDR_TO_UTXO,
-                        utxo.getAddressKey(),
-                        null,
-                        RocksDb.DbOperation.OpType.DELETE
-                ));
-            }
-            //新增的UTXO
-            List<UTXO> utxOs = block.getUTXOs();
-            for (UTXO utxo : utxOs){
-                operations.add(new RocksDb.DbOperation(
-                        TableEnum.TUTXO,
-                        utxo.getKey(),
-                        utxo.serialize(),
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-                //地址到UTXO value是金额 帮助快速找到地址的UTXO
-                operations.add(new RocksDb.DbOperation(
-                        ADDR_TO_UTXO,
-                        utxo.getAddressKey(),
-                        longToLittleEndian(utxo.getValue()),
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-            }
-        }
-
-        //交易到区块的索引
-        List<Transaction> transactions = block.getTransactions();
-        for (int i = 0; i < transactions.size(); i++) {
-            Transaction transaction = transactions.get(i);
-            boolean coinbase = transaction.isCoinbase();
-            byte[] txId = transaction.getTxId();
-            byte[] blockIndex = transaction.getBlockIndex(block.getHash(),i);
-            operations.add(new RocksDb.DbOperation(
-                    TableEnum.TX_TO_BLOCK,
-                    txId,
-                    blockIndex,
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
-            // 使用LinkedHashSet进行去重，并保留顺序
-            Set<byte[]> seenScripts = new LinkedHashSet<>();
-            List<TxInput> inputs = transaction.getInputs();
-            if (!coinbase){
-                for (TxInput input : inputs) {
-                    byte[] scriptSig = input.getScriptSig();
-                    log.info("解锁脚本长度{} 解锁脚本{}",scriptSig.length,bytesToHex(scriptSig));
-                    //获取最后32位
-                    byte[] last32 = Arrays.copyOfRange(scriptSig, scriptSig.length - 32, scriptSig.length);
-                    byte[] scriptPubKey = Sha.applyRIPEMD160(Sha.applySHA256(last32));//解锁脚本
-                    byte[] scriptPubKeyWithTxId = new byte[scriptPubKey.length + txId.length];
-                    System.arraycopy(scriptPubKey, 0, scriptPubKeyWithTxId, 0, scriptPubKey.length);
-                    System.arraycopy(txId, 0, scriptPubKeyWithTxId, scriptPubKey.length, txId.length);
-
-                    if (seenScripts.add(scriptPubKey)) {
-                        operations.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_TX,
-                                scriptPubKeyWithTxId,
-                                new byte[]{},
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                    }
-                }
-            }
-            //地址到交易的索引 获取输出列表所有的锁定脚本
-            List<TxOutput> outputs = transaction.getOutputs();
-            for (TxOutput output : outputs) {
-                byte[] scriptPubKey = output.getScriptPubKey();//[20字节][32字节]
-                //地址到交易的key 将scriptPubKey 和 txId 拼接为 52字节key
-                byte[] scriptPubKeyWithTxId = new byte[scriptPubKey.length + txId.length];
-                System.arraycopy(scriptPubKey, 0, scriptPubKeyWithTxId, 0, scriptPubKey.length);
-                System.arraycopy(txId, 0, scriptPubKeyWithTxId, scriptPubKey.length, txId.length);
-                // 如果add方法返回true，说明是首次添加，不是重复项
-                if (seenScripts.add(scriptPubKey)) {
-                    operations.add(new RocksDb.DbOperation(
-                            TableEnum.ADDR_TO_TX,
-                            scriptPubKeyWithTxId,
-                            new byte[]{},
-                            RocksDb.DbOperation.OpType.INSERT
-                    ));
-                }
-            }
-        }
-        boolean success = dataBase.dataTransaction(operations);
-        if (success) {
-            System.out.println("事务成功：将区块加入到主链。");
-            if (isTip){
-                mainTipBlock=block;
-            }
-        } else {
-            System.out.println("事务失败：未将区块加入到主链。");
-        }
-    }
 
     public boolean hasBlockBody(byte[] hash) {
         return hash != null && hash.length == 32 && dataBase.get(TBLOCK_BODY, hash) != null;
@@ -305,869 +165,115 @@ public class BlockChainServiceImpl implements BlockChainService{
         return getBlockHeaderByHash(hash);
     }
 
-    public synchronized boolean addBlockHeaderToStore(BlockHeader header, int height, UInt256 chainWork) {
-        if (header == null || height < 0 || chainWork == null) {
-            return false;
-        }
-        byte[] hash = header.calculateHash();
-        byte[] existing = dataBase.get(TBLOCK_HEADER, hash);
-        if (existing != null) {
-            if (dataBase.get(HASH_TO_HEIGHT, hash) == null) {
-                dataBase.insert(HASH_TO_HEIGHT, hash, RocksDb.intToBytes(height));
-            }
-            if (dataBase.get(HASH_TO_CHAIN_WORK, hash) == null) {
-                dataBase.insert(HASH_TO_CHAIN_WORK, hash, chainWork.toBytes());
+    /** Resolve header-only ancestors without trusting a remote height or cumulative-work claim. */
+    public Block getHeaderContext(byte[] hash) {
+        BlockHeader header = getBlockHeaderByHash(hash);
+        if (header == null) return null;
+        byte[] height = dataBase.get(HASH_TO_HEIGHT, hash);
+        byte[] work = dataBase.get(HASH_TO_CHAIN_WORK, hash);
+        if (height == null || height.length != 4 || work == null || work.length != 32)
+            throw new IllegalStateException("Missing header context");
+        Block context = new Block();
+        context.setHash(hash); context.setBlockHeader(header);
+        context.setHeight(java.nio.ByteBuffer.wrap(height).getInt());
+        context.setChainWork(UInt256.fromBytes(work));
+        return context;
+    }
+
+    public synchronized boolean addBlockHeaderToStore(BlockHeader header, int height, UInt256 claimedWork) {
+        if (!stateHealthy || header == null || height < 1 || claimedWork == null) return false;
+        try {
+            Block parent = getHeaderContext(header.getPreviousHash());
+            if (parent == null || height != Math.addExact(parent.getHeight(), 1)
+                    || header.getBits() != ConsensusRules.expectedBits(parent, header.getTime(), config.getParams(), this::getHeaderContext)
+                    || header.getTime() <= ConsensusRules.medianTime(parent, this::getHeaderContext)
+                    || header.getTime() > System.currentTimeMillis() / 1000 + 7200
+                    || !header.verifyProofOfWork(false)) return false;
+            BigInteger totalWork = parent.getChainWork().toBigInteger().add(header.getWork());
+            if (totalWork.bitLength() > 256) return false;
+            UInt256 work = UInt256.fromBigInteger(totalWork);
+            if (!work.equals(claimedWork)) return false;
+            byte[] hash = header.calculateHash();
+            if (dataBase.get(TBLOCK_HEADER, hash) != null) return true;
+            List<RocksDb.DbOperation> operations = List.of(
+                    new RocksDb.DbOperation(TBLOCK_HEADER, hash, header.serialize(), RocksDb.DbOperation.OpType.INSERT),
+                    new RocksDb.DbOperation(HASH_TO_HEIGHT, hash, RocksDb.intToBytes(height), RocksDb.DbOperation.OpType.INSERT),
+                    new RocksDb.DbOperation(HASH_TO_CHAIN_WORK, hash, work.toBytes(), RocksDb.DbOperation.OpType.INSERT));
+            if (!dataBase.dataTransaction(operations)) {
+                stateHealthy = false;
+                throw new IllegalStateException("Header commit failed");
             }
             return true;
-        }
-
-        List<RocksDb.DbOperation> operations = new ArrayList<>();
-        operations.add(new RocksDb.DbOperation(
-                TBLOCK_HEADER,
-                hash,
-                header.serialize(),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-                HASH_TO_HEIGHT,
-                hash,
-                RocksDb.intToBytes(height),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        operations.add(new RocksDb.DbOperation(
-                HASH_TO_CHAIN_WORK,
-                hash,
-                chainWork.toBytes(),
-                RocksDb.DbOperation.OpType.INSERT
-        ));
-        return dataBase.dataTransaction(operations);
+        } catch (IllegalArgumentException invalid) { return false; }
     }
 
     /**
      * 执行链重组（Reorganization）
      * 核心优化：所有数据库操作合并到同一个原子事务中执行，保证链重组的原子性
      */
-    synchronized private boolean performChainReorg(Block newBlock) {
-        // 全局事务操作列表：收集所有需要执行的数据库操作
-        List<RocksDb.DbOperation> globalTxOps = new ArrayList<>();
-        // 临时缓存：需要放回交易池的交易（旧链回滚）
-        List<Transaction> txsToAddToPool = new ArrayList<>();
-        // 临时缓存：需要从交易池移除的交易（新链应用）
-        List<Transaction> txsToRemoveFromPool = new ArrayList<>();
-
+    public synchronized boolean verifyBlock(Block block) {
+        if (!stateHealthy || block == null || block.getBlockHeader() == null) return false;
+        ChainStateStore.Accepted accepted;
         try {
-            log.info("开始执行链重组，新链顶端区块高度:{} Hash:{}",
-                    newBlock.getHeight(), bytesToHex(newBlock.getHash()));
-
-            // 1. 找到新旧链的共同祖先
-            Block commonAncestor = findCommonAncestor(newBlock);
-            if (commonAncestor == null) {
-                log.error("链重组失败：未找到共同祖先");
-                return false;
-            }
-            log.info("找到共同祖先区块，高度:{} Hash:{}",
-                    commonAncestor.getHeight(), bytesToHex(commonAncestor.getHash()));
-
-            // 2. 收集旧链需要回滚的区块（从旧主链顶端到共同祖先，倒序）
-            List<Block> oldChainBlocksToRevert = new ArrayList<>();
-            Block currentOldBlock = mainTipBlock;
-            while (currentOldBlock != null && !Arrays.equals(currentOldBlock.getHash(), commonAncestor.getHash())) {
-                oldChainBlocksToRevert.add(currentOldBlock);
-                currentOldBlock = getBlockByHash(currentOldBlock.getBlockHeader().getPreviousHash());
-            }
-            if (oldChainBlocksToRevert.isEmpty()) {
-                log.warn("链重组无需回滚旧链，直接应用新链");
-            } else {
-                log.info("需要回滚旧链区块数量:{}，区块高度范围:{}~{}",
-                        oldChainBlocksToRevert.size(),
-                        commonAncestor.getHeight() + 1,
-                        mainTipBlock.getHeight());
-            }
-
-            // 3. 收集新链需要应用的区块（从共同祖先下一个区块到新链顶端，正序）
-            List<Block> newChainBlocksToApply = new ArrayList<>();
-            Block currentNewBlock = newBlock;
-            while (currentNewBlock != null && !Arrays.equals(currentNewBlock.getHash(), commonAncestor.getHash())) {
-                newChainBlocksToApply.add(currentNewBlock);
-                currentNewBlock = getBlockByHash(currentNewBlock.getBlockHeader().getPreviousHash());
-            }
-            // 反转列表，保证从共同祖先的下一个区块开始应用
-            Collections.reverse(newChainBlocksToApply);
-            log.info("需要应用新链区块数量:{}，区块高度范围:{}~{}",
-                    newChainBlocksToApply.size(),
-                    commonAncestor.getHeight() + 1,
-                    newBlock.getHeight());
-
-            // 4. 收集旧链回滚的数据库操作（倒序回滚，先回滚最新的区块）
-            for (Block blockToRevert : oldChainBlocksToRevert) {
-                log.info("收集旧链回滚操作，高度:{} Hash:{}",
-                        blockToRevert.getHeight(), bytesToHex(blockToRevert.getHash()));
-                Pair<List<RocksDb.DbOperation>, List<Transaction>> revertResult = collectRevertBlockOps(blockToRevert);
-                if (revertResult == null) {
-                    log.error("收集回滚操作失败，链重组终止：高度{} Hash{}",
-                            blockToRevert.getHeight(), bytesToHex(blockToRevert.getHash()));
-                    return false;
-                }
-                // 合并回滚操作到全局事务
-                globalTxOps.addAll(revertResult.getFirst());
-                // 收集需要放回交易池的交易
-                txsToAddToPool.addAll(revertResult.getSecond());
-            }
-
-            // 5. 收集新链应用的数据库操作（正序应用，从共同祖先下一个区块开始）
-            for (Block blockToApply : newChainBlocksToApply) {
-                log.info("收集新链应用操作，高度:{} Hash:{}",
-                        blockToApply.getHeight(), bytesToHex(blockToApply.getHash()));
-                Pair<List<RocksDb.DbOperation>, List<Transaction>> applyResult = collectApplyBlockOps(blockToApply);
-                if (applyResult == null) {
-                    log.error("收集应用操作失败，链重组终止：高度{} Hash{}",
-                            blockToApply.getHeight(), bytesToHex(blockToApply.getHash()));
-                    return false;
-                }
-                // 合并应用操作到全局事务
-                globalTxOps.addAll(applyResult.getFirst());
-                // 收集需要从交易池移除的交易
-                txsToRemoveFromPool.addAll(applyResult.getSecond());
-            }
-
-            // 6. 收集主链状态更新操作（最后执行）
-            byte[] newHeightBytes = ByteBuffer.allocate(4).putInt(newBlock.getHeight()).array();
-            // 更新主链顶端高度
-            globalTxOps.add(new RocksDb.DbOperation(
-                    TableEnum.CHAIN,
-                    MAIN_CHAIN_TIP_HEIGHT_KEY,
-                    newHeightBytes,
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
-            // 更新主链顶端哈希
-            globalTxOps.add(new RocksDb.DbOperation(
-                    TableEnum.CHAIN,
-                    MAIN_CHAIN_TIP_HASH_KEY,
-                    newBlock.getHash(),
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
-            // 更新高度到哈希的映射（新链的区块）
-            for (Block block : newChainBlocksToApply) {
-                byte[] heightBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
-                globalTxOps.add(new RocksDb.DbOperation(
-                        TableEnum.HEIGHT_TO_HASH,
-                        heightBytes,
-                        block.getHash(),
-                        RocksDb.DbOperation.OpType.INSERT
-                ));
-            }
-
-            // 7. 执行全局原子事务（所有操作要么全部成功，要么全部失败）
-            log.info("执行链重组全局事务，总操作数:{}", globalTxOps.size());
-            boolean txSuccess = dataBase.dataTransaction(globalTxOps);
-            if (!txSuccess) {
-                log.error("链重组全局事务执行失败，所有操作已回滚");
-                return false;
-            }
-
-            // 8. 事务成功后，执行内存状态更新（仅此时修改内存，保证数据一致性）
-            // 8.1 更新主链顶端内存状态
-            mainTipBlock = newBlock;
-            // 8.2 处理交易池：放回旧链回滚的交易
-            for (Transaction tx : txsToAddToPool) {
-                txPool.addTx(tx);
-                log.debug("将回滚交易放回交易池，TxId:{}", bytesToHex(tx.getTxId()));
-            }
-            // 8.3 处理交易池：移除新链确认的交易
-            for (Transaction tx : txsToRemoveFromPool) {
-                //主链才有UTXO
-                txPool.onBlockConfirmed(new Transaction[]{tx}, newBlock.getHeight());
-                log.debug("从交易池移除已确认交易，TxId:{}", bytesToHex(tx.getTxId()));
-            }
-
-            // 9. 处理孤块（重组后可能有新的父区块可用）
-            processOrphanBlocks();
-
-            log.info("链重组完成，新主链顶端高度:{} Hash:{}，全局事务执行成功",
-                    newBlock.getHeight(), bytesToHex(newBlock.getHash()));
-            return true;
-        } catch (Exception e) {
-            log.error("链重组异常，全局事务未提交，无数据变更", e);
-            return false;
-        }
-    }
-
-    /**
-     * 收集回滚区块的数据库操作（不执行事务，仅返回操作列表）
-     * @param block 要回滚的区块
-     * @return Pair<回滚操作列表, 需要放回交易池的交易列表>，失败返回null
-     */
-    private Pair<List<RocksDb.DbOperation>, List<Transaction>> collectRevertBlockOps(Block block) {
-        if (block == null) {
-            log.error("收集回滚操作失败：区块为空");
-            return null;
-        }
-
-        List<RocksDb.DbOperation> revertOps = new ArrayList<>();
-        List<Transaction> txsToAddToPool = new ArrayList<>();
-        List<Transaction> transactions = block.getTransactions();
-        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
-
-        try {
-            //区块从主链剥离
-            revertOps.add(new RocksDb.DbOperation(
-                    TableEnum.HEIGHT_TO_HASH,
-                    intHeightToBytes,
-                    null,
-                    RocksDb.DbOperation.OpType.DELETE
-            ));
-            //撤销区块交易
-            for (Transaction tx : transactions) {
-                if (tx.isCoinbase()) {
-                    // 1. 收集Coinbase交易回滚操作：删除其创建的UTXO
-                    List<TxOutput> outputs = tx.getOutputs();
-                    for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
-                        TxOutput output = outputs.get(outputIndex);
-                        byte[] utxoKey = UTXO.getKey(tx.getTxId(), outputIndex);
-                        // 从TUTXO表删除该UTXO
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                utxoKey,
-                                null,
-                                RocksDb.DbOperation.OpType.DELETE
-                        ));
-                        // 修复：ADDR_TO_UTXO的key = 地址前缀 + UTXO key
-                        byte[] addrKey = output.getScriptPubKey();
-                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxoKey);
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_UTXO,
-                                addrUtxoKey,
-                                null,
-                                RocksDb.DbOperation.OpType.DELETE
-                        ));
-                    }
-                    log.debug("收集Coinbase交易回滚操作，TxId:{}", bytesToHex(tx.getTxId()));
-                } else {
-                    // 2. 收集普通交易回滚操作：恢复被花费的UTXO，删除创建的UTXO
-                    // 2.1 恢复该交易花费的UTXO
-                    List<TxInput> inputs = tx.getInputs();
-                    for (TxInput input : inputs) {
-                        byte[] txId = input.getTxId();
-                        int index = input.getIndex();
-                        Transaction txByHash = getTxByHash(txId);
-                        TxOutput txOutput = txByHash.getOutputs().get(index);
-                        UTXO utxo = new UTXO();
-                        utxo.setTxId(txId);
-                        utxo.setIndex(index);
-                        utxo.setValue(txOutput.getValue());
-                        utxo.setScript(txOutput.getScriptPubKey());
-                        utxo.setHeight(block.getHeight());
-                        utxo.setCoinbase(false);
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                utxo.getKey(),
-                                utxo.serialize(),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                        // 修复：ADDR_TO_UTXO的key = 地址前缀 + UTXO key，value = 小端序的金额
-                        byte[] addrKey = utxo.getAddressKey();
-                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxo.getKey());
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_UTXO,
-                                addrUtxoKey,
-                                longToLittleEndian(utxo.getValue()),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                    }
-
-                    // 2.2 删除该交易创建的UTXO
-                    List<TxOutput> outputs = tx.getOutputs();
-                    for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
-                        byte[] utxoKey = UTXO.getKey(tx.getTxId(), outputIndex);
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                utxoKey,
-                                null,
-                                RocksDb.DbOperation.OpType.DELETE
-                        ));
-                        // 删除ADDR_TO_UTXO映射
-                        TxOutput output = outputs.get(outputIndex);
-                        byte[] addrKey = output.getScriptPubKey();
-                        byte[] addrUtxoKey = Bytes.concat(addrKey, utxoKey);
-                        revertOps.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_UTXO,
-                                addrUtxoKey,
-                                null,
-                                RocksDb.DbOperation.OpType.DELETE
-                        ));
-                    }
-
-                    // 2.3 收集需要放回交易池的交易（事务成功后执行）
-                    txsToAddToPool.add(tx);
-                    log.debug("收集普通交易回滚操作，TxId:{}（需放回交易池）", bytesToHex(tx.getTxId()));
-                }
-            }
-
-            return new Pair<>(revertOps, txsToAddToPool);
-        } catch (Exception e) {
-            log.error("收集回滚操作异常，区块高度:{} Hash:{}", block.getHeight(), bytesToHex(block.getHash()), e);
-            return null;
-        }
-    }
-
-    /**
-     * 收集应用区块的数据库操作（不执行事务，仅返回操作列表）
-     * @param block 要应用的区块
-     * @return Pair<应用操作列表, 需要从交易池移除的交易列表>，失败返回null
-     */
-    private Pair<List<RocksDb.DbOperation>, List<Transaction>> collectApplyBlockOps(Block block) {
-        if (block == null) {
-            log.error("收集应用操作失败：区块为空");
-            return null;
-        }
-        byte[] intHeightToBytes = ByteBuffer.allocate(4).putInt(block.getHeight()).array();
-
-        List<RocksDb.DbOperation> applyOps = new ArrayList<>();
-        List<Transaction> txsToRemoveFromPool = new ArrayList<>();
-        List<Transaction> transactions = block.getTransactions();
-
-        try {
-            //添加到主链
-            applyOps.add(new RocksDb.DbOperation(
-                    TableEnum.HEIGHT_TO_HASH,
-                    intHeightToBytes,
-                    block.getHash(),
-                    RocksDb.DbOperation.OpType.INSERT
-            ));
-
-            for (Transaction tx : transactions) {
-                if (tx.isCoinbase()) {
-                    // 1. 收集Coinbase交易应用操作：创建挖矿奖励的UTXO
-                    List<TxOutput> outputs = tx.getOutputs();
-                    for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
-                        TxOutput output = outputs.get(outputIndex);
-                        // 创建UTXO对象
-                        UTXO utxo = new UTXO();
-                        utxo.setTxId(tx.getTxId());
-                        utxo.setIndex(outputIndex);
-                        utxo.setValue(output.getValue());
-                        utxo.setScript(output.getScriptPubKey());
-                        utxo.setCoinbase(true);
-
-                        // 插入UTXO到数据库
-                        byte[] utxoKey = UTXO.getKey(tx.getTxId(), outputIndex);
-                        applyOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                utxoKey,
-                                utxo.serialize(),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                        // 更新ADDR_TO_UTXO映射
-                        applyOps.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_UTXO,
-                                utxo.getAddressKey(),
-                                longToLittleEndian(utxo.getValue()),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                    }
-                    log.debug("收集Coinbase交易应用操作，TxId:{}", bytesToHex(tx.getTxId()));
-                } else {
-                    // 2. 收集普通交易应用操作：花费旧UTXO，创建新UTXO
-                    // 2.1 花费该交易的输入对应的UTXO
-                    List<TxInput> inputs = tx.getInputs();
-                    for (TxInput input : inputs) {
-                        byte[] spentTxId = input.getTxId();
-                        int spentIndex = input.getIndex();
-                        byte[] spentUtxoKey = UTXO.getKey(spentTxId, spentIndex);
-                        // 删除被花费的UTXO
-                        applyOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                spentUtxoKey,
-                                null,
-                                RocksDb.DbOperation.OpType.DELETE
-                        ));
-                        // 删除ADDR_TO_UTXO映射
-                        UTXO spentUtxo = getUtxo(bytesToHex(spentUtxoKey));
-                        if (spentUtxo != null) {
-                            applyOps.add(new RocksDb.DbOperation(
-                                    TableEnum.ADDR_TO_UTXO,
-                                    spentUtxo.getAddressKey(),
-                                    null,
-                                    RocksDb.DbOperation.OpType.DELETE
-                            ));
-                        }
-                    }
-
-                    // 2.2 创建该交易输出对应的UTXO
-                    List<TxOutput> outputs = tx.getOutputs();
-                    for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
-                        TxOutput output = outputs.get(outputIndex);
-                        // 创建UTXO对象
-                        UTXO utxo = new UTXO();
-                        utxo.setTxId(tx.getTxId());
-                        utxo.setIndex(outputIndex);
-                        utxo.setValue(output.getValue());
-                        utxo.setScript(output.getScriptPubKey());
-                        utxo.setCoinbase(false);
-                        utxo.setHeight(block.getHeight());
-
-                        // 插入UTXO到数据库
-                        byte[] utxoKey = UTXO.getKey(tx.getTxId(), outputIndex);
-                        applyOps.add(new RocksDb.DbOperation(
-                                TableEnum.TUTXO,
-                                utxoKey,
-                                utxo.serialize(),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                        // 更新ADDR_TO_UTXO映射
-                        applyOps.add(new RocksDb.DbOperation(
-                                TableEnum.ADDR_TO_UTXO,
-                                utxo.getAddressKey(),
-                                longToLittleEndian(utxo.getValue()),
-                                RocksDb.DbOperation.OpType.INSERT
-                        ));
-                    }
-
-                    // 2.3 收集需要从交易池移除的交易（事务成功后执行）
-                    txsToRemoveFromPool.add(tx);
-                    log.debug("收集普通交易应用操作，TxId:{}（需从交易池移除）", bytesToHex(tx.getTxId()));
-                }
-            }
-
-            return new Pair<>(applyOps, txsToRemoveFromPool);
-        } catch (Exception e) {
-            log.error("收集应用操作异常，区块高度:{} Hash:{}", block.getHeight(), bytesToHex(block.getHash()), e);
-            return null;
-        }
-    }
-
-
-    //验证区块
-    synchronized public boolean verifyBlock(Block block) {
-        if (block == null) {
-            log.error("验证失败：区块为空");
-            return false;
-        }
-
-        log.info("开始验证区块 高度:{} 区块哈希:{}",block.getHeight(),bytesToHex(block.getHash()));
-
-        // 1. 区块基础格式验证
-        if (!validateBlockFormat(block)) {
-            log.error("区块基础格式验证失败");
-            return false;
-        }
-
-        // 2. 区块 Hash 验证
-        if (!validateBlockHash(block)) {
-            log.error("区块Hash验证失败");
-            return false;
-        }
-
-        // 3. 工作量证明验证
-        if (!validateProofOfWork(block)) {
-            log.error("工作量证明验证失败");
-            return false;
-        }
-
-        //验证是否已经存在
-        if (getBlockHeaderByHash(block.getHash()) != null && hasBlockBody(block.getHash())) {
-            log.error("区块已经存在");
-            return true;
-        }
-
-
-        // 4. 区块交易验证
-        // A block whose parent is unknown cannot be fully validated yet, because
-        // transaction inputs may depend on UTXOs from the missing parent chain.
-        if (isMissingParentBlock(block)) {
-            log.warn("收到断链区块，先加入孤块池并等待同步父区块。height={}, hash={}, parent={}",
-                    block.getHeight(), bytesToHex(block.getHash()),
-                    bytesToHex(block.getBlockHeader().getPreviousHash()));
-            addOrphanBlock(block);
-            return false;
-        }
-
-        if (!validateBlockTransactions(block)) {
-            log.error("区块交易验证失败");
-            return false;
-        }
-
-        // 5. 链接关系处理（主链延续、孤块、分叉）
-        if (handleBlockConnection(block)){
-            routingTable.BroadcastResource(0, block.getHash(), block.getHeight(), block.getChainWork());
-            return true;
-        }else {
-            //打包失败将交易重新添加回交易池
-            // 过滤掉铸币交易，仅将普通交易放回交易池
-            Transaction[] normalTransactions = block.getTransactions().stream()
-                    .filter(transaction -> !transaction.isCoinbase())
-                    .toArray(Transaction[]::new);
-
-            txPool.onBlockFailed(normalTransactions);
-            return false;
-        }
-    }
-
-    /**
-     * 区块基础格式验证
-     */
-    synchronized private boolean validateBlockFormat(Block block) {
-        // 验证区块头不为空
-        if (block.getBlockHeader() == null) {
-            log.error("区块头为空");
-            return false;
-        }
-
-        // 验证交易列表不为空
-        if (block.getTransactions() == null || block.getTransactions().isEmpty()) {
-            log.error("区块必须包含至少一笔交易");
-            return false;
-        }
-
-        // 验证第一笔交易是 Coinbase 交易
-        if (!block.getTransactions().getFirst().isCoinbase()) {
-            log.error("区块的第一笔交易必须是Coinbase交易");
-            return false;
-        }
-
-        // 验证其余交易不是 Coinbase 交易
-        for (int i = 1; i < block.getTransactions().size(); i++) {
-            if (block.getTransactions().get(i).isCoinbase()) {
-                log.error("区块中只能有一笔Coinbase交易（必须是第一笔）");
-                return false;
-            }
-        }
-
-        // 验证交易数量与txCount字段一致
-        if (block.getTxCount() != block.getTransactions().size()) {
-            log.error("交易数量不匹配，txCount:{}, 实际:{}",
-                block.getTxCount(), block.getTransactions().size());
-            return false;
-        }
-
-        // 验证区块高度合理
-        if (block.getHeight() < 0) {
-            log.error("区块高度不能为负数: {}", block.getHeight());
-            return false;
-        }
-
-        log.info("区块基础格式验证通过");
-        return true;
-    }
-
-    /**
-     * 区块 Hash 验证
-     */
-    synchronized private boolean validateBlockHash(Block block) {
-        byte[] blockHash = block.getHash();
-
-        // 验证 Hash 不为空且长度为32字节
-        if (blockHash == null || blockHash.length != 32) {
-            log.error("区块Hash长度必须为32字节");
-            return false;
-        }
-
-        // 验证存储的Hash与计算的Hash一致
-        byte[] calculatedHash = block.getBlockHeader().calculateHash();
-        if (!Arrays.equals(blockHash, calculatedHash)) {
-            log.error("区块Hash不一致，存储的:{} 计算的:{}",
-                bytesToHex(blockHash), bytesToHex(calculatedHash));
-            return false;
-        }
-
-        // 验证默克尔根
-        byte[] calculatedMerkleRoot = calculateMerkleRoot(block.getTransactions());
-        if (!Arrays.equals(block.getBlockHeader().getMerkleRoot(), calculatedMerkleRoot)) {
-            log.error("默克尔根不匹配，存储的:{} 计算的:{}",
-                bytesToHex(block.getBlockHeader().getMerkleRoot()),
-                bytesToHex(calculatedMerkleRoot));
-            return false;
-        }
-
-        log.info("区块Hash验证通过");
-        return true;
-    }
-
-    /**
-     * 工作量证明验证
-     */
-    private boolean validateProofOfWork(Block block) {
-        BlockHeader header = block.getBlockHeader();
-
-        // 验证工作量证明
-        if (!header.verifyProofOfWork(false)) {
-            log.error("工作量证明验证失败");
-            return false;
-        }
-
-        // 验证时间戳合理性（不能太超前于当前时间）
-        long currentTime = System.currentTimeMillis() / 1000;
-        if (header.getTime() > currentTime + 7200) { // 允许2小时的未来时间
-            log.error("区块时间戳过于超前: {} vs 当前时间: {}", header.getTime(), currentTime);
-            return false;
-        }
-
-        // 验证时间戳不小于中位时间（如果前区块存在）
-        if (mainTipBlock != null && mainTipBlock.getMedianTime() > 0) {
-            if (header.getTime() < mainTipBlock.getMedianTime()) {
-                log.error("区块时间戳小于前区块的中位时间: {} < {}",
-                    header.getTime(), mainTipBlock.getMedianTime());
-                return false;
-            }
-        }
-
-        log.info("工作量证明验证通过");
-        return true;
-    }
-
-    /**
-     * 区块交易验证
-     */
-    private boolean validateBlockTransactions(Block block) {
-        ParamsConfig.Params params = config.getParams();
-        int coinbaseMaturity = params.getCoinbaseMaturity();
-        List<Transaction> transactions = block.getTransactions();
-        // 用于存储所有非Coinbase交易的总输入/输出（准确计算手续费）
-        long totalNormalTxInput = 0;
-        long totalNormalTxOutput = 0;
-        int coinbaseCount = 0;
-
-        // 用于检测交易重复
-        Set<String> txIdSet = new HashSet<>();
-
-        for (int i = 0; i < transactions.size(); i++) {
-            Transaction tx = transactions.get(i);
-            // 验证交易ID唯一性
-            String txIdHex = bytesToHex(tx.getTxId());
-            if (txIdSet.contains(txIdHex)) {
-                log.error("区块中存在重复的交易ID: {}", txIdHex);
-                return false;
-            }
-            txIdSet.add(txIdHex);
-
-            if (tx.isCoinbase()) {
-                coinbaseCount++;
-
-                // Coinbase 交易验证
-                // 1. 验证只有1个输入
-                if (tx.getInputs().size() != 1) {
-                    log.error("Coinbase交易必须有且仅有一个输入");
-                    return false;
-                }
-
-                // 2. 验证输入的txId为全0且index为0
-                TxInput coinbaseInput = tx.getInputs().getFirst();
-                if (!Arrays.equals(coinbaseInput.getTxId(), new byte[32]) || coinbaseInput.getIndex() != 0) {
-                    log.error("Coinbase交易的输入格式不正确");
-                    return false;
-                }
-
-            } else {
-                // 普通交易验证
-
-                // 1. 为交易准备UTXO视图
-                Map<String, UTXO> utxoMap = getUTXOsByTx(tx);
-                tx.setUtxoMap(utxoMap);
-
-                // 2. 验证交易签名和逻辑
-                if (!tx.validate()) {
-                    log.error("区块中第{}笔交易验证失败", i);
-                    return false;
-                }
-
-                // 3. 检查是否有双花（交易输入是否已被本区块其他交易花费）
-                List<String> spendingKeys = tx.getSpendingUTXOKeyList();
-                if (spendingKeys != null) {
-                    for (String spendingKey : spendingKeys) {
-                        // 检查本区块前面的交易是否已经花费了这个UTXO
-                        for (int j = 0; j < i; j++) {
-                            Transaction prevTx = transactions.get(j);
-                            if (!prevTx.isCoinbase()) {
-                                List<String> prevSpendingKeys = prevTx.getSpendingUTXOKeyList();
-                                if (prevSpendingKeys != null && prevSpendingKeys.contains(spendingKey)) {
-                                    log.error("检测到双花：UTXO {} 被多个交易花费", spendingKey);
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 4. 累加普通交易的输入/输出金额（用于计算总手续费）
-                long singleTxInput = 0;
-                long singleTxOutput = 0;
-                for (TxInput input : tx.getInputs()) {
-                    UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
-                    if (utxo != null) {
-                        // 验证Coinbase UTXO是否成熟
-                        if (utxo.isCoinbase()) {
-                            int height = utxo.getHeight();
-                            int mainHeight = mainTipBlock.getHeight();
-                            // 计算确认数：当前主链高度 - UTXO所在区块高度 + 1
-                            int confirmations = mainHeight - height + 1;
-                            boolean isMature = confirmations > coinbaseMaturity;
-                            if (!isMature) {
-                                log.error("使用了未成熟的Coinbase UTXO，UTXO高度:{}，当前高度:{}，确认数:{}，要求成熟度:{}",
-                                        height, mainHeight, confirmations, coinbaseMaturity);
-                                return false;
-                            }
-                        }
-                        singleTxInput += utxo.getValue();
-                    } else {
-                        log.error("输入引用的UTXO不存在，txId:{}，index:{}",
-                                bytesToHex(input.getTxId()), input.getIndex());
-                        return false;
-                    }
-                }
-
-                for (TxOutput output : tx.getOutputs()) {
-                    singleTxOutput += output.getValue();
-                }
-
-                // 验证单笔交易金额平衡（输入 >= 输出，手续费不能为负）
-                if (singleTxInput < singleTxOutput) {
-                    log.error("普通交易金额不平衡，输入:{}，输出:{}，txId:{}",
-                            singleTxInput, singleTxOutput, txIdHex);
-                    return false;
-                }
-
-                // 累加到全局普通交易输入/输出
-                totalNormalTxInput += singleTxInput;
-                totalNormalTxOutput += singleTxOutput;
-            }
-        }
-
-        // 验证Coinbase交易数量
-        if (coinbaseCount != 1) {
-            log.error("区块中必须有且仅有一笔Coinbase交易，实际数量: {}", coinbaseCount);
-            return false;
-        }
-
-        // 验证Coinbase交易位置（必须是第一个交易）
-        Transaction coinbaseTx = transactions.getFirst();
-        if (!coinbaseTx.isCoinbase()) {
-            log.error("Coinbase交易必须是区块中的第一笔交易");
-            return false;
-        }
-
-        // 1. 重新计算总手续费：所有普通交易的（输入总和 - 输出总和）（核心修复点）
-        long totalFee = totalNormalTxInput - totalNormalTxOutput;
-        if (totalFee < 0) {
-            log.error("总手续费为负数，普通交易输入总和:{}，输出总和:{}", totalNormalTxInput, totalNormalTxOutput);
-            return false;
-        }
-
-        // 2. 计算基础挖矿奖励
-        long coinbaseReward = calculateCoinbaseReward(block.getHeight());
-        // 3. 计算允许的Coinbase最大输出金额（基础奖励 + 总手续费）
-        long expectedCoinbaseOutput = coinbaseReward + totalFee;
-
-        // 4. 计算Coinbase交易的实际输出金额
-        long coinbaseOutputValue = coinbaseTx.getOutputs().stream()
-                .mapToLong(TxOutput::getValue)
-                .sum();
-
-        // 5. 验证Coinbase输出金额（核心修复：使用准确的totalFee计算允许值）
-        if (coinbaseOutputValue > expectedCoinbaseOutput) {
-            log.error("Coinbase输出金额过大，允许值(基础奖励{} + 总手续费{})={}, 实际值:{}",
-                    coinbaseReward, totalFee, expectedCoinbaseOutput, coinbaseOutputValue);
-            return false;
-        }
-
-        if (coinbaseOutputValue < expectedCoinbaseOutput) {
-            log.warn("Coinbase输出金额小于允许值，允许值:{}，实际值:{} (矿工未完全收取手续费)",
-                    expectedCoinbaseOutput, coinbaseOutputValue);
-        }
-
-        log.info("区块交易验证通过，基础挖矿奖励: {}，总手续费: {}，Coinbase实际输出: {}",
-                coinbaseReward, totalFee, coinbaseOutputValue);
-        return true;
-    }
-
-    /**
-     * 计算Coinbase奖励（区块奖励）
-     */
-    private long calculateCoinbaseReward(int blockHeight) {
-        // 初始奖励: 50 BTC = 50 * 100,000,000 satoshi
-        long initialReward = 50L * 100000000;
-        // 每减半周期的区块数
-        int halvingInterval = config.getParams().getSubsidyReductionInterval();
-        // 计算已经发生的减半次数
-        int halvings = blockHeight / halvingInterval;
-        // 最大减半次数（防止整数溢出）
-        if (halvings > 63) {
-            return 0;
-        }
-        // 计算当前奖励
-        return initialReward >> halvings;
-    }
-
-    /**
-     * 处理区块链接关系（主链延续、孤块、分叉） 不处理高度为零的区块
-     */
-    synchronized private boolean handleBlockConnection(Block block) {
-        if (block.getHeight()==0){
-            return false;
-        }else {
-            byte[] previousHash = block.getBlockHeader().getPreviousHash();
-
-            // 检查是否为孤块（父区块不存在）
-            byte[] parentBlockBytes = dataBase.get(TBLOCK_HEADER, previousHash);
-            Block parentBlock = getBlockByHash(previousHash);
-            if (parentBlockBytes == null || parentBlock == null) {
-                log.warn("孤块：父区块不存在，等待父区块到达。父区块Hash: {}",
-                        bytesToHex(previousHash));
+            if (block.getTransactions() == null || block.getTransactions().isEmpty()
+                    || block.getTransactions().size() > ConsensusRules.MAX_BLOCK_TRANSACTIONS
+                    || block.serialize().length > ConsensusRules.MAX_BLOCK_BYTES) return false;
+            // Freeze the caller's mutable object and reject noncanonical wire encodings before committing.
+            block = Block.deserialize(block.serialize());
+            if (!block.getBlockHeader().verifyProofOfWork(false)) return false;
+            if (hasFullBlock(block.getHash())) return true;
+            if (isMissingParentBlock(block)) {
+                if (ConsensusRules.target(block.getBlockHeader().getBits()).compareTo(ConsensusRules.target((int) config.getParams().getPowLimitBits())) > 0) return false;
                 addOrphanBlock(block);
                 return false;
             }
-
-            // 获取父区块工作总量
-            int height = parentBlock.getHeight();
-            UInt256 previousChainWork = parentBlock.getChainWork();
-            UInt256 newBlockChainWork = previousChainWork.add(UInt256.fromBigInteger(block.getBlockHeader().getWork()));
-            block.setChainWork(newBlockChainWork);
-            block.setHeight(height+1);
-
-            // 检查是否为主链的延续
-            if (Arrays.equals(previousHash, mainTipBlock.getHash())) {
-                log.info("是主链的延续，高度:{} -> {}", mainTipBlock.getHeight(), block.getHeight());
-                // 将区块加入到主链
-                addBlockToChain(block, true,true);
-                // 上链成功后，从交易池删除已确认的交易
-                removeConfirmedTxsFromPool(block);
-                // 尝试处理孤块
-                processOrphanBlocks();
-                return true;
-            }
-            // 计算当前主链的链工作量
-            UInt256 mainChainWork = mainTipBlock.getChainWork();
-            log.info("分叉区块 - 新链工作量:{} 主链工作量:{}", newBlockChainWork, mainChainWork);
-            // 比较工作量，决定是否进行重组
-            int i = newBlockChainWork.compareTo(mainChainWork);
-            addBlockToChain(block, false,false);
-            if (i > 0) {
-                log.info("新链工作量更大，执行链重组");
-                // 将区块加入到侧链（不更新UTXO，但存储区块数据）
-                return performChainReorg(block);
-            } else {
-                log.info("新链工作量较小，暂时作为侧链区块");
-                // 将区块加入到侧链（不更新UTXO，但存储区块数据）
-                return true;
+            accepted = new ChainStateStore(dataBase, this::getBlockByHash).accept(block, mainTipBlock, config.getParams());
+        } catch (IllegalArgumentException | NullPointerException malformed) {
+            rejectedBlocks.incrementAndGet();
+            log.debug("Rejected block: {}", malformed.getMessage());
+            return false;
+        } catch (IllegalStateException storageFailure) {
+            stateHealthy = false;
+            log.error("Chain state unavailable; refusing further writes until recovery", storageFailure);
+            return false;
+        }
+        acceptedBlocks.incrementAndGet();
+        if (accepted.mainChanged()) {
+            if (!accepted.disconnected().isEmpty()) reorganizations.incrementAndGet();
+            mainTipBlock = block;
+            TransactionCache.invalidateAll();
+            utxoCache.invalidateAll();
+            // Database commit is complete. Cache/mempool failures must never be described as a rolled-back commit.
+            try {
+                for (Block confirmed : accepted.connected()) removeConfirmedTxsFromPool(confirmed);
+                txPool.revalidate();
+                List<Block> disconnected = new ArrayList<>(accepted.disconnected());
+                Collections.reverse(disconnected);
+                for (Block old : disconnected) for (Transaction tx : old.getTransactions()) {
+                    if (!tx.isCoinbase()) txPool.addTx(tx);
+                }
+            } catch (Exception memoryFailure) {
+                stateHealthy = false;
+                log.error("Block committed but memory reconciliation failed; restart to recover", memoryFailure);
             }
         }
+        try {
+            routingTable.BroadcastResource(0, block.getHash(), block.getHeight(), block.getChainWork());
+        } catch (Exception broadcastFailure) {
+            log.warn("Block committed; broadcast failed: {}", broadcastFailure.getMessage());
+        }
+        processOrphanBlocks();
+        return true;
     }
 
-
-
-
     public Transaction[] getRecentTxByAddress(String address) {
-        Transaction[] txsByAddress = txPool.getTxsByAddress(address);
-        //反向查询地址的交易
-
-
-
-
-        return null;
+        List<Transaction> recent = new ArrayList<>(Arrays.asList(txPool.getTxsByAddress(address)));
+        recent.addAll(getTransactionsByPage(address, 20, null).getData());
+        return recent.stream().limit(100).toArray(Transaction[]::new);
     }
 
     public List<Block> getOrphanBlocks() {
         return orphanBlocks.asMap().values().stream()
-                .flatMap(List::stream)
                 .toList();
     }
 
@@ -1337,96 +443,26 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
 
+    private boolean processingOrphans;
     private void addOrphanBlock(Block block) {
-        if (block == null || block.getBlockHeader() == null) {
-            log.error("添加孤块失败：区块或区块头为空");
-            return;
-        }
-
-        // 获取父区块Hash的十六进制字符串作为缓存key
-        String parentHashHex = bytesToHex(block.getBlockHeader().getPreviousHash());
-        if (parentHashHex.isEmpty()) {
-            log.error("添加孤块失败：父区块Hash为空");
-            return;
-        }
-
-        // 兼容低版本 Caffeine：手动实现 computeIfAbsent 逻辑（线程安全）
-        List<Block> orphanList = orphanBlocks.getIfPresent(parentHashHex);
-        if (orphanList == null) {
-            // 双重检查锁，确保原子性创建空列表
-            synchronized (orphanBlocks) {
-                orphanList = orphanBlocks.getIfPresent(parentHashHex);
-                if (orphanList == null) {
-                    orphanList = new ArrayList<>();
-                    orphanBlocks.put(parentHashHex, orphanList);
-                }
-            }
-        }
-
-        // 向列表中添加孤块（列表本身需保证线程安全，这里用同步块）
-        synchronized (orphanList) {
-            orphanList.add(block);
-        }
+        orphanBlocks.put(bytesToHex(block.getHash()), block);
     }
-
-
-
-    /**
-     * 处理孤块（当有新区块加入主链后，检查是否有孤块可以被处理）
-     */
     private void processOrphanBlocks() {
-        if (mainTipBlock == null) {
-            log.warn("处理孤块失败：主链最新区块为空");
-            return;
-        }
-
-        // 获取主链最新区块Hash的十六进制字符串（作为孤块的父区块key）
-        String tipHashHex = bytesToHex(mainTipBlock.getHash());
-        // 从缓存中获取该key对应的所有孤块
-        List<Block> orphansToProcess = orphanBlocks.getIfPresent(tipHashHex);
-
-        if (orphansToProcess == null || orphansToProcess.isEmpty()) {
-            log.debug("无待处理的孤块（父区块Hash: {}）", tipHashHex);
-            return;
-        }
-
-        log.info("找到{}个待处理的孤块（父区块已上链：{}）", orphansToProcess.size(), tipHashHex);
-
-        // 拷贝列表避免遍历中修改，同时加同步锁
-        List<Block> processList;
-        synchronized (orphansToProcess) {
-            processList = new ArrayList<>(orphansToProcess);
-            orphansToProcess.clear(); // 清空原列表，避免重复处理
-        }
-
-        // 遍历处理每个孤块
-        for (Block orphanBlock : processList) {
-            try {
-                log.info("开始处理孤块，高度: {}, Hash: {}",
-                        orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
-
-                // 验证孤块（验证通过则自动加入主链/侧链）
-                boolean verifyResult = verifyBlock(orphanBlock);
-                if (verifyResult) {
-                    log.info("孤块处理成功，高度: {}, Hash: {}",
-                            orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
-                } else {
-                    log.error("孤块处理失败，高度: {}, Hash: {}",
-                            orphanBlock.getHeight(), bytesToHex(orphanBlock.getHash()));
+        if (processingOrphans) return;
+        processingOrphans = true;
+        try {
+            boolean progressed;
+            do {
+                progressed = false;
+                for (Block orphan : List.copyOf(orphanBlocks.asMap().values())) {
+                    if (!hasFullBlock(orphan.getBlockHeader().getPreviousHash())) continue;
+                    orphanBlocks.invalidate(bytesToHex(orphan.getHash()));
+                    if (verifyBlock(orphan)) progressed = true;
                 }
-            } catch (Exception e) {
-                log.error("处理孤块异常，Hash: {}", bytesToHex(orphanBlock.getHash()), e);
-            }
-        }
-
-        // 如果处理后列表为空，清理缓存key（减少冗余）
-        synchronized (orphansToProcess) {
-            if (orphansToProcess.isEmpty()) {
-                orphanBlocks.invalidate(tipHashHex);
-                log.debug("清理空的孤块缓存key: {}", tipHashHex);
-            }
-        }
+            } while (progressed);
+        } finally { processingOrphans = false; }
     }
+
 
 
     /**
@@ -1465,22 +501,34 @@ public class BlockChainServiceImpl implements BlockChainService{
 
 
     public static Block createGenesisBlock() {
-        Transaction coinbaseTx = createGenesisCoinbaseTransaction();
-        List<Transaction> transactions = new ArrayList<>();
-        transactions.add(coinbaseTx);
-        byte[] merkleRoot = calculateMerkleRoot(transactions);
-        Block genesisBlock = new Block();
-        genesisBlock.setHeight(0); // 创世区块高度为0
-        BlockHeader blockHeader = new BlockHeader(1, new byte[32], merkleRoot, 1754287472, convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16)), 29196);
-        genesisBlock.setBlockHeader(blockHeader);
-        genesisBlock.setTxCount(1);
-        genesisBlock.setTransactions(transactions);
-        genesisBlock.setHash(blockHeader.calculateHash());
-        genesisBlock.setChainWork(UInt256.fromBigInteger(blockHeader.getWork()));
-        return genesisBlock;
+        return createGenesisBlock(ParamsConfig.MainNetParams);
+    }
+
+    public static Block createGenesisBlock(ParamsConfig.Params params) {
+        Transaction coinbase = createGenesisCoinbaseTransaction();
+        coinbase.getInputs().getFirst().setScriptSig(("bitcoin_java/consensus-2/" + params.getName()).getBytes(StandardCharsets.UTF_8));
+        coinbase.getOutputs().getFirst().setValue(0); // No premine to a development wallet.
+        coinbase.getOutputs().getFirst().setScriptPubKey(new byte[20]);
+        coinbase.setTxId(coinbase.calculateTxId());
+        Block genesis = new Block();
+        genesis.setHeight(0);
+        genesis.setTransactions(List.of(coinbase));
+        genesis.setTxCount(1);
+        BlockHeader header = new BlockHeader(1, new byte[32], calculateMerkleRoot(genesis.getTransactions()),
+                1754287472L, (int) params.getPowLimitBits(), 0);
+        header.setNonce(switch (params.getName()) { case "mainnet" -> 6655; case "testnet3" -> 83708; case "regtest" -> 1; default -> throw new IllegalArgumentException("Unknown network"); });
+        if (!header.verifyProofOfWork(false) || !Arrays.equals(header.calculateHash(), params.getGenesisHash())) throw new IllegalStateException("Genesis vector mismatch");
+        genesis.setBlockHeader(header);
+        genesis.setHash(header.calculateHash());
+        genesis.setChainWork(UInt256.fromBigInteger(header.getWork()));
+        return genesis;
     }
 
     public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee) {
+        return createCoinBaseTransaction(minerAddress, blockHeight, fee, ParamsConfig.MainNetParams);
+    }
+
+    public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee, ParamsConfig.Params params) {
         // 获取当前时间毫秒数
         long currentTimeMillis = System.nanoTime();
         byte[] timeBytes = longToLittleEndian(currentTimeMillis);
@@ -1497,6 +545,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         // 对拼接后的数组进行第二次SHA256哈希
         byte[] secondHash = Sha.applyRIPEMD160(combined);
         byte[] extraNonce = Arrays.copyOfRange(secondHash, 0, 16);
+        System.arraycopy(intToLittleEndian(Math.toIntExact(blockHeight)), 0, extraNonce, 0, 4);
         Transaction coinbaseTx = new Transaction();
         TxInput input = new TxInput();
         input.setTxId(new byte[32]); // 全零交易ID
@@ -1510,7 +559,8 @@ public class BlockChainServiceImpl implements BlockChainService{
         TxOutput output = new TxOutput();
         //根据高度计算奖励
         //TODO
-        output.setValue((50L * 100000000)+fee); // 50 BTC in satoshi
+        if (!TransactionValidator.moneyRange(fee)) throw new IllegalArgumentException("Invalid fee");
+        output.setValue(Math.addExact(ConsensusRules.subsidy(Math.toIntExact(blockHeight), params), fee)); // 50 BTC in satoshi
         output.setScriptPubKey(Sha.applyRIPEMD160(Sha.applySHA256(Base58.decode(minerAddress))));
         List<TxOutput> outputs = new ArrayList<>();
         outputs.add(output);
@@ -1610,7 +660,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         long totalFee = 0L;
         for (Transaction transaction : transactions) {
             // 假设Transaction类中有一个getFee()方法返回手续费
-            totalFee += transaction.getFee();
+            totalFee = Math.addExact(totalFee, transaction.getFee());
         }
         return totalFee;
     }
@@ -1802,83 +852,9 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     public Map<String, Object> getUTXOs(String address) {
-        ParamsConfig.Params params = config.getParams();
-        int coinbaseMaturity = params.getCoinbaseMaturity();
-        AtomicLong total = new AtomicLong();
-        ArrayList<UTXO> utxos = new ArrayList<>();
-
-        try {
-            byte[] pubkey = Base58.decode(address);
-            byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
-            log.info("前缀{}", bytesToHex(addr));
-
-            dataBase.iterateByPrefix(ADDR_TO_UTXO, addr, (key, value) -> {
-                try {
-                    // 1. 校验key的基本合法性
-                    byte[] keyBytes = (byte[]) key;
-                    if (keyBytes.length < 20) { // 至少包含20字节地址前缀
-                        log.warn("无效的ADDR_TO_UTXO key，长度不足：{}", keyBytes.length);
-                        return true; // 跳过该记录，继续遍历
-                    }
-
-                    // 2. 提取UTXO key并校验长度（32字节txId + 4字节index = 36字节）
-                    byte[] utxoKey = Arrays.copyOfRange(keyBytes, 20, keyBytes.length);
-                    if (utxoKey.length != 36) {
-                        log.warn("无效的UTXO key长度：{}，预期36字节", utxoKey.length);
-                        return true;
-                    }
-
-                    // 3. 查询TUTXO并校验是否为空
-                    byte[] utxoBytes = dataBase.get(TUTXO, utxoKey);
-                    if (utxoBytes == null) {
-                        log.warn("UTXO key {} 在TUTXO表中无数据，跳过", bytesToHex(utxoKey));
-                        return true;
-                    }
-
-                    // 4. 反序列化UTXO并捕获异常
-                    UTXO deserialize = UTXO.deserialize(utxoBytes);
-                    if (deserialize == null) {
-                        log.warn("UTXO反序列化为null，key：{}", bytesToHex(utxoKey));
-                        return true;
-                    }
-
-                    // 5. 设置UTXO状态（原有逻辑）
-                    long status = 0L;
-                    status = setLifecycleStatus(status, CONFIRMED_UNSPENT);
-                    if (deserialize.isCoinbase()) {
-                        int height = deserialize.getHeight();
-                        int mainHeight = mainTipBlock != null ? mainTipBlock.getHeight() : 0;
-                        int confirmations = mainHeight - height + 1;
-                        boolean isMature = confirmations > coinbaseMaturity;
-                        if (!isMature) {
-                            status = UTXOStatusResolver.setCoinbaseMaturing(status);
-                        } else {
-                            status = UTXOStatusResolver.setCoinbaseMatured(status);
-                        }
-                    }
-                    deserialize.setStatus(status);
-                    utxos.add(deserialize);
-
-                    // 6. 计算金额（原有逻辑）
-                    long amount = ByteBuffer.wrap((byte[]) value).order(ByteOrder.LITTLE_ENDIAN).getLong();
-                    total.addAndGet(amount);
-
-                } catch (IllegalArgumentException e) {
-                    log.error("UTXO反序列化失败，key：{}，异常：{}", bytesToHex((byte[]) key), e.getMessage());
-                } catch (Exception e) {
-                    log.error("处理UTXO记录失败，key：{}", bytesToHex((byte[]) key), e);
-                }
-                return true;
-            });
-        } catch (Exception e) {
-            log.error("查询地址{}的UTXO失败", address, e);
-        }
-
-        return Map.of("total", total.get(), "utxos", utxos);
+        List<UTXO> utxos = utxoCache.getAddressAllUTXO(address);
+        return Map.of("total", utxos.stream().mapToLong(UTXO::getValue).reduce(0L, Math::addExact), "utxos", utxos);
     }
-
-
-
 
     public Block getBlockByHeight(int height) {
         byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);
@@ -1894,108 +870,22 @@ public class BlockChainServiceImpl implements BlockChainService{
      * @return
      */
     public List<Transaction> getTxListByAddres(String address) {
-
-        return null;
+        return getTransactionsByPage(address, 20, null).getData();
     }
 
     //分页获取这个地址下的交易
     public List<Transaction> getTxListByAddres(String address,int pageNum,int pageSize) {
-
-        return null;
+        if (pageNum != 1) throw new IllegalArgumentException("Use cursor pagination for address history");
+        return getTransactionsByPage(address, pageSize, null).getData();
     }
 
 
-
-
-    private static final int DIFFICULTY_ADJUSTMENT_INTERVAL = 20; // 每2016个区块调整一次
-    private static final int TARGET_BLOCK_SPACING_SECONDS = 1 * 60; // 目标出块时间：10分钟
-    private static final long EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL = (long) DIFFICULTY_ADJUSTMENT_INTERVAL * TARGET_BLOCK_SPACING_SECONDS; // 2016个区块的预期总时间
-
-    private static final BigInteger MAX_TARGET = new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16);
 
 
     public int calculateNextBlockDifficulty() {
-        ParamsConfig.Params params = config.getParams();
-
-        // 1. 获取当前链的高度
-        // 假设你有一个方法可以获取当前链的高度
-        int currentHeight = getCurrentChainHeight();
-        if (currentHeight == -1) {
-            log.error("无法获取当前链高度，无法计算难度。");
-            // 返回一个默认的安全难度值
-            return convertTargetToBits(MAX_TARGET);
-        }
-
-        // 2. 检查是否需要调整难度
-        if ((currentHeight + 1) % DIFFICULTY_ADJUSTMENT_INTERVAL != 0) {
-            // 如果不是调整间隔的区块，则难度与上一个区块相同
-            Block lastBlock = getBlockByHeight(currentHeight);
-            if (lastBlock != null) {
-                return lastBlock.getBlockHeader().getBits();
-            }
-            log.warn("无法获取高度为 {} 的区块，返回默认难度。", currentHeight);
-            return convertTargetToBits(MAX_TARGET);
-        }
-
-        log.info("达到难度调整间隔，正在计算新区块难度...");
-
-        // 3. 获取用于计算的两个关键区块：当前最新区块和2016个区块之前的锚定区块
-        Block lastBlock = getBlockByHeight(currentHeight);
-        Block anchorBlock = getBlockByHeight(currentHeight - DIFFICULTY_ADJUSTMENT_INTERVAL + 1);
-
-        if (lastBlock == null || anchorBlock == null) {
-            log.error("获取用于难度调整的区块失败。lastBlock: {}, anchorBlock: {}",
-                    lastBlock != null, anchorBlock != null);
-            // 如果历史数据不完整，无法安全调整，保持当前难度
-            return lastBlock != null ? lastBlock.getBlockHeader().getBits() : convertTargetToBits(MAX_TARGET);
-        }
-
-        // 4. 计算实际耗时
-        long actualTimeSpent = lastBlock.getBlockHeader().getTime() - anchorBlock.getBlockHeader().getTime();
-        log.info("过去 {} 个区块的实际耗时: {} 秒 (目标: {} 秒)",
-                DIFFICULTY_ADJUSTMENT_INTERVAL, actualTimeSpent, EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL);
-
-        // 5. 计算难度调整系数
-        // 使用 BigInteger 进行精确计算
-        BigInteger adjustmentFactor = BigInteger.valueOf(actualTimeSpent);
-        adjustmentFactor = adjustmentFactor.multiply(BigInteger.valueOf(100000000)); // 乘以一个大数以避免浮点数精度问题
-        adjustmentFactor = adjustmentFactor.divide(BigInteger.valueOf(EXPECTED_TIME_FOR_ADJUSTMENT_INTERVAL));
-        // 现在 adjustmentFactor 是一个以 100000000 为基数的定点数
-
-        // 6. 获取当前目标值
-        BigInteger currentTarget = lastBlock.getBlockHeader().getTargetFromBits();
-
-        // 7. 计算新目标值
-        BigInteger newTarget = currentTarget.multiply(adjustmentFactor);
-        newTarget = newTarget.divide(BigInteger.valueOf(100000000)); // 除以基数，得到最终结果
-
-        // 8. 边界检查：确保新目标值不会低于协议允许的最小值（即难度不会无限增大）
-        // 同时也不能高于最大值（即难度不能低于创世区块）
-        if (newTarget.compareTo(MAX_TARGET) > 0) {
-            log.warn("计算出的新目标值过高，已将其限制在最大值: {}", MAX_TARGET.toString(16));
-            newTarget = MAX_TARGET;
-        }
-
-        // 比特币协议还规定了难度调整的最大幅度为4倍（即最多降低到1/4，或增加到4倍）
-
-        BigInteger lowerBound = currentTarget.divide(BigInteger.valueOf(4));
-        BigInteger upperBound = currentTarget.multiply(BigInteger.valueOf(4));
-        if (newTarget.compareTo(lowerBound) < 0) newTarget = lowerBound;
-        if (newTarget.compareTo(upperBound) > 0) newTarget = upperBound;
-
-        // 9. 将新目标值转换为 bits 格式
-        int newBits = convertTargetToBits(newTarget);
-
-        log.info("难度调整完成。旧目标: {} (bits: {}), 新目标: {} (bits: {})",
-                currentTarget.toString(16), lastBlock.getBlockHeader().getBits(),
-                newTarget.toString(16), newBits);
-
-        return newBits;
+        long time = Math.max(System.currentTimeMillis() / 1000, ConsensusRules.medianTime(mainTipBlock, this::getHeaderContext) + 1);
+        return ConsensusRules.expectedBits(mainTipBlock, time, config.getParams(), this::getHeaderContext);
     }
-
-
-
-
 
     private int getCurrentChainHeight() {
         byte[] bytes = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
@@ -2119,8 +1009,10 @@ public class BlockChainServiceImpl implements BlockChainService{
             endHeight = temp;
         }
 
-        // 计算要查询的区块数量
-        int count = startHeight - endHeight + 1;
+        if (startHeight > getCurrentChainHeight()) startHeight = getCurrentChainHeight();
+        int count = (int) Math.min(100L, (long) startHeight - endHeight + 1);
+        if (count <= 0) return List.of();
+        endHeight = Math.max(endHeight, startHeight - count + 1);
 
         // 限制最多100个
         if (count > 100) {
@@ -2129,10 +1021,12 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
 
         List<Block> blocks = new ArrayList<>(count);
-
+        long responseBytes = 0;
         for (int height = startHeight; height >= endHeight; height--) {
             Block block = getBlockByHeight(height);
             if (block != null) {
+                responseBytes += block.getTransactions().stream().mapToLong(TransactionValidator::memoryWeight).sum();
+                if (responseBytes > 16L * 1024 * 1024) throw new IllegalArgumentException("Response budget exceeded; reduce block range");
                 blocks.add(block);
             }
         }
@@ -2148,222 +1042,73 @@ public class BlockChainServiceImpl implements BlockChainService{
      * @return 分页结果
      */
     public List<Transaction> getTransactionsByPage(int pageNum, int pageSize) {
-        if (pageNum < 1) {
-            pageNum = 1;
-        }
-        if (pageSize < 1 || pageSize > 100) {
-            pageSize = 10;
-        }
-
-        int currentHeight = getCurrentChainHeight();
-        List<Transaction> allTransactions = new ArrayList<>();
-
-
-        int blocksNeeded = pageNum * pageSize;
-        int blocksChecked = 0;
-        int totalTransactions = 0;
-
-        for (int height = currentHeight; height >= 0 && blocksChecked < blocksNeeded; height--) {
+        if (pageNum < 1 || pageNum > 100 || pageSize < 1 || pageSize > 100) throw new IllegalArgumentException("Page bounds exceeded");
+        int skip = (pageNum - 1) * pageSize;
+        List<Transaction> result = new ArrayList<>(pageSize);
+        long bytes = 0;
+        for (int height = getCurrentChainHeight(); height >= 0 && result.size() < pageSize; height--) {
             Block block = getBlockByHeight(height);
-            if (block != null) {
-                List<Transaction> blockTxs = block.getTransactions();
-                //将交易状态都设置为已经确认
-                for (Transaction tx : blockTxs) {
-                    tx.setStatus(TransactionStatusResolver.CONFIRMED);
-                    //区块Hash
-                    tx.setHash(block.getHash());
-                    //区块高度
-                    tx.setHeight(block.getHeight());
-                    //区块时间
-                    tx.setTime(block.getBlockHeader().getTime());
-                }
-
-                totalTransactions += blockTxs.size();
-                allTransactions.addAll(blockTxs);
-                blocksChecked++;
+            if (block == null) throw new IllegalStateException("Missing main-chain block");
+            for (Transaction tx : block.getTransactions()) {
+                if (skip-- > 0) continue;
+                tx.setHeight(height); tx.setHash(block.getHash()); tx.setTime(block.getBlockHeader().getTime());
+                tx.setStatus(TransactionStatusResolver.CONFIRMED);
+                bytes += TransactionValidator.memoryWeight(tx);
+                if (bytes > 16L * 1024 * 1024) throw new IllegalArgumentException("Response budget exceeded; reduce page size");
+                result.add(tx);
+                if (result.size() >= pageSize) break;
             }
         }
-        int total = totalTransactions;
-        int totalPages = (total + pageSize - 1) / pageSize;
-        // 分页提取交易
-        int startIndex = (pageNum - 1) * pageSize;
-        int endIndex = Math.min(startIndex + pageSize, allTransactions.size());
-        List<Transaction> pageTransactions = new ArrayList<>();
-        if (startIndex < allTransactions.size()) {
-            pageTransactions = allTransactions.subList(startIndex, endIndex);
-        }
-        return pageTransactions;
+        return result;
     }
-
 
     @Override
     public PageResult<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey) {
-        // 限制pageSize最大值为20，最小值保底为1避免无效值
-        pageSize = Math.max(1, Math.min(pageSize, 20));
-
-        // 获取内存池中的未确认交易
-        //Transaction[] txsByAddress = txPool.getTxsByAddress(address);
-
-        try {
-            // 地址转换：Base58解码 -> 双重哈希得到前缀
-            byte[] pubkey = Base58.decode(address);
-            byte[] addr = Sha.applyRIPEMD160(Sha.applySHA256(pubkey));
-
-            // 处理lastKey：空值转为null，非空则十六进制转字节数组
-            byte[] lastKeyBytes = (lastKey == null || lastKey.isEmpty()) ? null : hexToBytes(lastKey);
-     /*       //lastKeyBytes在前面拼接20字节的addr 重点
-            lastKeyBytes = (lastKeyBytes == null) ? null : Bytes.concat(addr, lastKeyBytes);
-*/
-            // 按前缀分页查询交易ID的复合键
-            PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, addr, pageSize, lastKeyBytes);
-            log.info("按地址[{}]分页查询到{}条交易ID键", address, page.getData().size());
-            byte[] lastKey1 = page.getLastKey();
-            log.info("最后一个键{}",bytesToHex(lastKey1));
-
-
-            List<Object> data = page.getData();
-            if (data.isEmpty()) {
-                return null;
-            }
-
-            // 解析复合键，提取交易ID，并缓存「区块Hash-交易索引-交易ID」映射
-            ArrayList<byte[]> txIdList = new ArrayList<>();
-            // 核心优化：存储「区块HashHex -> 交易索引 -> 交易IDHex」的映射，避免遍历
-            Map<String, Map<Integer, String>> blockTxIndexMap = new HashMap<>();
-            //区块HashHex - > 是否主链
-            Map<String, Boolean> blockIsMainMap = new HashMap<>();
-
-            for (Object o : data) {
-                if (!(o instanceof byte[])) {
-                    log.warn("无效的交易ID键类型：{}", o.getClass().getName());
-                    continue;
-                }
-                byte[] key = (byte[]) o;
-                // 校验复合键长度，避免数组越界
-                if (key.length <= addr.length) {
-                    log.warn("复合键长度异常，前缀长度[{}]，键长度[{}]", addr.length, key.length);
-                    continue;
-                }
-                // 提取纯交易ID（去掉地址前缀）
-                byte[] txId = Arrays.copyOfRange(key, addr.length, key.length);
-                String txIdHex = bytesToHex(txId);
-                log.info("交易ID是{}", txIdHex);
-                txIdList.add(txId);
-
-                // 查询交易对应的区块Hash和在区块中的索引
-                byte[] blockTxIndex = dataBase.get(TX_TO_BLOCK, txId);
-                if (blockTxIndex == null) {
-                    log.warn("交易ID[{}]未找到对应的区块索引信息", txIdHex);
-                    continue;
-                }
-
-                // 解析区块索引信息
-                Map<String, Object> blockIndexMap = Transaction.parseBlockIndex(blockTxIndex);
-                byte[] blockHash = (byte[]) blockIndexMap.get("hash");
-                int txIndexInBlock = (int) blockIndexMap.get("index");
-                String blockHashHex = bytesToHex(blockHash);
-
-                // 缓存：区块Hash -> 交易索引 -> 交易ID
-                blockTxIndexMap.computeIfAbsent(blockHashHex, k -> new HashMap<>())
-                        .put(txIndexInBlock, txIdHex);
-            }
-
-            if (blockTxIndexMap.isEmpty()) {
-                return null;
-            }
-
-
-
-            // 遍历区块，通过索引直接获取交易（核心优化点）
-            ArrayList<Transaction> transactionList = new ArrayList<>();
-            for (Map.Entry<String, Map<Integer, String>> entry : blockTxIndexMap.entrySet()) {
-                String blockHashHex = entry.getKey();
-                Map<Integer, String> txIndexToIdMap = entry.getValue();
-
-                boolean isMainBlock = isMainBlock(blockHashHex);
-
-
-
-                // 查询区块体数据
-                byte[] blockHashBytes = hexToBytes(blockHashHex);
-                //获取区块头
-                BlockHeader blockHeaderByHash = getBlockHeaderByHash(blockHashBytes);
-                if (blockHeaderByHash == null){
-                    log.warn("区块Hash[{}]未找到对应的区块头", blockHashHex);
-                    continue;
-                }
-
-
-                byte[] blockBody = dataBase.get(TBLOCK_BODY, blockHashBytes);
-                if (blockBody == null) {
-                    log.warn("区块Hash[{}]未找到对应的区块数据", blockHashHex);
-                    continue;
-                }
-
-                // 反序列化区块体
-                BlockBody deserialize = BlockBody.deserialize(blockBody);
-                if (deserialize == null || deserialize.getTransactions() == null) {
-                    log.warn("区块[{}]反序列化失败或无交易数据", blockHashHex);
-                    continue;
-                }
-
-
-
-                List<Transaction> blockTxs = deserialize.getTransactions();
-
-                // 关键优化：通过索引直接获取交易，无需遍历所有交易
-                for (Map.Entry<Integer, String> txIndexEntry : txIndexToIdMap.entrySet()) {
-                    int txIndex = txIndexEntry.getKey();
-                    String txIdHex = txIndexEntry.getValue();
-
-                    // 校验索引合法性，避免数组越界
-                    if (txIndex < 0 || txIndex >= blockTxs.size()) {
-                        log.warn("区块[{}]中交易索引[{}]越界，区块交易总数[{}]",
-                                blockHashHex, txIndex, blockTxs.size());
-                        continue;
-                    }
-
-                    // 直接通过索引获取交易
-                    Transaction targetTx = blockTxs.get(txIndex);
-                    // 二次校验交易ID（防止索引对应关系错误）
-                    if (txIdHex.equals(bytesToHex(targetTx.getTxId()))) {
-                        List<TxInput> inputs = targetTx.getInputs();
-                        for (TxInput txInput:inputs){
-                            if (!txInput.isCoinbase() && deserialize.getHeight()!=0){
-                                Transaction txByHash = getTxByHash(txInput.getTxId());
-                                TxOutput txOutput = txByHash.getOutputs().get(txInput.getIndex());
-                                txInput.setOutput(txOutput);
-                            }
-                        }
-                        targetTx.setInputs(inputs);
-                        //设置目标交易的状态
-                        long status = 0;
-                        if (isMainBlock){
-                            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
-                        }else {
-                            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
-                        }
-                        targetTx.setStatus(status);
-                        //区块Hash
-                        targetTx.setHash(blockHashBytes);
-                        //区块高度
-                        targetTx.setHeight(deserialize.getHeight());
-                        //区块时间
-                        targetTx.setTime(blockHeaderByHash.getTime());
-
-                        transactionList.add(targetTx);
-                    } else {
-                        log.warn("区块[{}]索引[{}]的交易ID不匹配，预期[{}]，实际[{}]",
-                                blockHashHex, txIndex, txIdHex, bytesToHex(targetTx.getTxId()));
-                    }
-                }
-            }
-            return new PageResult<>(transactionList, page.getLastKey(), page.isLastPage());
-        } catch (Exception e) {
-            log.error("分页查询地址[{}]的交易失败", address, e);
-            return null;
+        if (pageSize < 1 || pageSize > 20) throw new IllegalArgumentException("Page size must be 1..20");
+        byte[] prefix = addressPrefix(address);
+        byte[] cursor = lastKey == null || lastKey.isBlank() ? null : hexToBytes(lastKey);
+        if (cursor != null && (cursor.length != 52 || !Arrays.equals(prefix, Arrays.copyOf(cursor, 20))))
+            throw new IllegalArgumentException("Invalid address cursor");
+        PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, prefix, pageSize, cursor);
+        List<Transaction> transactions = new ArrayList<>();
+        for (Object value : page.getData()) {
+            byte[] key = (byte[]) value;
+            if (key.length != 52) throw new IllegalStateException("Corrupt address index");
+            Transaction tx = getTxAndQueryInputByHash(Arrays.copyOfRange(key, 20, 52));
+            if (tx == null) throw new IllegalStateException("Missing indexed transaction");
+            transactions.add(tx);
         }
+        return new PageResult<>(transactions, page.getLastKey(), page.isLastPage());
     }
+
+    public static byte[] addressPrefix(String address) {
+        if (address == null || address.length() > 44) throw new IllegalArgumentException("Invalid address");
+        byte[] key = Base58.decode(address);
+        if (key.length != 32) throw new IllegalArgumentException("Address must encode a 32-byte public key");
+        return Sha.applyRIPEMD160(Sha.applySHA256(key));
+    }
+
+    public synchronized Map<String, Object> utxoPage(String address, int limit, String cursor, String expectedTip) {
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("Page size must be 1..100");
+        String tip = bytesToHex(mainTipBlock.getHash());
+        if (expectedTip != null && !expectedTip.equals(tip)) throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "Chain changed; restart pagination");
+        byte[] prefix = addressPrefix(address);
+        byte[] last = cursor == null || cursor.isBlank() ? null : hexToBytes(cursor);
+        if (last != null && (last.length != 56 || !Arrays.equals(prefix, Arrays.copyOf(last, 20)))) throw new IllegalArgumentException("Invalid UTXO cursor");
+        PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_UTXO, prefix, limit, last);
+        List<UTXO> result = new ArrayList<>();
+        for (Object item : page.getData()) {
+            byte[] key = (byte[]) item;
+            if (key.length != 56) throw new IllegalStateException("Corrupt UTXO index");
+            byte[] raw = dataBase.get(TUTXO, Arrays.copyOfRange(key, 20, 56));
+            if (raw == null) throw new IllegalStateException("Missing indexed UTXO");
+            result.add(UTXO.deserialize(raw));
+        }
+        return Map.of("tip", tip, "height", mainTipBlock.getHeight(), "utxos", result,
+                "nextCursor", page.getLastKey() == null ? "" : bytesToHex(page.getLastKey()), "lastPage", page.isLastPage());
+    }
+
 
 
     //区块是否主链
@@ -2671,12 +1416,12 @@ public class BlockChainServiceImpl implements BlockChainService{
      * 辅助方法：创建创世区块（高度0）的默认Landmark
      * 保证无共同祖先时，同步逻辑能从创世区块开始
      */
-    private static Landmark createGenesisLandmark() {
+    private Landmark createGenesisLandmark() {
         Landmark genesisLandmark = new Landmark();
         genesisLandmark.setHeight(0);
         // 创世区块的hash需与项目中createGenesisBlock()生成的hash一致
         // 这里复用原有创世区块创建逻辑的hash，保证准确性
-        Block genesisBlock = BlockChainServiceImpl.createGenesisBlock();
+        Block genesisBlock = BlockChainServiceImpl.createGenesisBlock(config.getParams());
         genesisLandmark.setHash(genesisBlock.getHash());
         log.debug("创建创世区块路标 | 高度: 0 | Hash: {}", bytesToHex(genesisLandmark.getHash()));
         return genesisLandmark;

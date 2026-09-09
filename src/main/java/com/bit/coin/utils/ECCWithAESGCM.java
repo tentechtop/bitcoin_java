@@ -171,7 +171,6 @@ public class ECCWithAESGCM {
         byte[] alicePublicKey = aliceKeys[1];
 
         //打印长度
-        System.out.println("alicePrivateKey长度:"+alicePrivateKey.length);
         System.out.println("alicePublicKey长度:"+alicePublicKey.length);
 
         byte[][] bobKeys = generateCurve25519KeyPair();

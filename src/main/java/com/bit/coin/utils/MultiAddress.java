@@ -1,7 +1,7 @@
 package com.bit.coin.utils;
 
 import lombok.Data;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;

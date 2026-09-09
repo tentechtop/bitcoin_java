@@ -20,7 +20,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -150,6 +150,7 @@ public class RoutingTable {
             buckets.add(createBucketOfId(i));
         }
 
+        if (!config.isNetworkingEnabled()) return;
         // ========== 新增：初始化时恢复路由表节点 ==========
         initPersistScheduler();
         restoreFromDatabase();

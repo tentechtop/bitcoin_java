@@ -1,0 +1,41 @@
+groups:
+  - name: bitcoin-java
+    rules:
+      - alert: NodeUnreachable
+        expr: up{job="bitcoin-java"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Node or authenticated metrics endpoint is unreachable"}
+      - alert: NodeStateUnavailable
+        expr: node_chain_healthy == 0 or node_storage_writable == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations: {summary: "Node cannot safely accept writes; inspect storage and recovery logs"}
+      - alert: NodeStorageCommitFailure
+        expr: increase(node_storage_failures_total[5m]) > 0
+        labels: {severity: critical}
+        annotations: {summary: "A durable write failed"}
+      - alert: NodeStorageLow
+        expr: node_storage_free_bytes < 2147483648
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Less than 2 GiB remains on the chain data volume"}
+      - alert: NodeSyncLag
+        expr: node_sync_lag > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Node remains behind connected peers"}
+      - alert: NodeDisconnected
+        expr: node_p2p_connections == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "No connected peers; disable this rule for intentional isolated nodes"}
+      - alert: NodeMemoryPressure
+        expr: node_mempool_memory_bytes > 57042534 or node_p2p_inflight_bytes > 85563801 or node_p2p_queue_bytes > 57042534
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Bounded queues are near their capacity"}
+      - alert: NodeReorganization
+        expr: increase(node_chain_reorganizations_total[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "A competing chain replaced confirmed blocks; inspect depth and peers"}

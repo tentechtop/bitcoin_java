@@ -166,6 +166,7 @@ public class UTXO {
         dis.readFully(heightBytes);
         utxo.setHeight(com.bit.coin.utils.SerializeUtils.littleEndianToInt(heightBytes));
         long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
+        if (scriptPubKeyLength < 1 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES || scriptPubKeyLength > dis.available()) throw new IOException("Invalid UTXO script length");
         if (scriptPubKeyLength > 0) {
             byte[] scriptSig = new byte[(int) scriptPubKeyLength];
             dis.readFully(scriptSig);
@@ -187,10 +188,11 @@ public class UTXO {
             ByteArrayInputStream bais = new ByteArrayInputStream(data);
             DataInputStream dis = new DataInputStream(bais);
             UTXO utxo = deserialize(dis);
+            if (dis.available() != 0) throw new IOException("Trailing UTXO data");
             dis.close();
             return utxo;
         }catch (Exception e){
-            return null;
+            throw new IllegalStateException("Corrupt UTXO record", e);
         }
     }
 

@@ -1,6 +1,8 @@
 package com.bit.coin;
 
 import org.bitcoinj.core.*;
+import org.bitcoinj.base.*;
+import org.bitcoinj.crypto.ECKey;
 import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.script.Script;
@@ -25,7 +27,7 @@ public class P2SHScriptExample {
 
         for (int i = 0; i < keys.size(); i++) {
             System.out.println("私钥" + (i + 1) + "(WIF): " + keys.get(i).getPrivateKeyAsWiF(params));
-            System.out.println("公钥" + (i + 1) + "(HEX): " + Utils.HEX.encode(keys.get(i).getPubKey()));
+            System.out.println("公钥" + (i + 1) + "(HEX): " + java.util.HexFormat.of().formatHex(keys.get(i).getPubKey()));
         }
 
         // 2. 创建多重签名赎回脚本 (redeem script)
@@ -33,18 +35,18 @@ public class P2SHScriptExample {
         Script redeemScript = ScriptBuilder.createMultiSigOutputScript(2, keys);
 
         System.out.println("\n=== 赎回脚本 (redeemScript) ===");
-        System.out.println("脚本字节: " + Utils.HEX.encode(redeemScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(redeemScript.getProgram()));
         System.out.println("脚本反汇编: " + redeemScript);
 
         // 3. 创建P2SH锁定脚本 [6](@ref)
         // P2SH锁定脚本格式: OP_HASH160 <redeemScriptHash> OP_EQUAL
         Script lockingScript = ScriptBuilder.createP2SHOutputScript(redeemScript);
         Address p2shAddress = LegacyAddress.fromScriptHash(params,
-                Utils.sha256hash160(redeemScript.getProgram()));
+                org.bitcoinj.crypto.internal.CryptoUtils.sha256hash160(redeemScript.getProgram()));
 
         System.out.println("\n=== P2SH锁定脚本 (scriptPubKey) ===");
         System.out.println("P2SH地址: " + p2shAddress);
-        System.out.println("脚本字节: " + Utils.HEX.encode(lockingScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(lockingScript.getProgram()));
         System.out.println("脚本反汇编: " + lockingScript);
 
         // 4. 创建模拟的UTXO
@@ -83,7 +85,7 @@ public class P2SHScriptExample {
                 ECKey.ECDSASignature ecdsaSig = keys.get(i).sign(sigHash);
                 TransactionSignature txSig = new TransactionSignature(ecdsaSig, Transaction.SigHash.ALL, false);
                 signatures.add(txSig);
-                System.out.println("签名" + (i + 1) + ": " + Utils.HEX.encode(txSig.encodeToBitcoin()));
+                System.out.println("签名" + (i + 1) + ": " + java.util.HexFormat.of().formatHex(txSig.encodeToBitcoin()));
             }
 
             // 8. 创建P2SH解锁脚本 [6](@ref)
@@ -91,11 +93,12 @@ public class P2SHScriptExample {
             Script unlockingScript = ScriptBuilder.createP2SHMultiSigInputScript(signatures, redeemScript);
 
             System.out.println("\n=== P2SH解锁脚本 (scriptSig) ===");
-            System.out.println("脚本字节: " + Utils.HEX.encode(unlockingScript.getProgram()));
+            System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(unlockingScript.getProgram()));
             System.out.println("脚本反汇编: " + unlockingScript);
 
             // 9. 设置输入的解锁脚本
-            input.setScriptSig(unlockingScript);
+            input = input.withScriptSig(unlockingScript);
+        spendingTx.replaceInput(0, input);
 
             // 10. 验证交易
             System.out.println("\n=== P2SH脚本执行测试 ===");
@@ -130,10 +133,10 @@ public class P2SHScriptExample {
 
             // 验证赎回脚本哈希匹配
             byte[] extractedHash = ScriptPattern.extractHashFromP2SH(lockingScript);
-            byte[] expectedHash = Utils.sha256hash160(redeemScript.getProgram());
+            byte[] expectedHash = org.bitcoinj.crypto.internal.CryptoUtils.sha256hash160(redeemScript.getProgram());
 
-            System.out.println("提取的哈希: " + Utils.HEX.encode(extractedHash));
-            System.out.println("预期的哈希: " + Utils.HEX.encode(expectedHash));
+            System.out.println("提取的哈希: " + java.util.HexFormat.of().formatHex(extractedHash));
+            System.out.println("预期的哈希: " + java.util.HexFormat.of().formatHex(expectedHash));
 
             if (!Arrays.equals(expectedHash, extractedHash)) {
                 System.err.println("赎回脚本哈希不匹配");
@@ -167,7 +170,7 @@ public class P2SHScriptExample {
         Script redeemScript = ScriptBuilder.createMultiSigOutputScript(2, keys);
         Script p2shScript = ScriptBuilder.createP2SHOutputScript(redeemScript);
         Address p2shAddress = LegacyAddress.fromScriptHash(params,
-                Utils.sha256hash160(redeemScript.getProgram()));
+                org.bitcoinj.crypto.internal.CryptoUtils.sha256hash160(redeemScript.getProgram()));
 
         System.out.println("=== P2SH地址信息 ===");
         System.out.println("P2SH地址: " + p2shAddress);

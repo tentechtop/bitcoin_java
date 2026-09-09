@@ -26,6 +26,8 @@ public class SmartUpdateService {
     private static final long TIP_SCAN_INTERVAL_SECONDS = 2L;
 
     private final RoutingTable routingTable;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.bit.coin.config.SystemConfig systemConfig;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "smart-update-announcer");
         thread.setDaemon(true);
@@ -41,6 +43,7 @@ public class SmartUpdateService {
 
     @PostConstruct
     public void start() {
+        if (!systemConfig.isNetworkingEnabled()) return;
         executor.scheduleWithFixedDelay(
                 this::announceTipChangeSafely,
                 INITIAL_DELAY_SECONDS,

@@ -2,6 +2,8 @@ package com.bit.coin.api;
 
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.core.*;
+import org.bitcoinj.base.*;
+import org.bitcoinj.crypto.ECKey;
 import org.bitcoinj.crypto.TransactionSignature;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.script.Script;
@@ -14,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 
 @Slf4j
+@org.springframework.context.annotation.Profile("dev & !prod")
 @RestController
 @RequestMapping("/mock")
 public class MockApi {
@@ -24,8 +27,7 @@ public class MockApi {
 
         // 1. 创建密钥对
         ECKey key = new ECKey();
-        System.out.println("私钥(WIF): " + key.getPrivateKeyAsWiF(params));
-        System.out.println("公钥(HEX): " + Utils.HEX.encode(key.getPubKey()));
+        System.out.println("公钥(HEX): " + java.util.HexFormat.of().formatHex(key.getPubKey()));
 
         // 2. 创建P2PKH锁定脚本
         Address address = LegacyAddress.fromKey(params, key);
@@ -34,7 +36,7 @@ public class MockApi {
 
         System.out.println("\n=== 锁定脚本 (scriptPubKey) ===");
         System.out.println("地址: " + address);
-        System.out.println("脚本字节: " + Utils.HEX.encode(lockingScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(lockingScript.getProgram()));
         System.out.println("脚本反汇编: " + lockingScript);
 
         // 3. 创建模拟的UTXO（前一笔交易的输出）
@@ -94,13 +96,14 @@ public class MockApi {
                 .build();
 
         System.out.println("\n=== 解锁脚本 (scriptSig) ===");
-        System.out.println("脚本字节: " + Utils.HEX.encode(unlockingScript.getProgram()));
+        System.out.println("脚本字节: " + java.util.HexFormat.of().formatHex(unlockingScript.getProgram()));
         System.out.println("脚本反汇编: " + unlockingScript);
-        System.out.println("签名: " + Utils.HEX.encode(txSig.encodeToBitcoin()));
-        System.out.println("公钥: " + Utils.HEX.encode(key.getPubKey()));
+        System.out.println("签名: " + java.util.HexFormat.of().formatHex(txSig.encodeToBitcoin()));
+        System.out.println("公钥: " + java.util.HexFormat.of().formatHex(key.getPubKey()));
 
         // 8. 设置输入的解锁脚本
-        input.setScriptSig(unlockingScript);
+        input = input.withScriptSig(unlockingScript);
+        spendingTx.replaceInput(0, input);
 
         Sha256Hash txId = spendingTx.getTxId();
         System.out.println("交易ID"+txId);

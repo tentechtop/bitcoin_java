@@ -3,7 +3,7 @@ package com.bit.coin.structure.script;
 import com.bit.coin.utils.Sha;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.bitcoinj.core.Base58;
+import org.bitcoinj.base.Base58;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -101,10 +101,21 @@ public class Script {
     /**
      * 从字节数组指定位置反序列化
      */
+    public static Script deserializeProgram(byte[] bytes) throws IOException {
+        return parse(bytes, 0, bytes.length, false);
+    }
+
     public static Script deserialize(byte[] bytes, int offset, int length) throws IOException {
+        return parse(bytes, offset, length, true);
+    }
+
+    private static Script parse(byte[] bytes, int offset, int length, boolean legacyEncoding) throws IOException {
+        if (bytes == null || offset < 0 || length < 0 || length > 10000 || offset > bytes.length - length) {
+            throw new IOException("Invalid script bounds");
+        }
         //如果固定只有97长度 先尝试翻译成P2PKH解锁脚本
         //如果是创世 输入
-        if (length == 97) {
+        if (legacyEncoding && length == 97) {
             Script script = new Script();
             ByteBuffer buffer = ByteBuffer.wrap(bytes, offset, length)
                     .order(ByteOrder.LITTLE_ENDIAN);
@@ -149,7 +160,7 @@ public class Script {
         }
 
         // 如果固定为20字节，解释为P2PKH锁定脚本（公钥哈希）
-        if (length == 20) {
+        if (legacyEncoding && length == 20) {
             // 复制20字节的公钥哈希（避免原数组被修改）
             byte[] pubKeyHash = new byte[20];
             System.arraycopy(bytes, offset, pubKeyHash, 0, 20);
@@ -167,7 +178,7 @@ public class Script {
 
 
         //如果长度是16 则是coinbase的锁定脚本
-        if (length == 16) {
+        if (legacyEncoding && length == 16) {
             Script coinbaseScript = new Script();
             // 复制16字节的coinbase数据（避免原数组引用被修改）
             byte[] coinbaseData = new byte[16];
@@ -183,7 +194,7 @@ public class Script {
             return coinbaseScript;
         }
 
-        if (length == 69){
+        if (legacyEncoding && length == 69){
             Script coinbaseScript = new Script();
             // 复制16字节的coinbase数据（避免原数组引用被修改）
             byte[] coinbaseData = new byte[16];
@@ -218,6 +229,7 @@ public class Script {
             } else if (opCode == OP_PUSHDATA1) {
                 if (buffer.remaining() >= 1) {
                     int dataLength = buffer.get() & 0xFF;
+                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
@@ -231,6 +243,7 @@ public class Script {
             } else if (opCode == OP_PUSHDATA2) {
                 if (buffer.remaining() >= 2) {
                     int dataLength = Short.toUnsignedInt(buffer.getShort());
+                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
@@ -247,6 +260,7 @@ public class Script {
                     if (dataLength < 0) {
                         throw new IOException("数据长度无效: " + dataLength);
                     }
+                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
