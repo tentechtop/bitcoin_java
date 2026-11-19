@@ -31,7 +31,7 @@ public class P2PNodeStatusHandle implements ProtocolHandler.VoidProtocolHandler 
 
             String peerId = bytesToHex(requestParams.getSenderId());
             routingTable.updateLatest(peerId, bytesToHex(status.tipHash()), status.height(), status.chainWork());
-            smartSyncTrigger.triggerIfRemoteAhead(status.height(), "node-status");
+            smartSyncTrigger.triggerIfRemoteAhead(status.chainWork(), "node-status");
 
             log.debug("Received node status: peer={}, height={}, reason={}",
                     peerId, status.height(), status.reason());

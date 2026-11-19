@@ -1449,18 +1449,9 @@ public class RoutingTable {
     }
 
     public void updateLatest(String peerId, String hashHex, int height, UInt256 chainWork) {
-        //获取节点并更新
         Peer peer = getNodeByHexId(peerId);
-        if (peer!=null){
-            //如果当前高度大于过去记录的高度就更新
-            UInt256 safeChainWork = chainWork == null ? UInt256.ZERO : chainWork;
-            boolean higherWorkAtSameHeight = height == peer.getHeight()
-                    && safeChainWork.compareTo(peer.getChainWork() == null ? UInt256.ZERO : peer.getChainWork()) > 0;
-            if (height>peer.getHeight() || higherWorkAtSameHeight){
-                peer.setHashHex(hashHex);
-                peer.setHeight(height);
-                peer.setChainWork(safeChainWork);
-            }
+        if (peer != null && chainWork != null) {
+            peer.updateChainTip(new Peer.ChainTip(hashHex, height, chainWork));
             addPeer(peer);
         }
     }

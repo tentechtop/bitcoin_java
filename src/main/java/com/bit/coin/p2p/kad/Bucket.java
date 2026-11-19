@@ -78,15 +78,9 @@ public class Bucket {
                 exist.setSoftwareVersion(peer.getSoftwareVersion());
                 //lastSeen
                 exist.setLastSeen(peer.getLastSeen());
-                //hashHex
-                exist.setHashHex(peer.getHashHex());
-                log.debug("路由表最新Hash: {}",peer.getHashHex());
-                //height
-                exist.setHeight(peer.getHeight());
-                log.debug("路由表最新高度: {}",peer.getHeight());
-                //工作总量
-                exist.setChainWork(peer.getChainWork());
-                log.debug("工作总量: {}",peer.getChainWork().toString());
+                if (exist != peer) {
+                    exist.setChainTip(peer.chainTip());
+                }
             }else {
                 nodeMap.put(peerId, peer);
             }
@@ -160,14 +154,9 @@ public class Bucket {
             exist.setSoftwareVersion(peer.getSoftwareVersion());
             //lastSeen
             exist.setLastSeen(peer.getLastSeen());
-            //hashHex
-            exist.setHashHex(peer.getHashHex());
-            log.debug("路由表最新Hash: {}",peer.getHashHex());
-            //height
-            exist.setHeight(peer.getHeight());
-            log.debug("路由表最新高度: {}",peer.getHeight());
-            //工作总量
-            exist.setChainWork(peer.getChainWork());
+            if (exist != peer) {
+                exist.setChainTip(peer.chainTip());
+            }
 
         }else {
             nodeMap.put(peerId, peer);

@@ -86,16 +86,10 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
             return true;
         }
 
-        int localHeight = smartSyncTrigger.getLocalHeight();
-        if (resource.getHeight() > localHeight + 1) {
-            smartSyncTrigger.triggerIfRemoteAhead(resource.getHeight(), "block-announcement");
-            return false;
+        if (senderId != null) {
+            smartSyncTrigger.triggerIfRemoteAhead(resource.getChainWork(), "block-announcement");
         }
-
-        if (resource.getHeight() > localHeight) {
-            smartSyncTrigger.triggerIfRemoteAhead(resource.getHeight(), "block-announcement");
-        }
-        return true;
+        return resource.getHeight() <= (long) smartSyncTrigger.getLocalHeight() + 1;
     }
 
     private boolean shouldRequestTransaction(BroadcastResource resource) {

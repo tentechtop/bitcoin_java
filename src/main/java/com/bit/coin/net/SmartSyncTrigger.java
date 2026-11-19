@@ -1,9 +1,9 @@
 package com.bit.coin.net;
 
+import com.bit.coin.utils.UInt256;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.*;
 import java.util.function.LongSupplier;
 
@@ -13,9 +13,9 @@ public class SmartSyncTrigger {
     private static final long AUTO_SYNC_DEBOUNCE_MILLIS = 5_000L;
 
     private final NetService netService;
-    private final AtomicLong lastAutoSyncAtMillis = new AtomicLong(0L);
     private final LongSupplier clock;
-    private int pendingHeight;
+    private long lastAutoSyncAtMillis;
+    private UInt256 pendingWork = UInt256.ZERO;
     private long pendingUntil;
     @org.springframework.beans.factory.annotation.Autowired private com.bit.coin.config.SystemConfig systemConfig;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -40,35 +40,38 @@ public class SmartSyncTrigger {
 
     @jakarta.annotation.PreDestroy void stop() { executor.shutdownNow(); }
 
-    public synchronized boolean triggerIfRemoteAhead(int remoteHeight, String reason) {
-        int localHeight = netService.getCurrentLocalHeight();
-        if (remoteHeight <= localHeight) {
+    public synchronized boolean triggerIfRemoteAhead(UInt256 remoteWork, String reason) {
+        if (remoteWork == null || remoteWork.compareTo(netService.getCurrentLocalChainWork()) <= 0) {
             return false;
         }
-        pendingHeight = Math.max(pendingHeight, remoteHeight);
-        pendingUntil = clock.getAsLong() + 60_000;
+        long now = clock.getAsLong();
+        if (now > pendingUntil || remoteWork.compareTo(pendingWork) >= 0) {
+            pendingWork = remoteWork;
+            pendingUntil = now + 60_000;
+        }
         return tryPending(reason);
     }
 
     synchronized void checkPending() { tryPending("deferred-announcement"); }
 
     private boolean tryPending(String reason) {
+        if (pendingWork.equals(UInt256.ZERO)) return false;
         long now = clock.getAsLong();
-        int localHeight = netService.getCurrentLocalHeight();
-        if (pendingHeight <= localHeight || now > pendingUntil) { pendingHeight = 0; return false; }
+        UInt256 localWork = netService.getCurrentLocalChainWork();
+        if (now > pendingUntil || pendingWork.compareTo(localWork) <= 0) {
+            pendingWork = UInt256.ZERO;
+            return false;
+        }
         SyncProgress current = netService.getSyncProgress();
         if (current != null && current.running()) return false;
-        long last = lastAutoSyncAtMillis.get();
-        if (now - last < AUTO_SYNC_DEBOUNCE_MILLIS) {
+        if (now - lastAutoSyncAtMillis < AUTO_SYNC_DEBOUNCE_MILLIS) {
             return false;
         }
-        if (!lastAutoSyncAtMillis.compareAndSet(last, now)) {
-            return false;
-        }
+        lastAutoSyncAtMillis = now;
 
         SyncProgress progress = netService.startSyncBlockHeadersFirst();
-        log.info("Trigger headers-first sync: reason={}, remoteHeight={}, localHeight={}, status={}, message={}",
-                reason, pendingHeight, localHeight, progress.status(), progress.message());
+        log.info("Trigger headers-first sync: reason={}, remoteWork={}, localWork={}, status={}, message={}",
+                reason, pendingWork, localWork, progress.status(), progress.message());
         return true;
     }
 

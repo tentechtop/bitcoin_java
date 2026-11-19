@@ -21,10 +21,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
-import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
@@ -62,8 +63,12 @@ public class NetServiceImpl implements NetService {
     private static final int BLOCK_FETCH_TIMEOUT_SECONDS = 15;
     private static final int BLOCK_FETCH_RETRY_TIMES = 2;
     private static final int RECENT_ERROR_LIMIT = 20;
+    private static final Comparator<SyncPeer> SYNC_PEER_ORDER = Comparator
+            .comparing((SyncPeer candidate) -> candidate.tip().chainWork())
+            .thenComparingInt(candidate -> candidate.tip().height())
+            .thenComparingLong(SyncPeer::lastSeen).reversed();
 
-    private static final ExecutorService SYNC_EXECUTOR = new ThreadPoolExecutor(
+    private final ExecutorService syncExecutor = new ThreadPoolExecutor(
             Math.max(4, Runtime.getRuntime().availableProcessors() * 2),
             Math.max(8, Runtime.getRuntime().availableProcessors() * 4),
             60L,
@@ -142,17 +147,13 @@ public class NetServiceImpl implements NetService {
 
         resetProgress();
         syncMode.set(headersFirst ? "HEADERS_FIRST" : "FULL_BLOCKS");
-        currentSyncTask = SYNC_EXECUTOR.submit(() -> runSyncSafely(headersFirst));
+        currentSyncTask = syncExecutor.submit(() -> runSyncSafely(headersFirst));
         return getSyncProgress();
     }
 
     private void runSyncSafely(boolean headersFirst) {
         try {
-            if (headersFirst) {
-                runHeadersFirstSync();
-            } else {
-                runSync();
-            }
+            runSync(headersFirst);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             markFailed("Sync interrupted", e);
@@ -167,132 +168,87 @@ public class NetServiceImpl implements NetService {
         }
     }
 
-    private void runSync() throws Exception {
+    private void runSync(boolean headersFirst) throws Exception {
         setStage("STARTING", "Scanning local chain and connected peers");
 
         int currentLocalHeight = getCurrentLocalHeight();
-        int bestNetworkHeight = getBestNetworkHeight();
         List<Peer> connectedPeers = getConnectedPeers();
         refreshPeerStates(connectedPeers);
 
         localHeightAtStart.set(currentLocalHeight);
         localHeight.set(currentLocalHeight);
-        networkHeight.set(bestNetworkHeight);
-        targetHeight.set(bestNetworkHeight);
+        networkHeight.set(connectedPeers.stream().mapToInt(Peer::getHeight).max().orElse(currentLocalHeight));
         connectedPeerCount.set(connectedPeers.size());
-        updateBestPeerFields();
 
-        if (bestNetworkHeight <= currentLocalHeight) {
-            totalBlocks.set(0);
-            verifiedBlocks.set(0);
-            setStage("COMPLETED", "Local chain is already at the best known height");
+        Map<Peer.ChainTip, List<Peer>> targets = selectSyncTargets(connectedPeers, getCurrentLocalChainWork());
+        if (targets.isEmpty()) {
+            targetHeight.set(currentLocalHeight);
+            setStage("COMPLETED", "No connected peer advertises more cumulative work");
             return;
         }
 
-        if (connectedPeers.isEmpty()) {
-            throw new IllegalStateException("No connected peers are available");
+        Exception lastFailure = null;
+        for (var entry : targets.entrySet()) {
+            Peer.ChainTip target = entry.getKey();
+            UInt256 localWork = getCurrentLocalChainWork();
+            if (target.chainWork().compareTo(localWork) <= 0) break;
+            try {
+                syncTarget(entry.getValue(), target, localWork, headersFirst);
+                lastFailure = null;
+                break;
+            } catch (InterruptedException e) {
+                throw e;
+            } catch (Exception e) {
+                lastFailure = e;
+                addRecentError("Sync target " + target.hashHex() + " failed: " + e.getMessage());
+            }
         }
-
-        List<Peer> syncPeers = selectOptimalPeers(connectedPeers, currentLocalHeight + 1, bestNetworkHeight);
-        syncPeerCount.set(syncPeers.size());
-        if (syncPeers.isEmpty()) {
-            throw new IllegalStateException("No connected peer can serve the required block range");
-        }
-
-        setStage("LOCATING_COMMON_ANCESTOR", "Locating common ancestor");
-        Landmark commonAncestor = queryCommonAncestor(syncPeers, currentLocalHeight);
-        if (commonAncestor == null) {
-            throw new IllegalStateException("Unable to locate common ancestor from connected peers");
-        }
-
-        commonAncestorHeight.set(commonAncestor.getHeight());
-        int firstHeight = commonAncestor.getHeight() + 1;
-        int blocksToSync = bestNetworkHeight - firstHeight + 1;
-        startHeight.set(firstHeight);
-        totalBlocks.set(Math.max(0, blocksToSync));
-
-        if (blocksToSync <= 0) {
-            setStage("COMPLETED", "No blocks need to be synchronized");
-            return;
-        }
-
-        log.info("Start block sync: localHeight={}, networkHeight={}, commonAncestor={}, range=[{}, {}], peers={}",
-                currentLocalHeight, bestNetworkHeight, commonAncestor.getHeight(), firstHeight, bestNetworkHeight,
-                syncPeers.size());
-
-        setStage("DOWNLOADING", "Downloading blocks");
-        syncBlocks(syncPeers, firstHeight, bestNetworkHeight);
         localHeight.set(getCurrentLocalHeight());
-        setStage("COMPLETED", "Block sync completed");
+        if (lastFailure != null) throw lastFailure;
+        setStage("COMPLETED", headersFirst ? "Headers-first block sync completed" : "Block sync completed");
     }
 
-    private void runHeadersFirstSync() throws Exception {
-        setStage("STARTING", "Scanning local chain and connected peers");
-
-        int currentLocalHeight = getCurrentLocalHeight();
-        int bestNetworkHeight = getBestNetworkHeight();
-        List<Peer> connectedPeers = getConnectedPeers();
-        refreshPeerStates(connectedPeers);
-
-        localHeightAtStart.set(currentLocalHeight);
-        localHeight.set(currentLocalHeight);
-        networkHeight.set(bestNetworkHeight);
-        targetHeight.set(bestNetworkHeight);
-        connectedPeerCount.set(connectedPeers.size());
-        updateBestPeerFields();
-
-        if (bestNetworkHeight <= currentLocalHeight) {
-            totalBlocks.set(0);
-            totalHeaders.set(0);
-            verifiedBlocks.set(0);
-            verifiedHeaders.set(0);
-            setStage("COMPLETED", "Local chain is already at the best known height");
-            return;
-        }
-
-        if (connectedPeers.isEmpty()) {
-            throw new IllegalStateException("No connected peers are available");
-        }
-
-        List<Peer> syncPeers = selectOptimalPeers(connectedPeers, currentLocalHeight + 1, bestNetworkHeight);
+    private void syncTarget(List<Peer> syncPeers, Peer.ChainTip target, UInt256 localWork, boolean headersFirst)
+            throws Exception {
+        resetDownloadProgress();
+        targetHeight.set(target.height());
         syncPeerCount.set(syncPeers.size());
-        if (syncPeers.isEmpty()) {
-            throw new IllegalStateException("No connected peer can serve the required block range");
-        }
-
         setStage("LOCATING_COMMON_ANCESTOR", "Locating common ancestor");
-        Landmark commonAncestor = queryCommonAncestor(syncPeers, currentLocalHeight);
+        Landmark commonAncestor = queryCommonAncestor(syncPeers, target.height() - 1);
         if (commonAncestor == null) {
-            throw new IllegalStateException("Unable to locate common ancestor from connected peers");
+            throw new IllegalStateException("Unable to locate common ancestor for target " + target.hashHex());
         }
 
         commonAncestorHeight.set(commonAncestor.getHeight());
         int firstHeight = commonAncestor.getHeight() + 1;
-        int blocksToSync = bestNetworkHeight - firstHeight + 1;
+        int blocksToSync = target.height() - commonAncestor.getHeight();
         startHeight.set(firstHeight);
-        totalBlocks.set(Math.max(0, blocksToSync));
-        totalHeaders.set(Math.max(0, blocksToSync));
-
-        if (blocksToSync <= 0) {
-            setStage("COMPLETED", "No blocks need to be synchronized");
-            return;
-        }
-
-        log.info("Start headers-first sync: localHeight={}, networkHeight={}, commonAncestor={}, range=[{}, {}], peers={}",
-                currentLocalHeight, bestNetworkHeight, commonAncestor.getHeight(), firstHeight, bestNetworkHeight,
+        totalBlocks.set(blocksToSync);
+        log.info("Start block sync: mode={}, localHeight={}, targetHeight={}, targetWork={}, commonAncestor={}, peers={}",
+                syncMode.get(), getCurrentLocalHeight(), target.height(), target.chainWork(), commonAncestor.getHeight(),
                 syncPeers.size());
 
-        setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
-        List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, firstHeight, bestNetworkHeight);
-        if (headerChain.size() != blocksToSync) {
-            throw new IllegalStateException("Header chain is incomplete: expected=" + blocksToSync
-                    + ", actual=" + headerChain.size());
+        if (headersFirst) {
+            totalHeaders.set(blocksToSync);
+            setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
+            List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, firstHeight, target.height());
+            HeaderSyncRecord last = headerChain.getLast();
+            if (!target.hashHex().equals(bytesToHex(last.hash()))) {
+                throw new IllegalStateException("Verified headers do not reach the advertised tip");
+            }
+            if (last.chainWork().compareTo(localWork) <= 0) {
+                throw new IllegalStateException("Verified headers do not exceed local cumulative work");
+            }
+            if (last.chainWork().compareTo(getCurrentLocalChainWork()) <= 0) return;
+            setStage("DOWNLOADING", "Downloading blocks for verified headers");
+            syncBlocksByHeaders(syncPeers, headerChain);
+        } else {
+            setStage("DOWNLOADING", "Downloading blocks");
+            byte[] tipHash = syncBlocks(syncPeers, commonAncestor, target);
+            if (blockChainService.getChainWorkByHash(tipHash).compareTo(localWork) <= 0) {
+                throw new IllegalStateException("Verified blocks do not exceed local cumulative work");
+            }
         }
-
-        setStage("DOWNLOADING", "Downloading blocks for verified headers");
-        syncBlocksByHeaders(syncPeers, headerChain);
-        localHeight.set(getCurrentLocalHeight());
-        setStage("COMPLETED", "Headers-first block sync completed");
     }
 
     private List<HeaderSyncRecord> syncHeaders(
@@ -372,17 +328,12 @@ public class NetServiceImpl implements NetService {
             int startHeight,
             int lastHeight
     ) {
-        List<Peer> candidates = candidatesForHeight(syncPeers, startHeight);
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
-
         int stopHeight = Math.min(lastHeight, startHeight + MAX_HEADERS_PER_REQUEST - 1);
-        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), syncPeers.size());
 
         for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
-            for (int i = 0; i < candidates.size(); i++) {
-                Peer peer = candidates.get((startIndex + i) % candidates.size());
+            for (int i = 0; i < syncPeers.size(); i++) {
+                Peer peer = syncPeers.get((startIndex + i) % syncPeers.size());
                 String peerId = peerIdHex(peer);
                 List<BlockHeadersPayload.Entry> headers = fetchHeaderBatchFromPeer(peerId, startHeight, stopHeight);
                 if (!headers.isEmpty()) {
@@ -420,7 +371,7 @@ public class NetServiceImpl implements NetService {
 
             inFlightHeaders.incrementAndGet();
             headerSlotTracked = true;
-            byte[] bytes = staticSendData(
+            byte[] bytes = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_Headers,
                     BlockHeadersPayload.serializeRequest(startHeight, stopHeight, MAX_HEADERS_PER_REQUEST),
@@ -452,11 +403,14 @@ public class NetServiceImpl implements NetService {
         }
     }
 
-    private void syncBlocks(List<Peer> syncPeers, int firstHeight, int lastHeight) throws Exception {
-        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(SYNC_EXECUTOR);
+    private byte[] syncBlocks(List<Peer> syncPeers, Landmark commonAncestor, Peer.ChainTip target) throws Exception {
+        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(syncExecutor);
         List<Future<BlockFetchResult>> futures = new ArrayList<>();
         NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
 
+        int firstHeight = commonAncestor.getHeight() + 1;
+        int lastHeight = target.height();
+        byte[] previousHash = commonAncestor.getHash();
         int nextSubmitHeight = firstHeight;
         int nextVerifyHeight = firstHeight;
         int inFlight = 0;
@@ -488,10 +442,18 @@ public class NetServiceImpl implements NetService {
                 pendingBlocks.put(result.height(), result);
                 while (pendingBlocks.containsKey(nextVerifyHeight)) {
                     BlockFetchResult pending = pendingBlocks.remove(nextVerifyHeight);
+                    Block block = pending.block();
+                    if (block.getHeight() != nextVerifyHeight
+                            || !Arrays.equals(previousHash, block.getBlockHeader().getPreviousHash())
+                            || (nextVerifyHeight == lastHeight && !target.hashHex().equals(bytesToHex(block.getHash())))) {
+                        throw new IllegalStateException("Block " + nextVerifyHeight + " does not match the target branch");
+                    }
                     verifyFetchedBlock(pending);
+                    previousHash = block.getHash();
                     nextVerifyHeight++;
                 }
             }
+            return previousHash;
         } catch (Exception e) {
             for (Future<BlockFetchResult> future : futures) {
                 if (!future.isDone()) {
@@ -503,7 +465,7 @@ public class NetServiceImpl implements NetService {
     }
 
     private void syncBlocksByHeaders(List<Peer> syncPeers, List<HeaderSyncRecord> headerChain) throws Exception {
-        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(SYNC_EXECUTOR);
+        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(syncExecutor);
         List<Future<BlockFetchResult>> futures = new ArrayList<>();
         NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
 
@@ -566,21 +528,13 @@ public class NetServiceImpl implements NetService {
     }
 
     private BlockFetchResult fetchBlockFromAnyPeer(List<Peer> syncPeers, int height) {
-        List<Peer> candidates = candidatesForHeight(syncPeers, height);
-        if (candidates.isEmpty()) {
-            failedBlocks.incrementAndGet();
-            String error = "No peer has block height " + height;
-            addRecentError(error);
-            return BlockFetchResult.failed(height, "", error);
-        }
-
-        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), syncPeers.size());
         String lastPeerId = "";
         String lastError = "";
 
         for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
-            for (int i = 0; i < candidates.size(); i++) {
-                Peer peer = candidates.get((startIndex + i) % candidates.size());
+            for (int i = 0; i < syncPeers.size(); i++) {
+                Peer peer = syncPeers.get((startIndex + i) % syncPeers.size());
                 String peerId = peerIdHex(peer);
                 lastPeerId = peerId;
                 PeerSyncTracker tracker = trackerFor(peer);
@@ -625,21 +579,13 @@ public class NetServiceImpl implements NetService {
             return BlockFetchResult.success(record.height(), "local", existing, 0L, record.hash());
         }
 
-        List<Peer> candidates = candidatesForHeight(syncPeers, record.height());
-        if (candidates.isEmpty()) {
-            failedBlocks.incrementAndGet();
-            String error = "No peer can serve block height " + record.height();
-            addRecentError(error);
-            return BlockFetchResult.failed(record.height(), "", error);
-        }
-
-        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), candidates.size());
+        int startIndex = Math.floorMod(peerCursor.getAndIncrement(), syncPeers.size());
         String lastPeerId = "";
         String lastError = "";
 
         for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
-            for (int i = 0; i < candidates.size(); i++) {
-                Peer peer = candidates.get((startIndex + i) % candidates.size());
+            for (int i = 0; i < syncPeers.size(); i++) {
+                Peer peer = syncPeers.get((startIndex + i) % syncPeers.size());
                 String peerId = peerIdHex(peer);
                 lastPeerId = peerId;
                 PeerSyncTracker tracker = trackerFor(peer);
@@ -696,7 +642,7 @@ public class NetServiceImpl implements NetService {
             }
 
             verifiedBlocks.incrementAndGet();
-            localHeight.set(Math.max(getCurrentLocalHeight(), result.height()));
+            localHeight.set(getCurrentLocalHeight());
             PeerSyncTracker tracker = peerStates.get(result.peerId());
             if (tracker != null) {
                 tracker.recordVerified(result.height());
@@ -724,7 +670,7 @@ public class NetServiceImpl implements NetService {
                 return null;
             }
 
-            byte[] bytes = staticSendData(
+            byte[] bytes = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_By_Height,
                     RocksDb.intToBytes(height),
@@ -767,7 +713,7 @@ public class NetServiceImpl implements NetService {
                 return null;
             }
 
-            byte[] bytes = staticSendData(
+            byte[] bytes = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_By_Hash,
                     hash,
@@ -814,14 +760,18 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
-    private Landmark queryCommonAncestor(List<Peer> peers, int currentLocalHeight) {
-        List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(currentLocalHeight);
+    byte[] sendSyncRequest(String peerId, ProtocolEnum protocol, byte[] request, int timeoutMillis) {
+        return staticSendData(peerId, protocol, request, timeoutMillis);
+    }
+
+    private Landmark queryCommonAncestor(List<Peer> peers, int maxAncestorHeight) {
+        List<Landmark> localLandmarks = blockChainService.generateSyncLandmarks(maxAncestorHeight);
         byte[] payload = Landmark.serializeList(localLandmarks);
 
         for (Peer peer : peers) {
             String peerId = peerIdHex(peer);
             try {
-                byte[] bytes = staticSendData(
+                byte[] bytes = sendSyncRequest(
                         peerId,
                         ProtocolEnum.P2P_Query_Common_Ancestor,
                         payload,
@@ -839,10 +789,11 @@ public class NetServiceImpl implements NetService {
                 }
 
                 Landmark commonAncestor = Landmark.deserialize(message.getData());
-                if (commonAncestor != null) {
+                if (commonAncestor.getHeight() <= maxAncestorHeight && localLandmarks.contains(commonAncestor)) {
                     trackerFor(peer).status.set("READY");
                     return commonAncestor;
                 }
+                trackerFor(peer).recordFailedRequest("Common ancestor was not in the local landmarks");
             } catch (Exception e) {
                 trackerFor(peer).recordFailedRequest("Common ancestor query failed: " + e.getMessage());
                 log.warn("Common ancestor query failed: peer={}", peerId, e);
@@ -852,30 +803,28 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
-    private List<Peer> selectOptimalPeers(List<Peer> peers, int neededStartHeight, int bestNetworkHeight) {
+    private Map<Peer.ChainTip, List<Peer>> selectSyncTargets(List<Peer> peers, UInt256 localWork) {
         return peers.stream()
-                .filter(peer -> peer.getId() != null)
-                .filter(Peer::isOnline)
-                .filter(peer -> peer.getHeight() >= neededStartHeight)
-                .sorted(Comparator
-                        .comparingInt(Peer::getHeight).reversed()
-                        .thenComparing(Peer::getLastSeen, Comparator.reverseOrder()))
+                .map(SyncPeer::snapshot)
+                .filter(candidate -> candidate.tip().height() > 0 && candidate.tip().hashHex() != null
+                        && candidate.tip().hashHex().length() == 64
+                        && candidate.tip().chainWork().compareTo(localWork) > 0)
+                .sorted(SYNC_PEER_ORDER)
                 .limit(MAX_SYNC_PEERS)
-                .peek(peer -> trackerFor(peer).status.set(peer.getHeight() >= bestNetworkHeight ? "READY" : "PARTIAL"))
-                .collect(Collectors.toList());
-    }
-
-    private List<Peer> candidatesForHeight(List<Peer> peers, int height) {
-        return peers.stream()
-                .filter(peer -> peer.getId() != null)
-                .filter(peer -> peer.getHeight() >= height)
-                .sorted(Comparator.comparingInt(Peer::getHeight).reversed())
-                .collect(Collectors.toList());
+                .collect(Collectors.groupingBy(SyncPeer::tip, LinkedHashMap::new,
+                        Collectors.mapping(SyncPeer::peer, Collectors.toList())));
     }
 
     @Override
     public int getCurrentLocalHeight() {
-        return mainTipBlock != null ? mainTipBlock.getHeight() : 0;
+        Block tip = mainTipBlock;
+        return tip == null ? 0 : tip.getHeight();
+    }
+
+    @Override
+    public UInt256 getCurrentLocalChainWork() {
+        Block tip = mainTipBlock;
+        return tip == null ? UInt256.ZERO : tip.getChainWork();
     }
 
     @Override
@@ -891,25 +840,8 @@ public class NetServiceImpl implements NetService {
 
     @Override
     public Peer getBestPeer() {
-        List<Peer> onlineNodes = Optional.ofNullable(routingTable.getOnlineNodes()).orElseGet(List::of);
-        if (onlineNodes.isEmpty()) {
-            return null;
-        }
-
-        int maxHeight = onlineNodes.stream()
-                .mapToInt(Peer::getHeight)
-                .max()
-                .orElse(0);
-
-        List<Peer> maxHeightPeers = onlineNodes.stream()
-                .filter(peer -> peer.getHeight() == maxHeight)
-                .filter(peer -> peer.getId() != null)
-                .toList();
-
-        if (maxHeightPeers.isEmpty()) {
-            return null;
-        }
-        return maxHeightPeers.get(new Random().nextInt(maxHeightPeers.size()));
+        return getConnectedPeers().stream().map(SyncPeer::snapshot)
+                .min(SYNC_PEER_ORDER).map(SyncPeer::peer).orElse(null);
     }
 
     @Override
@@ -1017,15 +949,15 @@ public class NetServiceImpl implements NetService {
             task.cancel(true);
         }
 
-        if (!SYNC_EXECUTOR.isShutdown()) {
-            SYNC_EXECUTOR.shutdown();
+        if (!syncExecutor.isShutdown()) {
+            syncExecutor.shutdown();
             try {
-                if (!SYNC_EXECUTOR.awaitTermination(30, TimeUnit.SECONDS)) {
-                    SYNC_EXECUTOR.shutdownNow();
+                if (!syncExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                    syncExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                SYNC_EXECUTOR.shutdownNow();
+                syncExecutor.shutdownNow();
             }
         }
 
@@ -1046,9 +978,18 @@ public class NetServiceImpl implements NetService {
         localHeightAtStart.set(getCurrentLocalHeight());
         localHeight.set(getCurrentLocalHeight());
         networkHeight.set(getBestNetworkHeight());
+        resetDownloadProgress();
+        targetHeight.set(localHeight.get());
+        connectedPeerCount.set(0);
+        syncPeerCount.set(0);
+        startedAtMillis.set(now);
+        updatedAtMillis.set(now);
+        finishedAtMillis.set(0L);
+    }
+
+    private void resetDownloadProgress() {
         commonAncestorHeight.set(0);
         startHeight.set(0);
-        targetHeight.set(networkHeight.get());
         totalBlocks.set(0);
         totalHeaders.set(0);
         downloadedBlocks.set(0);
@@ -1058,11 +999,6 @@ public class NetServiceImpl implements NetService {
         failedBlocks.set(0);
         inFlightBlocks.set(0);
         inFlightHeaders.set(0);
-        connectedPeerCount.set(0);
-        syncPeerCount.set(0);
-        startedAtMillis.set(now);
-        updatedAtMillis.set(now);
-        finishedAtMillis.set(0L);
     }
 
     private void markFailed(String message, Exception e) {
@@ -1127,6 +1063,12 @@ public class NetServiceImpl implements NetService {
         return peerId.substring(0, 12);
     }
 
+    private record SyncPeer(Peer peer, Peer.ChainTip tip, long lastSeen) {
+        private static SyncPeer snapshot(Peer peer) {
+            return new SyncPeer(peer, peer.chainTip(), peer.getLastSeen());
+        }
+    }
+
     private record BlockFetchResult(
             int height,
             String peerId,
@@ -1186,9 +1128,10 @@ public class NetServiceImpl implements NetService {
         private void updatePeer(Peer peer) {
             this.address = peer.getAddress();
             this.port = peer.getPort();
-            this.height = peer.getHeight();
-            this.hashHex = peer.getHashHex();
-            this.chainWorkDecimal = peer.getChainWorkDecimal().toString();
+            Peer.ChainTip tip = peer.chainTip();
+            this.height = tip.height();
+            this.hashHex = tip.hashHex();
+            this.chainWorkDecimal = tip.chainWork().toString();
             this.lastUpdatedAtMillis.set(System.currentTimeMillis());
         }
 

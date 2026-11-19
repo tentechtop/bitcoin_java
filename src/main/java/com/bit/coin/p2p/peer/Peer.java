@@ -133,12 +133,27 @@ public class Peer {
     //顶端累计工作总量
     @JsonIgnore
     private UInt256 chainWork = UInt256.fromLong(0L);
-    public BigInteger getChainWorkDecimal(){
-        if (chainWork==null){
-            chainWork = UInt256.fromLong(0L);
-        }
-        return chainWork.toBigInteger();
+    public BigInteger getChainWorkDecimal() {
+        return chainTip().chainWork().toBigInteger();
     }
+
+    public synchronized ChainTip chainTip() {
+        return new ChainTip(hashHex, height, chainWork == null ? UInt256.ZERO : chainWork);
+    }
+
+    public synchronized void updateChainTip(ChainTip tip) {
+        if (tip.height() >= 0 && tip.chainWork().compareTo(chainTip().chainWork()) > 0) {
+            setChainTip(tip);
+        }
+    }
+
+    public synchronized void setChainTip(ChainTip tip) {
+        hashHex = tip.hashHex();
+        height = tip.height();
+        chainWork = tip.chainWork();
+    }
+
+    public record ChainTip(String hashHex, int height, UInt256 chainWork) {}
 
 
 
