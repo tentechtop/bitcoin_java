@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class FeeEstimateApiTest {
+
     private final TxPoolImpl pool = new TxPoolImpl();
     private MockMvc mvc;
 
@@ -22,7 +23,9 @@ class FeeEstimateApiTest {
     }
 
     @AfterEach
-    void close() { pool.close(); }
+    void close() {
+        pool.close();
+    }
 
     @Test
     void returnsAQuoteForTheSuppliedTransactionSizeAndDefaultTarget() throws Exception {
@@ -53,13 +56,13 @@ class FeeEstimateApiTest {
 
     @Test
     void invalidAndMissingParametersReturnBadRequest() throws Exception {
-        for (String path : new String[]{"/txpool/fee-estimate", "/txpool/fee-estimates"}) {
+        for (String path : new String[] { "/txpool/fee-estimate", "/txpool/fee-estimates" }) {
             mvc.perform(get(path)).andExpect(status().isBadRequest());
-            for (String size : new String[]{"0", "-1", "1000001", "9223372036854775807", "abc"}) {
+            for (String size : new String[] { "0", "-1", "1000001", "9223372036854775807", "abc" }) {
                 mvc.perform(get(path).param("txSize", size)).andExpect(status().isBadRequest());
             }
         }
-        for (String target : new String[]{"0", "145", "abc"}) {
+        for (String target : new String[] { "0", "145", "abc" }) {
             mvc.perform(get("/txpool/fee-estimate").param("txSize", "250").param("targetBlocks", target))
                     .andExpect(status().isBadRequest());
         }

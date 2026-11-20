@@ -38,6 +38,7 @@ package com.bit.coin.exception;
 
 // 自定义异常类示例
 public class ValidationException extends RuntimeException {
+
     private final int errorCode;
     private final String errorMsg;
 

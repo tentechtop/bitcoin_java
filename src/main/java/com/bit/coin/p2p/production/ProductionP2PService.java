@@ -15,9 +15,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class ProductionP2PService {
-    private static final int AUTO_BLACKLIST_THRESHOLD = 5;
+
+    private static final int AUTO_BLACKLIST_THRESHOLD = 5;  // 同一节点连续传输错误达到此次数后自动封禁
     private static final Duration AUTO_BLACKLIST_TTL = Duration.ofMinutes(10);
-    private static final Duration THROUGHPUT_WINDOW = Duration.ofSeconds(10);
+    private static final Duration THROUGHPUT_WINDOW = Duration.ofSeconds(10);  // 按节点估算收发速率时统计最近这段时间的字节数
 
     private final P2PTransportGateway transportGateway;
     private final P2PBlacklist blacklist;
@@ -25,8 +26,8 @@ public class ProductionP2PService {
     private final ConcurrentHashMap<String, NodeState> nodes = new ConcurrentHashMap<>();
 
     public ProductionP2PService(P2PTransportGateway transportGateway,
-                                P2PBlacklist blacklist,
-                                P2PTransferErrorTracker errorTracker) {
+            P2PBlacklist blacklist,
+            P2PTransferErrorTracker errorTracker) {
         this.transportGateway = transportGateway;
         this.blacklist = blacklist;
         this.errorTracker = errorTracker;
@@ -44,8 +45,7 @@ public class ProductionP2PService {
                     e.getMessage(),
                     0,
                     0,
-                    e
-            ));
+                    e));
             return P2PConnectResult.failure(P2PNodeStatus.FAILED, "", e.getMessage());
         }
 
@@ -59,8 +59,7 @@ public class ProductionP2PService {
                     message,
                     0,
                     0,
-                    null
-            ));
+                    null));
             return P2PConnectResult.failure(P2PNodeStatus.FAILED, address.peerIdHex(), message);
         }
 
@@ -79,8 +78,7 @@ public class ProductionP2PService {
                     state.lastErrorMessage,
                     0,
                     0,
-                    null
-            ));
+                    null));
             return P2PConnectResult.failure(P2PNodeStatus.BLACKLISTED, address.peerIdHex(), state.lastErrorMessage);
         }
 
@@ -105,8 +103,7 @@ public class ProductionP2PService {
                             e.getMessage(),
                             0,
                             transportConnection.connectionId(),
-                            e
-                    ));
+                            e));
                 }
                 return P2PConnectResult.failure(state.status, address.peerIdHex(), state.lastErrorMessage);
             }
@@ -155,8 +152,7 @@ public class ProductionP2PService {
                     e.getMessage(),
                     0,
                     0,
-                    e
-            ));
+                    e));
         }
         return entry;
     }
@@ -246,8 +242,7 @@ public class ProductionP2PService {
                     "outbound window is full",
                     0,
                     state.connectionId,
-                    null
-            ));
+                    null));
         }
         return reserved;
     }
@@ -276,8 +271,7 @@ public class ProductionP2PService {
                             e.getMessage(),
                             0,
                             stats.connectionId(),
-                            e
-                    ));
+                            e));
                 }
                 continue;
             }
@@ -308,8 +302,7 @@ public class ProductionP2PService {
                 state.lastErrorMessage,
                 0,
                 state.connectionId,
-                cause
-        ));
+                cause));
         if (state.consecutiveErrors >= AUTO_BLACKLIST_THRESHOLD) {
             blacklist.blockPeerHex(state.peerId, "auto blacklist after repeated transfer failures", AUTO_BLACKLIST_TTL);
             state.status = P2PNodeStatus.BLACKLISTED;
@@ -317,6 +310,7 @@ public class ProductionP2PService {
     }
 
     private final class NodeState {
+
         private final String peerId;
         private final SlidingThroughputMeter sendMeter = new SlidingThroughputMeter(THROUGHPUT_WINDOW);
         private final SlidingThroughputMeter receiveMeter = new SlidingThroughputMeter(THROUGHPUT_WINDOW);
@@ -373,7 +367,8 @@ public class ProductionP2PService {
 
         private void applyStats(QuicConnectionStats stats) {
             long sentDelta = stats.sentBytes() >= sentBytes ? stats.sentBytes() - sentBytes : stats.sentBytes();
-            long receivedDelta = stats.receivedBytes() >= receivedBytes ? stats.receivedBytes() - receivedBytes : stats.receivedBytes();
+            long receivedDelta = stats.receivedBytes() >= receivedBytes ? stats.receivedBytes() - receivedBytes
+                    : stats.receivedBytes();
             sendMeter.recordBytes(sentDelta);
             receiveMeter.recordBytes(receivedDelta);
             sentBytes = stats.sentBytes();
@@ -394,21 +389,22 @@ public class ProductionP2PService {
             long snapshotSent = stats == null ? sentBytes : stats.sentBytes();
             long snapshotReceived = stats == null ? receivedBytes : stats.receivedBytes();
             double sendSpeed = Math.max(sendMeter.bytesPerSecond(), stats == null ? 0 : stats.sendBytesPerSecond());
-            double receiveSpeed = Math.max(receiveMeter.bytesPerSecond(), stats == null ? 0 : stats.receiveBytesPerSecond());
+            double receiveSpeed = Math.max(receiveMeter.bytesPerSecond(),
+                    stats == null ? 0 : stats.receiveBytesPerSecond());
             FlowControlSnapshot flow = stats == null
                     ? flowController.snapshot()
                     : new FlowControlSnapshot(
-                    stats.localReceiveWindow(),
-                    P2PFlowController.DEFAULT_RECEIVE_WINDOW,
-                    stats.remoteReceiveWindow(),
-                    new CongestionControlSnapshot(
-                            stats.congestionWindow(),
-                            stats.slowStartThreshold(),
-                            stats.sentUnAckedBytes(),
-                            Math.max(0, Math.min(stats.remoteReceiveWindow(), stats.congestionWindow()) - stats.sentUnAckedBytes()),
-                            AimdCongestionController.DEFAULT_MSS
-                    )
-            );
+                            stats.localReceiveWindow(),
+                            P2PFlowController.DEFAULT_RECEIVE_WINDOW,
+                            stats.remoteReceiveWindow(),
+                            new CongestionControlSnapshot(
+                                    stats.congestionWindow(),
+                                    stats.slowStartThreshold(),
+                                    stats.sentUnAckedBytes(),
+                                    Math.max(0,
+                                            Math.min(stats.remoteReceiveWindow(), stats.congestionWindow())
+                                                    - stats.sentUnAckedBytes()),
+                                    AimdCongestionController.DEFAULT_MSS));
             return new P2PNodeSnapshot(
                     peerId,
                     multiAddress,
@@ -430,8 +426,7 @@ public class ProductionP2PService {
                     receiveSpeed,
                     lastRttMillis,
                     flow,
-                    errorTracker.count(peerId)
-            );
+                    errorTracker.count(peerId));
         }
     }
 }

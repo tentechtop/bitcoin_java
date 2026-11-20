@@ -62,6 +62,7 @@ public class Script {
 
         return baos.toByteArray();
     }
+
     /**
      * 写入数据（带长度前缀）
      */
@@ -87,8 +88,6 @@ public class Script {
         }
         baos.write(data);
     }
-
-
 
     //从二进制反序列化
     /**
@@ -176,7 +175,6 @@ public class Script {
             return standardLockingScript;
         }
 
-
         //如果长度是16 则是coinbase的锁定脚本
         if (legacyEncoding && length == 16) {
             Script coinbaseScript = new Script();
@@ -188,13 +186,13 @@ public class Script {
             // 1. 添加OP_PUSHDATA1操作码（用于推送16字节数据，因为16>75不适用直接长度前缀）
             coinbaseScript.addOpCode(OP_PUSHDATA1);
             // 2. 添加数据长度标识（16字节）
-            coinbaseScript.addData(new byte[]{(byte) 0x10});
+            coinbaseScript.addData(new byte[] { (byte) 0x10 });
             // 3. 添加16字节的coinbase核心数据
             coinbaseScript.addData(coinbaseData);
             return coinbaseScript;
         }
 
-        if (legacyEncoding && length == 69){
+        if (legacyEncoding && length == 69) {
             Script coinbaseScript = new Script();
             // 复制16字节的coinbase数据（避免原数组引用被修改）
             byte[] coinbaseData = new byte[16];
@@ -204,7 +202,7 @@ public class Script {
             // 1. 添加OP_PUSHDATA1操作码（用于推送16字节数据，因为16>75不适用直接长度前缀）
             coinbaseScript.addOpCode(OP_PUSHDATA1);
             // 2. 添加数据长度标识（16字节）
-            coinbaseScript.addData(new byte[]{(byte) 0x10});
+            coinbaseScript.addData(new byte[] { (byte) 0x10 });
             // 3. 添加16字节的coinbase核心数据
             coinbaseScript.addData(coinbaseData);
             return coinbaseScript;
@@ -229,7 +227,9 @@ public class Script {
             } else if (opCode == OP_PUSHDATA1) {
                 if (buffer.remaining() >= 1) {
                     int dataLength = buffer.get() & 0xFF;
-                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
+                    if (dataLength > buffer.remaining() || dataLength > 520) {
+                        throw new IOException("Push exceeds script limits");
+                    }
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
@@ -243,7 +243,9 @@ public class Script {
             } else if (opCode == OP_PUSHDATA2) {
                 if (buffer.remaining() >= 2) {
                     int dataLength = Short.toUnsignedInt(buffer.getShort());
-                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
+                    if (dataLength > buffer.remaining() || dataLength > 520) {
+                        throw new IOException("Push exceeds script limits");
+                    }
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
@@ -260,7 +262,9 @@ public class Script {
                     if (dataLength < 0) {
                         throw new IOException("数据长度无效: " + dataLength);
                     }
-                    if (dataLength > buffer.remaining() || dataLength > 520) throw new IOException("Push exceeds script limits");
+                    if (dataLength > buffer.remaining() || dataLength > 520) {
+                        throw new IOException("Push exceeds script limits");
+                    }
                     byte[] data = new byte[dataLength];
                     if (buffer.remaining() >= dataLength) {
                         buffer.get(data);
@@ -450,14 +454,12 @@ public class Script {
         }
     }
 
-
-
-    //main
+    // main 方法入口
     public static void main(String[] args) throws IOException {
         byte[] bytes2 = Base58.decode("J5JGY238f6TGBuscTBs5AQjDu6Jpau1mUaFYq89ty3GR");
-        log.info("公钥Hash{}",bytesToHex(bytes2));
+        log.info("公钥Hash{}", bytesToHex(bytes2));
         byte[] bytes3 = Sha.applyRIPEMD160(Sha.applySHA256(bytes2));
-        log.info("解锁脚本{}",bytesToHex(bytes3));
+        log.info("解锁脚本{}", bytesToHex(bytes3));
 
         Script p2pkhLockingScript = new Script();
         p2pkhLockingScript.addOpCode(Script.OP_DUP);         // 0x76
@@ -467,17 +469,15 @@ public class Script {
         p2pkhLockingScript.addOpCode(Script.OP_CHECKSIG);    // 0xac
 
         String string = p2pkhLockingScript.toString();
-        log.info("打印脚本{}",string);
-        log.info("获取脚本大小{}",p2pkhLockingScript.getSize());
-        log.info("toHex{}",p2pkhLockingScript.toHex());
+        log.info("打印脚本{}", string);
+        log.info("获取脚本大小{}", p2pkhLockingScript.getSize());
+        log.info("toHex{}", p2pkhLockingScript.toHex());
         Script script = fromHex("76a91460c275b1ff20de69f3099596fa75a0a7fd439e2c88ac");
-        log.info("fromHex{}",script.toHex());
+        log.info("fromHex{}", script.toHex());
         byte[] serialize = p2pkhLockingScript.serialize();
-        log.info("serialize{}",bytesToHex(serialize));
+        log.info("serialize{}", bytesToHex(serialize));
         Script deserialize = deserialize(hexToBytes("76a91460c275b1ff20de69f3099596fa75a0a7fd439e2c88ac"));
-        log.info("fromHex{}",deserialize.toHex());
-
-
+        log.info("fromHex{}", deserialize.toHex());
 
     }
 
@@ -511,8 +511,8 @@ public class Script {
         return signatureData[64];
     }
 
-
     public static class ScriptElement {
+
         private int opCode;
         private byte[] data;
         private boolean isOpCode;
@@ -539,16 +539,19 @@ public class Script {
         }
 
         public int getOpCode() {
-            if (!isOpCode) throw new IllegalStateException("不是操作码");
+            if (!isOpCode) {
+                throw new IllegalStateException("不是操作码");
+            }
             return opCode;
         }
 
         public byte[] getData() {
-            if (isOpCode) throw new IllegalStateException("不是数据");
+            if (isOpCode) {
+                throw new IllegalStateException("不是数据");
+            }
             return data != null ? data.clone() : null;
         }
     }
-
 
     public static final int OP_0 = 0x00;
     public static final int OP_FALSE = OP_0;

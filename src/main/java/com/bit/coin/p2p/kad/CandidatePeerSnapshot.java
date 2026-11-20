@@ -8,6 +8,4 @@ public record CandidatePeerSnapshot(
         long lastSeenMillis,
         int attempts,
         long nextAttemptAtMillis,
-        String lastFailureReason
-) {
-}
+        String lastFailureReason) {}

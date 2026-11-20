@@ -16,13 +16,4 @@ public class ExplorerApi {
     @Autowired
     private BlockChainServiceImpl blockChainService;
 
-
-
-
-
-
-
-
-
-
 }

@@ -62,8 +62,7 @@ public class P2WPKHScriptExample {
                     scriptCode,
                     utxoOutput.getValue(),
                     Transaction.SigHash.ALL,
-                    false
-            );
+                    false);
 
             System.out.println("\n签名哈希: " + sigHash.toString());
 
@@ -72,9 +71,10 @@ public class P2WPKHScriptExample {
             TransactionSignature txSig = new TransactionSignature(ecdsaSig, Transaction.SigHash.ALL, false);
 
             // 7. 创建见证数据
-            TransactionWitness witness = TransactionWitness.of(java.util.List.of(txSig.encodeToBitcoin(), key.getPubKey()));
+            TransactionWitness witness = TransactionWitness
+                    .of(java.util.List.of(txSig.encodeToBitcoin(), key.getPubKey()));
             input = input.withWitness(witness);
-        spendingTx.replaceInput(0, input);
+            spendingTx.replaceInput(0, input);
 
             System.out.println("\n=== P2WPKH见证数据 ===");
             System.out.println("签名: " + java.util.HexFormat.of().formatHex(txSig.encodeToBitcoin()));
@@ -101,9 +101,9 @@ public class P2WPKHScriptExample {
      * 手动验证P2WPKH交易
      */
     private boolean verifyP2WPKH(TransactionInput input,
-                                 TransactionOutput utxoOutput,
-                                 Script lockingScript,
-                                 ECKey expectedKey) {
+            TransactionOutput utxoOutput,
+            Script lockingScript,
+            ECKey expectedKey) {
         try {
             // 验证锁定脚本是P2WPKH格式
             if (!ScriptPattern.isP2WPKH(lockingScript)) {

@@ -14,6 +14,7 @@ import java.util.Set;
  * 3. 区块上链确认后，更新缓存到数据库
  */
 public interface UTXOCache {
+
     void invalidateAll();
 
     /**
@@ -26,7 +27,6 @@ public interface UTXOCache {
 
     UTXO getUTXOByStringKey(String key);
 
-
     /**
      * 从缓存或数据库获取 UTXO（使用预计算的 key）
      * @param key UTXO 的 key [txId][index]
@@ -35,7 +35,6 @@ public interface UTXOCache {
     UTXO getUTXO(byte[] key);
 
     void addUTXO(UTXO utxo);
-
 
     /**
      * 添加待确认的交易 已经通过交易池的验证
@@ -50,23 +49,19 @@ public interface UTXOCache {
     /**
      * 添加已经确认的交易 已经上链确认
      */
-    void addConfirmedTx(Transaction transaction,int height);
-
+    void addConfirmedTx(Transaction transaction, int height);
 
     List<UTXO> getUTXOsByAddress(String address);
 
     List<UTXO> getAddressAllUTXO(String address);
 
-
     List<UTXO> getAddressAllUTXOByStatus(String address, long status);
 
     Map<String, Object> getAddressAllUTXOAndTotalByStatus(String address, long status);
 
-
     Map<String, Object> getBalance(String address);
 
     Map<String, Object> getUTXOsByAddressAndCount(String address);
-
 
     Map<String, Object> getUTXOsByAddressAndCountAndUTXO(String address);
 }

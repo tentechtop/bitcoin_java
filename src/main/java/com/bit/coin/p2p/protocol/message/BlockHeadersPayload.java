@@ -11,11 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class BlockHeadersPayload {
-    public static final int HEADER_BYTES = 80;
-    public static final int MAX_HEADERS_PER_RESPONSE = 512;
 
-    private BlockHeadersPayload() {
-    }
+    public static final int HEADER_BYTES = 80;  // 单个区块头的编码字节数，每条响应记录还带 4 字节高度
+    public static final int MAX_HEADERS_PER_RESPONSE = 512;  // 每批响应允许的区块头条数，请求数量也按此值截断
+
+    private BlockHeadersPayload() {}
 
     public static byte[] serializeRequest(int startHeight, int stopHeight, int maxCount) {
         try {
@@ -99,9 +99,7 @@ public final class BlockHeadersPayload {
         }
     }
 
-    public record Request(int startHeight, int stopHeight, int maxCount) {
-    }
+    public record Request(int startHeight, int stopHeight, int maxCount) {}
 
-    public record Entry(int height, BlockHeader header) {
-    }
+    public record Entry(int height, BlockHeader header) {}
 }

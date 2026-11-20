@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class TxOutputDTO {
+
     /**
      * [8字节] 金额（单位：satoshi）
      */

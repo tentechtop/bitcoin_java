@@ -13,6 +13,7 @@ import java.util.HashMap;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TransactionValidationTest {
+
     private final KeyPair owner = Ed25519Signer.generateKeyPair();
 
     private Transaction transaction(int count, boolean scripted) throws Exception {
@@ -52,25 +53,29 @@ class TransactionValidationTest {
     }
 
     private void sign(Transaction tx, KeyPair signer) {
-        tx.sign(Ed25519Signer.extractPrivateKeyCore(signer.getPrivate()), Ed25519Signer.extractPublicKeyCore(signer.getPublic()));
+        tx.sign(Ed25519Signer.extractPrivateKeyCore(signer.getPrivate()),
+                Ed25519Signer.extractPublicKeyCore(signer.getPublic()));
         tx.setTxId(tx.calculateTxId());
     }
 
-    @Test void onlyTheOutputOwnerCanSpend() throws Exception {
+    @Test
+    void onlyTheOutputOwnerCanSpend() throws Exception {
         Transaction tx = transaction(1, false);
         assertTrue(tx.validate());
         sign(tx, Ed25519Signer.generateKeyPair());
         assertFalse(tx.validate());
     }
 
-    @Test void changingVersionCannotBypassOwnership() throws Exception {
+    @Test
+    void changingVersionCannotBypassOwnership() throws Exception {
         Transaction tx = transaction(1, false);
         tx.setVersion(101);
         sign(tx, Ed25519Signer.generateKeyPair());
         assertFalse(tx.validate());
     }
 
-    @Test void everyScriptedInputMustPass() throws Exception {
+    @Test
+    void everyScriptedInputMustPass() throws Exception {
         Transaction tx = transaction(2, true);
         assertTrue(tx.validate());
         tx.getInputs().get(1).getScriptSig()[0] ^= 1;
@@ -78,7 +83,8 @@ class TransactionValidationTest {
         assertFalse(tx.validate());
     }
 
-    @Test void scriptedTransactionsStillCheckAmountsAndIdentity() throws Exception {
+    @Test
+    void scriptedTransactionsStillCheckAmountsAndIdentity() throws Exception {
         Transaction tx = transaction(1, true);
         tx.getOutputs().getFirst().setValue(100_001L);
         sign(tx, owner);
@@ -88,21 +94,24 @@ class TransactionValidationTest {
         assertFalse(tx.validate());
     }
 
-    @Test void duplicateInputsAreRejected() throws Exception {
+    @Test
+    void duplicateInputsAreRejected() throws Exception {
         Transaction tx = transaction(1, false);
         tx.getInputs().add(tx.getInputs().getFirst());
         sign(tx, owner);
         assertFalse(tx.validate());
     }
 
-    @Test void signatureCommitsToSequence() throws Exception {
+    @Test
+    void signatureCommitsToSequence() throws Exception {
         Transaction tx = transaction(1, false);
         tx.getInputs().getFirst().setSequence(1);
         tx.setTxId(tx.calculateTxId());
         assertFalse(tx.validate());
     }
 
-    @Test void amountAndShapeLimitsFailClosed() throws Exception {
+    @Test
+    void amountAndShapeLimitsFailClosed() throws Exception {
         Transaction tx = transaction(1, false);
         tx.getOutputs().getFirst().setValue(Long.MAX_VALUE);
         sign(tx, owner);
@@ -112,14 +121,16 @@ class TransactionValidationTest {
         assertFalse(new Transaction().validate());
     }
 
-    @Test void unsupportedSignatureTypesAreRejected() throws Exception {
+    @Test
+    void unsupportedSignatureTypesAreRejected() throws Exception {
         Transaction tx = transaction(1, false);
         tx.getInputs().getFirst().getScriptSig()[64] = 0x11;
         tx.setTxId(tx.calculateTxId());
         assertFalse(tx.validate());
     }
 
-    @Test void strictSerializationRejectsTrailingDataAndOversizedCounts() throws Exception {
+    @Test
+    void strictSerializationRejectsTrailingDataAndOversizedCounts() throws Exception {
         Transaction tx = transaction(1, false);
         assertTrue(Transaction.deserialize(tx.serialize()).calculateTxId().length == 32);
         byte[] trailing = Arrays.copyOf(tx.serialize(), tx.serialize().length + 1);

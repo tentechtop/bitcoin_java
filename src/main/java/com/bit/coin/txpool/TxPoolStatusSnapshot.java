@@ -21,6 +21,4 @@ public record TxPoolStatusSnapshot(
         int dependencyCount,
         int spendingUtxoCount,
         int processingUtxoCount,
-        List<TxPoolTransactionSnapshot> transactions
-) {
-}
+        List<TxPoolTransactionSnapshot> transactions) {}

@@ -1,6 +1,5 @@
 package com.bit.coin.p2p.protocol;
 
-
 import com.bit.coin.utils.UUIDv7Generator;
 import lombok.Data;
 import org.bitcoinj.base.Base58;
@@ -10,13 +9,13 @@ import java.util.Arrays;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
-
 /**
  * P2P网络消息协议实体
  * 核心字段遵循网络字节序（大端序），适配跨节点/跨语言传输
  */
 @Data
 public class P2PMessage {
+
     // ===================== 常量定义（公开，方便外部使用） =====================
     /** 最小协议版本号（从1开始，0代表未初始化） */
     public static final short MIN_VERSION = 1;
@@ -26,6 +25,7 @@ public class P2PMessage {
     public static final int PUBKEY_LENGTH = 32;
     /** UUID V7固定长度（字节） */
     public static final int UUID_V7_LENGTH = 16;
+    public static final int HEADER_LENGTH = Short.BYTES + PUBKEY_LENGTH + 2 * UUID_V7_LENGTH + 1 + 2 * Integer.BYTES;
     /** 请求标识（reqResFlag=0） */
     public static final byte REQ_FLAG = 0x00;
     /** 响应标识（reqResFlag=1） */
@@ -41,9 +41,7 @@ public class P2PMessage {
     private short version = 1;     // 协议版本（默认1，防篡改）  //从版本2开始都是密文传输 读取data前需要解密
     private byte[] data;           // 业务数据
 
-
     // ===================== 非核心字段 无需序列化反序列化 用于转移数据 =====================
-
 
     // ===================== 核心逻辑方法（修复+优化） =====================
     /**
@@ -78,8 +76,7 @@ public class P2PMessage {
         if (senderId != null && senderId.length != PUBKEY_LENGTH) {
             throw new IllegalArgumentException(
                     String.format("发送者ID必须为%d字节（公钥），当前长度：%d",
-                            PUBKEY_LENGTH, senderId.length)
-            );
+                            PUBKEY_LENGTH, senderId.length));
         }
         this.senderId = senderId;
     }
@@ -91,8 +88,7 @@ public class P2PMessage {
         if (messageId != null && messageId.length != UUID_V7_LENGTH) {
             throw new IllegalArgumentException(
                     String.format("消息ID必须为%d字节（UUID V7），当前长度：%d",
-                            UUID_V7_LENGTH, messageId.length)
-            );
+                            UUID_V7_LENGTH, messageId.length));
         }
         this.messageId = messageId;
     }
@@ -104,8 +100,7 @@ public class P2PMessage {
         if (requestId != null && requestId.length != UUID_V7_LENGTH) {
             throw new IllegalArgumentException(
                     String.format("请求响应ID必须为%d字节（UUID V7），当前长度：%d",
-                            UUID_V7_LENGTH, requestId.length)
-            );
+                            UUID_V7_LENGTH, requestId.length));
         }
         this.requestId = requestId;
     }
@@ -117,8 +112,7 @@ public class P2PMessage {
         if (reqResFlag != REQ_FLAG && reqResFlag != RES_FLAG) {
             throw new IllegalArgumentException(
                     String.format("请求响应标识仅允许%d（请求）或%d（响应），当前值：%d",
-                            REQ_FLAG, RES_FLAG, reqResFlag)
-            );
+                            REQ_FLAG, RES_FLAG, reqResFlag));
         }
         this.reqResFlag = reqResFlag;
     }
@@ -138,8 +132,7 @@ public class P2PMessage {
         if (version < MIN_VERSION || version > MAX_VERSION) {
             throw new IllegalArgumentException(
                     String.format("协议版本号必须在[%d, %d]范围内，当前值：%d",
-                            MIN_VERSION, MAX_VERSION, version)
-            );
+                            MIN_VERSION, MAX_VERSION, version));
         }
         this.version = (short) version;
     }
@@ -151,8 +144,7 @@ public class P2PMessage {
         if (version < MIN_VERSION || version > MAX_VERSION) {
             throw new IllegalArgumentException(
                     String.format("协议版本号必须在[%d, %d]范围内，当前值：%d",
-                            MIN_VERSION, MAX_VERSION, version)
-            );
+                            MIN_VERSION, MAX_VERSION, version));
         }
         this.version = version;
     }
@@ -225,14 +217,18 @@ public class P2PMessage {
      * 判断字节数组是否全零（用于requestId判定）
      */
     private static boolean isAllZero(byte[] bytes) {
-        if (bytes == null) return true;
+        if (bytes == null) {
+            return true;
+        }
         for (byte b : bytes) {
-            if (b != 0) return false;
+            if (b != 0) {
+                return false;
+            }
         }
         return true;
     }
 
-// ===================== 新增：请求/响应消息的核心约束 =====================
+    // ===================== 新增：请求/响应消息的核心约束 =====================
     /**
      * 标记为请求消息（自动设置reqResFlag=0 + requestId=当前messageId）
      * 前提：messageId必须已设置（非空且16字节）
@@ -280,7 +276,6 @@ public class P2PMessage {
         return this.requestId != null && this.requestId.length == UUID_V7_LENGTH && !isAllZero(this.requestId);
     }
 
-
     // ===================== 新增：静态构建方法（简化外部调用） =====================
     /**
      * 构建请求消息（封装核心逻辑，无需手动设置requestId/reqResFlag）
@@ -313,7 +308,7 @@ public class P2PMessage {
      * @return 标准化的响应消息
      */
     public static P2PMessage newResponseMessage(byte[] senderId, ProtocolEnum protocolEnum,
-                                                byte[] reqId, byte[] data) {
+            byte[] reqId, byte[] data) {
         // 参数前置校验
         if (protocolEnum == null) {
             throw new IllegalArgumentException("消息类型枚举不能为空");
@@ -331,8 +326,6 @@ public class P2PMessage {
         response.markAsResponse(reqId);
         return response;
     }
-
-
 
     /**
      * 构建普通消息（非请求/响应，自动设置requestId为全零数组）
@@ -359,7 +352,6 @@ public class P2PMessage {
         return normalMsg;
     }
 
-
     // ===================== 序列化/反序列化核心方法 =====================
     /**
      * 序列化当前对象为字节数组（网络字节序/大端序）
@@ -377,11 +369,12 @@ public class P2PMessage {
             throw new IllegalStateException("消息ID（UUID V7）不合法，必须是16字节");
         }
         if (!isLengthConsistent()) {
-            throw new IllegalStateException("data长度与length字段不一致：data长度=" + (data == null ? 0 : data.length) + ", length=" + length);
+            throw new IllegalStateException(
+                    "data长度与length字段不一致：data长度=" + (data == null ? 0 : data.length) + ", length=" + length);
         }
 
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             DataOutputStream dos = new DataOutputStream(baos)) {
+                DataOutputStream dos = new DataOutputStream(baos)) {
 
             // 1. 协议版本（short，2字节，大端）
             dos.writeShort(version);
@@ -414,37 +407,37 @@ public class P2PMessage {
      */
     public static P2PMessage deserialize(byte[] data) throws IOException {
         // 前置校验：输入字节数组不能为空
-        if (data == null || data.length > 8_100_000 || data.length < (2 + 32 + 16 + 16 + 1 + 4 + 4)) {
+        if (data == null || data.length > 8_100_000 || data.length < HEADER_LENGTH) {
             throw new IllegalArgumentException("反序列化失败：字节数组为空或长度不足（最小长度需75字节）");
         }
 
         try (ByteArrayInputStream bais = new ByteArrayInputStream(data);
-             DataInputStream dis = new DataInputStream(bais)) {
+                DataInputStream dis = new DataInputStream(bais)) {
 
             P2PMessage message = new P2PMessage();
 
             // 1. 读取协议版本（short，2字节）
             short version = dis.readShort();
-            message.setVersion(version); // 使用setter做合法性校验
+            message.setVersion(version); // 赋值时校验字段值
 
             // 2. 读取发送者ID（32字节）
             byte[] senderId = new byte[PUBKEY_LENGTH];
             dis.readFully(senderId); // 强制读取32字节，不足则抛EOFException
-            message.setSenderId(senderId); // 使用setter做合法性校验
+            message.setSenderId(senderId); // 赋值时校验字段值
 
             // 3. 读取消息ID（16字节）
             byte[] messageId = new byte[UUID_V7_LENGTH];
             dis.readFully(messageId);
-            message.setMessageId(messageId); // 使用setter做合法性校验
+            message.setMessageId(messageId); // 赋值时校验字段值
 
             // 4. 读取请求响应ID（16字节）
             byte[] requestId = new byte[UUID_V7_LENGTH];
             dis.readFully(requestId);
-            message.setRequestId(requestId); // 使用setter做合法性校验
+            message.setRequestId(requestId); // 赋值时校验字段值
 
             // 5. 读取请求/响应标识（1字节）
             byte reqResFlag = dis.readByte();
-            message.setReqResFlag(reqResFlag); // 使用setter做合法性校验
+            message.setReqResFlag(reqResFlag); // 赋值时校验字段值
 
             // 6. 读取消息类型（int，4字节）
             int type = dis.readInt();
@@ -452,7 +445,9 @@ public class P2PMessage {
 
             // 7. 读取data长度（int，4字节）
             int length = dis.readInt();
-            if (length < 0 || length != dis.available()) throw new IOException("Invalid message length");
+            if (length < 0 || length != dis.available()) {
+                throw new IOException("Invalid message length");
+            }
             message.setLength(length); // 先设置length，后续设置data时会自动同步
 
             // 8. 读取业务数据（变长，长度=length）
@@ -460,14 +455,16 @@ public class P2PMessage {
             if (length > 0) {
                 dis.readFully(dataBytes); // 强制读取length字节，不足则抛EOFException
             }
-            message.setData(dataBytes); // 使用setter自动同步length（双重校验）
+            message.setData(dataBytes); // 设置数据时自动同步 length（双重校验）
 
             // 最终校验：length与data长度一致性
             if (!message.isLengthConsistent()) {
                 throw new IOException("反序列化失败：length字段与实际data长度不一致");
             }
 
-            if (!message.isReqResIdValid() || version != 1) throw new IOException("Invalid message envelope");
+            if (!message.isReqResIdValid() || version != 1) {
+                throw new IOException("Invalid message envelope");
+            }
             return message;
         } catch (IllegalArgumentException e) {
             return null;

@@ -4,6 +4,4 @@ public record FlowControlSnapshot(
         long localReceiveWindowBytes,
         long localMaxReceiveWindowBytes,
         long remoteReceiveWindowBytes,
-        CongestionControlSnapshot congestion
-) {
-}
+        CongestionControlSnapshot congestion) {}

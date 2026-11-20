@@ -8,15 +8,15 @@ public record P2PTransferErrorRecord(
         long dataId,
         long connectionId,
         long occurredAtMillis,
-        String exceptionClass
-) {
+        String exceptionClass) {
+
     public static P2PTransferErrorRecord now(String peerId,
-                                             String remoteAddress,
-                                             P2PErrorCode errorCode,
-                                             String message,
-                                             long dataId,
-                                             long connectionId,
-                                             Throwable cause) {
+            String remoteAddress,
+            P2PErrorCode errorCode,
+            String message,
+            long dataId,
+            long connectionId,
+            Throwable cause) {
         return new P2PTransferErrorRecord(
                 peerId,
                 remoteAddress,
@@ -25,7 +25,6 @@ public record P2PTransferErrorRecord(
                 dataId,
                 connectionId,
                 System.currentTimeMillis(),
-                cause == null ? "" : cause.getClass().getName()
-        );
+                cause == null ? "" : cause.getClass().getName());
     }
 }

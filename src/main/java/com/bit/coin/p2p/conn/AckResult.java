@@ -17,7 +17,8 @@ public class AckResult {
     //确认了多少帧
     private int ackedFrameCounts;
 
-
+    // 位图 ACK 本次新增的确认序号，供发送队列复用。
+    private int[] newlyAckedSequences;
 
     //全参数构造
     public AckResult(boolean success, boolean completed, int receiveWindow, int ackedFrameCounts) {

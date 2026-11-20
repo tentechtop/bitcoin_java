@@ -22,8 +22,7 @@ class NodeStatusPayloadTest {
                 tipHash,
                 UInt256.fromLong(1000),
                 987654321L,
-                NodeStatusPayload.REASON_TIP_CHANGED
-        );
+                NodeStatusPayload.REASON_TIP_CHANGED);
 
         NodeStatusPayload parsed = NodeStatusPayload.deserialize(payload.serialize());
 

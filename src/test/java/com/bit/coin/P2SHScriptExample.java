@@ -27,7 +27,8 @@ public class P2SHScriptExample {
 
         for (int i = 0; i < keys.size(); i++) {
             System.out.println("私钥" + (i + 1) + "(WIF): " + keys.get(i).getPrivateKeyAsWiF(params));
-            System.out.println("公钥" + (i + 1) + "(HEX): " + java.util.HexFormat.of().formatHex(keys.get(i).getPubKey()));
+            System.out
+                    .println("公钥" + (i + 1) + "(HEX): " + java.util.HexFormat.of().formatHex(keys.get(i).getPubKey()));
         }
 
         // 2. 创建多重签名赎回脚本 (redeem script)
@@ -73,8 +74,7 @@ public class P2SHScriptExample {
                     0,
                     redeemScript,  // 使用赎回脚本而不是锁定脚本进行签名
                     Transaction.SigHash.ALL,
-                    false
-            );
+                    false);
 
             System.out.println("\n签名哈希: " + sigHash.toString());
 
@@ -98,7 +98,7 @@ public class P2SHScriptExample {
 
             // 9. 设置输入的解锁脚本
             input = input.withScriptSig(unlockingScript);
-        spendingTx.replaceInput(0, input);
+            spendingTx.replaceInput(0, input);
 
             // 10. 验证交易
             System.out.println("\n=== P2SH脚本执行测试 ===");
@@ -120,10 +120,10 @@ public class P2SHScriptExample {
      * 手动验证P2SH交易
      */
     private boolean verifyP2SH(TransactionInput input,
-                               TransactionOutput utxoOutput,
-                               Script lockingScript,
-                               Script redeemScript,
-                               List<ECKey> expectedKeys) {
+            TransactionOutput utxoOutput,
+            Script lockingScript,
+            Script redeemScript,
+            List<ECKey> expectedKeys) {
         try {
             // 验证锁定脚本是P2SH格式
             if (!ScriptPattern.isP2SH(lockingScript)) {

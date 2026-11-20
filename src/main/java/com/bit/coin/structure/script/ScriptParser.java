@@ -14,8 +14,6 @@ import static com.bit.coin.structure.script.Script.*;
 @Slf4j
 public class ScriptParser {
 
-
-
     /**
      * 检测脚本类型
      * 基于操作码和脚本结构进行精确识别

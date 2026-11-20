@@ -10,17 +10,16 @@ import java.util.List;
 import java.util.Map;
 
 public interface TxPool {
+
     void overlayAddressUtxos(byte[] script, Map<String, UTXO> outputs);
+
     long estimatedMemoryBytes();
+
     void revalidate();
+
     int transactionCount();
 
     //提交一笔交易
-
-
-
-
-
 
     //验证交易
     boolean verifyTx(Transaction tx);
@@ -29,7 +28,6 @@ public interface TxPool {
     boolean addTx(Transaction tx);
 
     boolean addTx(List<Transaction> tx);
-
 
     Result<String> addTx(TransferDTO tx);
 
@@ -68,22 +66,18 @@ public interface TxPool {
     Transaction[] extractTxsForBlock();
 
     // 区块上链成功，从交易池删除已确认的交易
-    void onBlockConfirmed(Transaction[] confirmedTxs,int height);
+    void onBlockConfirmed(Transaction[] confirmedTxs, int height);
 
-    void onBlockConfirmed(Transaction confirmedTx,int height);
-
+    void onBlockConfirmed(Transaction confirmedTx, int height);
 
     // 区块上链失败，回退交易到交易池（将交易从打包状态释放回可用状态）
     void onBlockFailed(Transaction[] failedTxs);
 
-
     //交易池中的已经使用的UTXO
     List<UTXO> getUTXOInPool();
 
-
     //广播交易池中的交易
     void broadcastTxPool();
-
 
     Map<String, Object> getUTXOsAvailableBalance(String address);
 }

@@ -16,12 +16,13 @@ import java.util.List;
  * 这是静态积压模型，不预测新交易流入，也不模拟祖先交易包的 CPFP 排序。
  */
 public final class FeeEstimate {
-    public static final long MIN_RELAY_FEE_RATE = 1L;
-    public static final long BLOCK_CAPACITY_BYTES = 1024L * 1024L;
-    public static final int DEFAULT_TARGET_BLOCKS = 3;
-    public static final int MAX_TARGET_BLOCKS = 144;
-    private static final int MAX_CONFIRMATION_SAMPLES = 10_000;
-    private static final int MIN_CONFIRMATION_SAMPLES = 5;
+
+    public static final long MIN_RELAY_FEE_RATE = 1L;  // 本地中继和估费使用的最低费率，单位为聪/字节
+    public static final long BLOCK_CAPACITY_BYTES = 1024L * 1024L;  // 本地每块留给池内交易的打包预算，估费也使用此字节数
+    public static final int DEFAULT_TARGET_BLOCKS = 3;  // 默认期望在多少个区块内确认
+    public static final int MAX_TARGET_BLOCKS = 144;  // 确认目标的块数上限，也限定确认样本可回溯的高度差
+    private static final int MAX_CONFIRMATION_SAMPLES = 10_000;  // 确认样本数超出上限时淘汰最旧记录
+    private static final int MIN_CONFIRMATION_SAMPLES = 5;  // 目标窗口内样本不足此数时退回最低费率
 
     private static final Deque<ConfirmationSample> CONFIRMATION_SAMPLES = new ArrayDeque<>();
 
@@ -37,12 +38,11 @@ public final class FeeEstimate {
             String source,
             int sampleCount,
             long mempoolBytes,
-            long timestampMillis
-    ) {}
+            long timestampMillis) {}
 
     private record ConfirmationSample(int delayBlocks, long feeRate, int blockHeight) {}
 
-    /** Record a transaction observed in the mempool when it confirms on the active chain. */
+    /** 交易池中观察到的交易在主链上确认时，记录其确认样本。 */
     public static synchronized void recordConfirmed(int arrivalHeight, int confirmedHeight, long fee, long size) {
         if (arrivalHeight < 0 || confirmedHeight <= arrivalHeight || size <= 0
                 || size > TransactionValidator.MAX_TRANSACTION_BYTES || !TransactionValidator.moneyRange(fee)) {
@@ -51,10 +51,12 @@ public final class FeeEstimate {
         long feeRate = fee == 0 ? 0 : fee / size + (fee % size == 0 ? 0 : 1);
         feeRate = Math.max(MIN_RELAY_FEE_RATE, feeRate);
         CONFIRMATION_SAMPLES.addLast(new ConfirmationSample(confirmedHeight - arrivalHeight, feeRate, confirmedHeight));
-        while (CONFIRMATION_SAMPLES.size() > MAX_CONFIRMATION_SAMPLES) CONFIRMATION_SAMPLES.removeFirst();
+        while (CONFIRMATION_SAMPLES.size() > MAX_CONFIRMATION_SAMPLES) {
+            CONFIRMATION_SAMPLES.removeFirst();
+        }
     }
 
-    /** Remove observations from a disconnected branch and discard old confirmation history. */
+    /** 移除已断开分支的观测样本，并清理过期的确认记录。 */
     public static synchronized void reorg(int forkHeight, int currentHeight) {
         CONFIRMATION_SAMPLES.removeIf(sample -> sample.blockHeight() > forkHeight);
         prune(currentHeight);
@@ -73,17 +75,21 @@ public final class FeeEstimate {
         return CONFIRMATION_SAMPLES.size();
     }
 
+    /** 取在目标块数内确认的样本费率中位数，单位为聪/字节。 */
     private static synchronized long historicalFeeRate(int targetBlocks) {
         List<Long> qualifiedRates = CONFIRMATION_SAMPLES.stream()
                 .filter(sample -> sample.delayBlocks() <= targetBlocks)
                 .map(ConfirmationSample::feeRate)
                 .sorted()
                 .toList();
-        if (qualifiedRates.size() < MIN_CONFIRMATION_SAMPLES) return MIN_RELAY_FEE_RATE;
+        if (qualifiedRates.size() < MIN_CONFIRMATION_SAMPLES) {
+            return MIN_RELAY_FEE_RATE;
+        }
         int index = qualifiedRates.size() / 2;
         return Math.max(MIN_RELAY_FEE_RATE, qualifiedRates.get(index));
     }
 
+    /** 结合池内积压和近期确认费率，估算指定字节数交易的总费用。 */
     public static Estimate estimate(TxPoolStatusSnapshot snapshot, int targetBlocks, long txSize) {
         validateRequest(targetBlocks, txSize);
         return estimate(snapshot, samples(snapshot), targetBlocks, txSize);
@@ -133,7 +139,7 @@ public final class FeeEstimate {
     }
 
     private static Estimate estimate(TxPoolStatusSnapshot snapshot, List<TxPoolTransactionSnapshot> samples,
-                                     int targetBlocks, long txSize) {
+            int targetBlocks, long txSize) {
         long mempoolBytes = samples.stream().mapToLong(TxPoolTransactionSnapshot::size).sum();
         // 给待提交交易留出空间，再找到目标窗口中第一个放不下的费率档位。
         long historicalFeeRate = historicalFeeRate(targetBlocks);

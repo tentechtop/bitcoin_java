@@ -1,6 +1,5 @@
 package com.bit.coin;
 
-
 import org.bitcoinj.core.*;
 import org.bitcoinj.base.*;
 import org.bitcoinj.crypto.ECKey;
@@ -23,10 +22,10 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 public class TestMain {
 
-    //main
+    // main 入口方法
     public static void main(String[] args) throws IOException {
 
-/*
+        /*
         NetworkParameters params = TestNet3Params.get(); // 使用测试网络
 
         System.out.println("=== 区块创建与哈希计算测试 ===\n");
@@ -86,8 +85,7 @@ public class TestMain {
         System.out.println("\n交易TxID：" + txId);
         System.out.println("交易大小（字节）：" + txSize);
 
-*/
-
+        */
 
         try {
             // ========== 1. 构建符合最小推送规则的ScriptChunk ==========
@@ -130,7 +128,6 @@ public class TestMain {
         } catch (ScriptException | IOException e) {
             e.printStackTrace();
         }
-
 
     }
 }

@@ -11,7 +11,7 @@ public interface BlockChainService {
     PageResult<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey);
 
     //区块是否主链
-     boolean isMainBlock(String hash);
+    boolean isMainBlock(String hash);
 
     boolean hasTx(String address);
 

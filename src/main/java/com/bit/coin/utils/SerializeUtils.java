@@ -1,14 +1,13 @@
 package com.bit.coin.utils;
 
-
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-
 public class SerializeUtils {
+
     /**
      * 将 int 以小端字节序写入 DataOutputStream。
      *
@@ -65,18 +64,20 @@ public class SerializeUtils {
             return first;
         } else if (first == 0xFD) {
             int value = Short.reverseBytes(dis.readShort()) & 0xFFFF;
-            if (value < 0xFD) throw new IOException("Noncanonical varint");
+            if (value < 0xFD) {
+                throw new IOException("Noncanonical varint");
+            }
             return value;
         } else if (first == 0xFE) {
             int value = Integer.reverseBytes(dis.readInt());
-            if (value < 0x10000) throw new IOException("Invalid or noncanonical varint");
+            if (value < 0x10000) {
+                throw new IOException("Invalid or noncanonical varint");
+            }
             return value;
         } else {
             throw new IOException("不支持的 VarInt 标记: 0xFF");
         }
     }
-
-
 
     /**
      * 小端字节序字节数组转int（4字节）
@@ -117,8 +118,6 @@ public class SerializeUtils {
                 ((bytes[3] & 0xFF) << 24);    // 最高位字节
     }
 
-
-
     // 辅助方法: 小端字节序转long
     public static long littleEndianToLong(byte[] bytes) {
         if (bytes.length != 8) {
@@ -128,8 +127,6 @@ public class SerializeUtils {
                 .order(ByteOrder.LITTLE_ENDIAN)
                 .getLong();
     }
-
-
 
     /**
      * 写入字节数组到输出流（带长度前缀）
@@ -151,7 +148,9 @@ public class SerializeUtils {
         if (length == 0) {
             return new byte[0];
         }
-        if (length < 0 || length > 8_000_000 || length > dis.available()) throw new IOException("Invalid byte array length");
+        if (length < 0 || length > 8_000_000 || length > dis.available()) {
+            throw new IOException("Invalid byte array length");
+        }
         byte[] bytes = new byte[length];
         dis.readFully(bytes);
         return bytes;
@@ -162,7 +161,7 @@ public class SerializeUtils {
      */
     public static void writeFixedBytes(DataOutputStream dos, byte[] bytes, int fixedLength) throws IOException {
         if (bytes == null || bytes.length != fixedLength) {
-            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength+"当前是"+bytes.length);
+            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength + "当前是" + bytes.length);
         }
         dos.write(bytes);
     }
@@ -192,7 +191,9 @@ public class SerializeUtils {
 
     // 辅助方法: 字节数组转十六进制字符串
     public static String bytesToHex(byte[] bytes) {
-        if (bytes == null) return "";
+        if (bytes == null) {
+            return "";
+        }
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x", b));
@@ -243,10 +244,10 @@ public class SerializeUtils {
     }
 
     public static int readLittleEndianInt(byte[] intValueBytes) {
-        assert intValueBytes!=null;
+        assert intValueBytes != null;
         // 小端序：最低有效字节在前
-        return ((intValueBytes[0] & 0xFF))        |  // 字节0 -> 最低8位
-                ((intValueBytes[1] & 0xFF) << 8)   |  // 字节1 -> 8-15位
+        return ((intValueBytes[0] & 0xFF)) |  // 字节0 -> 最低8位
+                ((intValueBytes[1] & 0xFF) << 8) |  // 字节1 -> 8-15位
                 ((intValueBytes[2] & 0xFF) << 16) |  // 字节2 -> 16-23位
                 ((intValueBytes[3] & 0xFF) << 24);   // 字节3 -> 最高8位
     }
@@ -255,17 +256,16 @@ public class SerializeUtils {
      * 十六进制字符串转字节数组
      */
     public static byte[] hexToBytes(String hex) {
-        if (hex.isEmpty()){
+        if (hex.isEmpty()) {
             return null;
         }
         int len = hex.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
             data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
-                    + Character.digit(hex.charAt(i+1), 16));
+                    + Character.digit(hex.charAt(i + 1), 16));
         }
         return data;
     }
-
 
 }

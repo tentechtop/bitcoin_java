@@ -5,8 +5,8 @@ public record P2PBlacklistEntry(
         String key,
         String reason,
         long createdAtMillis,
-        long expiresAtMillis
-) {
+        long expiresAtMillis) {
+
     public boolean permanent() {
         return expiresAtMillis <= 0;
     }

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AimdCongestionControllerTest {
+
     @Test
     void reservesWindowGrowsOnAckAndShrinksOnLoss() {
         AimdCongestionController controller = new AimdCongestionController(100, 200, 1_000, 10_000, 2_000);

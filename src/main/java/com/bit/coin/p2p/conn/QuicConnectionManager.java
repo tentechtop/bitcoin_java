@@ -1,6 +1,9 @@
 package com.bit.coin.p2p.conn;
 
+import com.bit.coin.config.SystemConfig;
 import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.blockchain.ChainTipSnapshot;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.production.P2PAddressValidator;
 import com.bit.coin.p2p.production.P2PErrorCode;
@@ -38,7 +41,6 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.config.SystemConfig.SelfPeer;
 import static com.bit.coin.p2p.conn.QuicConstants.*;
 import static com.bit.coin.p2p.conn.QuicFrame.ALLOCATOR;
@@ -48,85 +50,126 @@ import static com.bit.coin.utils.ECCWithAESGCM.generateSharedSecret;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
-
 @Slf4j
 @Component
 public class QuicConnectionManager {
 
+    private static long handshakeSecond;
+
+    private static int handshakeCount;
+
     @Autowired
     private RoutingTable routingTable;
-    @Autowired private com.bit.coin.config.SystemConfig systemConfig;
+
+    @Autowired
+    SystemConfig systemConfig;
+
+    @Autowired
+    private BlockChainServiceImpl blockChainService;
+
+    private static volatile BlockChainServiceImpl CHAIN_REF;
+
     private static volatile int NETWORK;
-    public static void configureNetwork(int network) { NETWORK = network; }
-    private record PendingHandshake(RequestConnect request, InetSocketAddress remote, String expectedPeer, RelayPath route) {}
+
+    public static void configureNetwork(int network) {
+        NETWORK = network;
+    }
+
+    private record PendingHandshake(RequestConnect request, InetSocketAddress remote, String expectedPeer,
+            RelayPath route,
+            CompletableFuture<VerifiedHandshake> reply) {}
+
+    private record VerifiedHandshake(QuicFrame frame, RequestConnect response) {}
+
     private record HandshakeReply(byte[] request, InetSocketAddress remote, RelayPath route, QuicFrame response) {}
-    private static final com.github.benmanes.caffeine.cache.Cache<Long, HandshakeReply> HANDSHAKE_REPLIES =
-            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(100)
-                    .expireAfterWrite(10, TimeUnit.SECONDS).build();
-    private static long handshakeSecond;
-    private static int handshakeCount;
+
+    private static final com.github.benmanes.caffeine.cache.Cache<Long, HandshakeReply> HANDSHAKE_REPLIES = com.github.benmanes.caffeine.cache.Caffeine
+            .newBuilder().maximumSize(100)
+            .expireAfterWrite(10, TimeUnit.SECONDS).build();
+
     private static synchronized boolean allowInboundHandshake() {
         long second = System.nanoTime() / 1_000_000_000L;
-        if (second != handshakeSecond) { handshakeSecond = second; handshakeCount = 0; }
+        if (second != handshakeSecond) {
+            handshakeSecond = second;
+            handshakeCount = 0;
+        }
         return ++handshakeCount <= 50;
     }
-    private static final Map<Long, PendingHandshake> PENDING_HANDSHAKES = new ConcurrentHashMap<>();
-    private static final com.github.benmanes.caffeine.cache.Cache<String, Boolean> HANDSHAKE_NONCES =
-            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(10_000)
-                    .expireAfterWrite(125, TimeUnit.SECONDS).build();
 
+    private static final Map<Long, PendingHandshake> PENDING_HANDSHAKES = new ConcurrentHashMap<>();
+    private static final com.github.benmanes.caffeine.cache.Cache<String, Boolean> HANDSHAKE_NONCES = com.github.benmanes.caffeine.cache.Caffeine
+            .newBuilder().maximumSize(10_000)
+            .expireAfterWrite(125, TimeUnit.SECONDS).build();
+
+    private static ChainTipSnapshot currentTip() {
+        BlockChainServiceImpl chain = CHAIN_REF;
+        return chain == null ? null : chain.getMainTipSnapshot();
+    }
+
+    /** 应答的来源、路径、身份和签名均匹配时，唤醒对应的握手请求。 */
     public static void completeHandshakeResponse(QuicFrame frame) {
         PendingHandshake pending = PENDING_HANDSHAKES.get(frame.getDataId());
         if (pending == null || !pending.remote().equals(frame.getRemoteAddress())
-                || !java.util.Objects.equals(pending.route(), frame.getRelayPath())) return;
+                || !java.util.Objects.equals(pending.route(), frame.getRelayPath())) {
+            return;
+        }
+        if (pending.reply().isDone() || frame.getConnectionId() != pending.request().getConnectionId()) {
+            return;
+        }
+        VerifiedHandshake verified = verifyHandshakeResponse(frame, pending.request());
+        if (verified != null && pending.expectedPeer().equals(bytesToHex(verified.response().getPeerId()))) {
+            pending.reply().complete(verified);
+        }
+    }
+
+    private static VerifiedHandshake verifyHandshakeResponse(QuicFrame frame, RequestConnect request) {
+        if (frame.getFrameType() != QuicFrameEnum.CONNECT_RESPONSE_FRAME.getCode()) {
+            return null;
+        }
         RequestConnect response = RequestConnect.deserialize(frame.getPayload());
-        if (!response.verifyContext(NETWORK, pending.request().getConnectionId(), frame.getDataId(),
-                RequestConnect.RESPONSE, pending.request().getNonce(), System.currentTimeMillis() / 1000)
-                || frame.getConnectionId() != pending.request().getConnectionId()
-                || !pending.expectedPeer().equals(bytesToHex(response.getPeerId()))) return;
-        CompletableFuture<QuicFrame> future = QUICFRAME_RESPONSE_FUTURECACHE.getIfPresent(frame.getDataId());
-        if (future != null) future.complete(frame);
+        if (!response.verifyContext(NETWORK, frame.getConnectionId(), frame.getDataId(),
+                RequestConnect.RESPONSE, request.getNonce(), System.currentTimeMillis() / 1000)) {
+            return null;
+        }
+        return new VerifiedHandshake(frame, response);
     }
 
     private static volatile RoutingTable ROUTING_TABLE_REF;
 
     //节点ID到连接ID
     public static final Map<String, Long> PEER_CONNECTION = new ConcurrentHashMap<>();
-    //连接ID到连接实??连接中有节点ID
-    private static final Map<Long, QuicConnection> CONNECTION_MAP  = new ConcurrentHashMap<>();
+    // 按连接 ID 查找会话，节点 ID 则通过 PEER_CONNECTION 反查。
+    private static final Map<Long, QuicConnection> CONNECTION_MAP = new ConcurrentHashMap<>();
     private static final int X25519_KEY_LENGTH = 32;
-
 
     //全局UDP通道
     public static DatagramChannel Global_Channel = null;// UDP通道
 
+    // 所有连接共享同一出站流量预算。
+    private static final P2PGlobalTrafficController GLOBAL_OUTBOUND_TRAFFIC = P2PGlobalTrafficController
+            .fromSystemProperties();
 
-    // 连接过期时间（ms）：2秒无活跃则清理
-    private static final P2PGlobalTrafficController GLOBAL_OUTBOUND_TRAFFIC =
-            P2PGlobalTrafficController.fromSystemProperties();
-
-    private static final long CONNECTION_EXPIRE_TIME = 60_000;
+    private static final long CONNECTION_EXPIRE_TIME = 60_000;  // 距最后活跃时间超过此毫秒数时清理连接
 
     // ===================== 定时任务线程池 =====================
     // 单线程定时任务池：用于每秒执行连接检查，设置为守护线程避免阻塞应用关闭
-    private final ScheduledExecutorService connectionHealthExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "quic-connection-health-thread");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ScheduledExecutorService connectionHealthExecutor = Executors
+            .newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "quic-connection-health-thread");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     // 高频任务池（发送检查）：20ms/次
     private final ScheduledExecutorService connectionSendExecutor = new ScheduledThreadPoolExecutor(
-            2, // 核心线程数为CPU核心数的一半，至少2个
+            2,  // 发送任务池固定使用两个线程
             runnable -> {
                 Thread thread = new Thread(runnable, "quic-connection-send-thread");
                 thread.setDaemon(true);
                 return thread;
-            }
-    );
+            });
 
-
-    // 全局最大连接数限制（根据服务器性能调整）
+    // 握手回调独立排队，避免阻塞收包线程。
     private static final ThreadPoolExecutor HANDSHAKE_CALLBACK_EXECUTOR = new ThreadPoolExecutor(
             2,
             4,
@@ -138,11 +181,10 @@ public class QuicConnectionManager {
                 thread.setDaemon(true);
                 return thread;
             },
-            new ThreadPoolExecutor.AbortPolicy()
-    );
+            new ThreadPoolExecutor.AbortPolicy());
 
-    private static final int MAX_GLOBAL_CONNECTIONS = 100;
-    // 单IP每秒最大连接请求数（防止短时间高频请求??
+    private static final int MAX_GLOBAL_CONNECTIONS = 100;  // 连接总数上限，同时用于限制等待完成的握手数量
+    // 同一来源 IP 在一秒计数窗口内允许的握手请求数。
     private static final int MAX_REQUEST_PER_IP_PER_SECOND = 10;
     // 单PeerId每分钟最大重复连接请求数
     private static final int MAX_REQUEST_PER_PEER_PER_MINUTE = 5;
@@ -155,6 +197,7 @@ public class QuicConnectionManager {
             .maximumSize(10_000)
             .concurrencyLevel(4)
             .build(new CacheLoader<>() {
+
                 @Override
                 public AtomicInteger load(String ip) {
                     return new AtomicInteger(0);
@@ -167,6 +210,7 @@ public class QuicConnectionManager {
             .maximumSize(10_000)
             .concurrencyLevel(4)
             .build(new CacheLoader<>() {
+
                 @Override
                 public AtomicInteger load(String peerId) {
                     return new AtomicInteger(0);
@@ -179,12 +223,12 @@ public class QuicConnectionManager {
             .maximumSize(10_000)
             .concurrencyLevel(4)
             .build(new CacheLoader<>() {
+
                 @Override
                 public Boolean load(String ip) {
                     return false; // 默认未拉??
                 }
             });
-
 
     /**
      * 启动连接检查定时任务：每秒执行一次checkConnection
@@ -192,25 +236,25 @@ public class QuicConnectionManager {
     @PostConstruct
     public void initConnectionCheckTask() {
         ROUTING_TABLE_REF = routingTable;
+        CHAIN_REF = blockChainService;
         NETWORK = systemConfig.getParams().getNet();
-        if (!systemConfig.isNetworkingEnabled()) return;
+        if (!systemConfig.isNetworkingEnabled()) {
+            return;
+        }
         // 低频心跳清理
         connectionHealthExecutor.scheduleAtFixedRate(
                 this::checkConnection,
                 1,
                 1,
-                TimeUnit.SECONDS
-        );
+                TimeUnit.SECONDS);
 
         // 高频：20ms/次发送检查
         connectionSendExecutor.scheduleAtFixedRate(
                 this::checkConnectionSendData,
                 0,
                 20,
-                TimeUnit.MILLISECONDS
-        );
+                TimeUnit.MILLISECONDS);
     }
-
 
     // 销毁方法
     @PreDestroy
@@ -238,8 +282,6 @@ public class QuicConnectionManager {
         }
         log.info("{}线程池已关闭", name);
     }
-
-
 
     /**
      * 通过连接ID获取连接
@@ -300,9 +342,9 @@ public class QuicConnectionManager {
     }
 
     private static byte[] negotiateSharedSecret(byte[] localPrivateKey,
-                                                byte[] remotePublicKey,
-                                                long connectionId,
-                                                InetSocketAddress remoteAddress) {
+            byte[] remotePublicKey,
+            long connectionId,
+            InetSocketAddress remoteAddress) {
         if (!isValidSharedSecretMaterial(remotePublicKey)) {
             log.warn("[reject connection] invalid sharedSecret public key, connectionId={}, remote={}",
                     connectionId, remoteAddress);
@@ -390,7 +432,6 @@ public class QuicConnectionManager {
         }
     }
 
-
     /**
      * 获取所有连接ID
      */
@@ -438,7 +479,6 @@ public class QuicConnectionManager {
         }
     }
 
-
     /**
      * 通过连接ID获取节点
      */
@@ -446,13 +486,12 @@ public class QuicConnectionManager {
         return CONNECTION_MAP.get(connectionId).getPeerId();
     }
 
-
     /**
      * 通过自解释型地址来连接节??/ip4/127.0.0.1/quic/8334/p2p/CrACARmu8BpDDBz9XknpqgZzMZRgratLMdEk7C76avaU
      * @param multiAddressString
      * @return
      */
-    public static QuicConnection connectRemoteByAddr(String multiAddressString){
+    public static QuicConnection connectRemoteByAddr(String multiAddressString) {
         //不为空
         if (multiAddressString == null || multiAddressString.isEmpty()) {
             return null;
@@ -478,12 +517,16 @@ public class QuicConnectionManager {
         RelayPath route = null;
         if (multiAddress.isRelayed()) {
             var relay = P2PAddressValidator.parseQuicAddress(multiAddress.relayAddress());
-            if (!RelayTransport.isTrusted(relay.peerIdHex())) return null;
+            if (!RelayTransport.isTrusted(relay.peerIdHex())) {
+                return null;
+            }
             QuicConnection hop = connectRemoteByAddr(multiAddress.relayAddress());
-            if (hop == null || hop.getRelayPath() != null) return null;
+            if (hop == null || hop.getRelayPath() != null) {
+                return null;
+            }
             route = new RelayPath(hop.getConnectionId(), peerIdHex);
         }
-        QuicConnection connection = connectRemote(ipAddress,port,peerIdHex,route);
+        QuicConnection connection = connectRemote(ipAddress, port, peerIdHex, route);
         return connection != null ? connection : getConnectionByPeerId(peerIdHex);
     }
 
@@ -494,7 +537,7 @@ public class QuicConnectionManager {
             return null;
         }
         Long l = PEER_CONNECTION.get(peerId);
-        if (l!=null){
+        if (l != null) {
             QuicConnection connection = getConnection(l);
             if (connection != null && !connection.isExpired()
                     && (connection.getRelayPath() == null || connection.getRelayPath().isAvailable())) {
@@ -511,7 +554,6 @@ public class QuicConnectionManager {
         String s = bytesToHex(decode);
         return getConnectionByPeerId(s);
     }
-
 
     private static QuicConnection connectRemote(String ipAddress, int port, String expectedPeer) {
         return connectRemote(ipAddress, port, expectedPeer, null);
@@ -536,9 +578,13 @@ public class QuicConnectionManager {
             reqQuicFrame.setFrameType(QuicFrameEnum.CONNECT_REQUEST_FRAME.getCode());
             RequestConnect requestConnect = new RequestConnect();
             requestConnect.setPeerId(SelfPeer.getId());
-            requestConnect.setLatestHash(mainTipBlock.getHash());
-            requestConnect.setLatestHeight(mainTipBlock.getHeight());
-            requestConnect.setChainWork(mainTipBlock.getChainWork());
+            ChainTipSnapshot tip = currentTip();
+            if (tip == null) {
+                return null;
+            }
+            requestConnect.setLatestHash(tip.hash());
+            requestConnect.setLatestHeight(tip.height());
+            requestConnect.setChainWork(tip.chainWork());
             byte[][] AKeys = generateCurve25519KeyPair();
             byte[] aPrivateKey = AKeys[0];
             byte[] aPublicKey = AKeys[1];
@@ -547,38 +593,46 @@ public class QuicConnectionManager {
             requestConnect.setSharedSecretPubKey(aPublicKey);
             byte[] signatureData = requestConnect.getSignatureData();
             //生成签名
-            byte[] signature = Ed25519Signer.fastSign(SelfPeer.getPrivateKey(),signatureData);//签名
+            byte[] signature = Ed25519Signer.fastSign(SelfPeer.getPrivateKey(), signatureData);//签名
             requestConnect.setSignature(signature);
             byte[] serialize = requestConnect.serialize();
             reqQuicFrame.setPayload(serialize);
             reqQuicFrame.setRemoteAddress(remoteAddress);
             reqQuicFrame.setRelayPath(route);
-            reqQuicFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH+serialize.length);
+            reqQuicFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH + serialize.length);
             //发送连接确认帧
-            CompletableFuture<QuicFrame> responseFuture = new CompletableFuture<>();
+            CompletableFuture<VerifiedHandshake> responseFuture = new CompletableFuture<>();
             synchronized (PENDING_HANDSHAKES) {
-                if (PENDING_HANDSHAKES.size() >= MAX_GLOBAL_CONNECTIONS) return null;
-                PENDING_HANDSHAKES.put(dataId, new PendingHandshake(requestConnect, remoteAddress, expectedPeer, route));
+                if (PENDING_HANDSHAKES.size() >= MAX_GLOBAL_CONNECTIONS) {
+                    return null;
+                }
+                PENDING_HANDSHAKES.put(dataId,
+                        new PendingHandshake(requestConnect, remoteAddress, expectedPeer, route, responseFuture));
             }
-            QUICFRAME_RESPONSE_FUTURECACHE.put(dataId,responseFuture);
             try {
                 for (int attempt = 0; attempt < 5; attempt++) {
-                    if (route != null && !route.isAvailable()) return null;
+                    if (route != null && !route.isAvailable()) {
+                        return null;
+                    }
                     sendFrameWithoutResponse(reqQuicFrame);
                     try {
-                        return handleConnectResponseFrame(responseFuture.get(1, TimeUnit.SECONDS), aPrivateKey, requestConnect);
+                        return establishConnection(responseFuture.get(1, TimeUnit.SECONDS), aPrivateKey,
+                                requestConnect);
                     } catch (TimeoutException lostPacket) {
-                        if (attempt == 4) throw lostPacket;
+                        if (attempt == 4) {
+                            throw lostPacket;
+                        }
                     }
                 }
                 return null;
             } finally {
-                QUICFRAME_RESPONSE_FUTURECACHE.invalidate(dataId);
                 PENDING_HANDSHAKES.remove(dataId);
                 Arrays.fill(aPrivateKey, (byte) 0);
             }
-        }catch (Exception e){
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             P2PTransferErrorEvents.publish(P2PTransferErrorRecord.now(
                     null,
                     ipAddress + ":" + port,
@@ -586,55 +640,47 @@ public class QuicConnectionManager {
                     e.getMessage(),
                     dataId,
                     conId,
-                    e
-            ));
-            log.error("连接远程节点失败",e);
+                    e));
+            log.error("连接远程节点失败", e);
             return null;
         }
     }
 
-
     //处理连接响应：直接根据帧携带的内容创建一个连接
-    public static QuicConnection handleConnectResponseFrame(QuicFrame quicFrame,byte[] aPrivateKey,RequestConnect request) {
-        // 步骤1：基础校验 - 帧类型判断
-        QuicFrameEnum quicFrameEnum = QuicFrameEnum.fromCode(quicFrame.getFrameType());
-        if (quicFrameEnum != QuicFrameEnum.CONNECT_RESPONSE_FRAME) {
-            log.warn("无效的连接响应帧类型：{}", quicFrame.getFrameType());
-            return null;
-        }
+    public static QuicConnection handleConnectResponseFrame(QuicFrame quicFrame, byte[] aPrivateKey,
+            RequestConnect request) {
+        VerifiedHandshake verified = verifyHandshakeResponse(quicFrame, request);
+        return verified == null ? null : establishConnection(verified, aPrivateKey, request);
+    }
+
+    private static QuicConnection establishConnection(VerifiedHandshake verified, byte[] aPrivateKey,
+            RequestConnect request) {
+        QuicFrame quicFrame = verified.frame();
+        RequestConnect response = verified.response();
         long connectionId = quicFrame.getConnectionId();
         InetSocketAddress remoteAddress = quicFrame.getRemoteAddress();
         if (remoteAddress == null || remoteAddress.getAddress() == null) {
             log.warn("连接响应缺少远程地址，连接ID：{}", connectionId);
             return null;
         }
-        if (!allowInboundHandshake()) return null;
+        if (!allowInboundHandshake()) {
+            return null;
+        }
         String remoteIp = remoteAddress.getAddress().getHostAddress();
         if (hasConnection(connectionId)) {
             log.warn("连接响应中的连接ID已存在，连接ID：{}", connectionId);
             return null;
         }
 
-        // 步骤2：解析请求体（先解析，再做PeerId校验）
-        byte[] payload = quicFrame.getPayload();
-        RequestConnect deserialize = RequestConnect.deserialize(payload);
-        //验证签名
-        boolean b = deserialize.verifyContext(NETWORK, connectionId, quicFrame.getDataId(),
-                RequestConnect.RESPONSE, request.getNonce(), System.currentTimeMillis() / 1000);
-        if (!b){
-            log.warn("连接响应签名验证失败，连接ID：{}，远程地址：{}", connectionId, remoteAddress);
-            return null;
-        }
-
         // 版本网络校验（原有逻辑，保留）
-        int version = deserialize.getVersion();
+        int version = response.getVersion();
         if (version != RequestConnect.VERSION) { // 假设当前版本为1，根据实际业务调整
             log.warn("连接响应版本不支持，连接ID：{}，版本：{}", connectionId, version);
             return null;
         }
 
         // 步骤3：PeerId校验 - 重复PeerId请求限流
-        byte[] peerIdBytes = deserialize.getPeerId();
+        byte[] peerIdBytes = response.getPeerId();
         if (peerIdBytes == null || peerIdBytes.length == 0) {
             log.warn("连接响应缺少PeerId，连接ID：{}，远程地址：{}", connectionId, remoteAddress);
             return null;
@@ -644,7 +690,7 @@ public class QuicConnectionManager {
             log.warn("拒绝连接响应中的本机PeerId，连接ID：{}，远程地址：{}", connectionId, remoteAddress);
             return null;
         }
-        byte[] sharedSecretPubKey = deserialize.getSharedSecretPubKey();
+        byte[] sharedSecretPubKey = response.getSharedSecretPubKey();
         byte[] sharedSecret = negotiateSharedSecret(aPrivateKey, sharedSecretPubKey, connectionId, remoteAddress);
         if (sharedSecret == null) {
             return null;
@@ -660,7 +706,7 @@ public class QuicConnectionManager {
         quicConnection.setOutbound(true);//主动连接
         quicConnection.setSharedSecret(sharedSecret);
         quicConnection.setSessionCipher(new SessionCipher(sharedSecret, request.getSignatureData(),
-                deserialize.getSignatureData(), connectionId, true));
+                response.getSignatureData(), connectionId, true));
 
         registerConnection(peerIdHexString, connectionId, quicConnection);
 
@@ -669,28 +715,16 @@ public class QuicConnectionManager {
             Peer peer = new Peer();
             peer.setInetSocketAddress(remoteAddress);
             peer.setId(hexToBytes(peerIdHexString));
-            peer.setHeight(deserialize.getLatestHeight());
-            peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
-            peer.setChainWork(deserialize.getChainWork());
+            peer.setHeight(response.getLatestHeight());
+            peer.setHashHex(bytesToHex(response.getLatestHash()));
+            peer.setChainWork(response.getChainWork());
 
-            P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
-            byte[] serialize1 = null;
-            try {
-                serialize1 = p2PMessage.serialize();
-                QuicMsg quicMsg = new QuicMsg();
-                quicMsg.setTrustedLocal(true);
-                quicMsg.setConnectionId(connectionId);
-                quicMsg.setDataId(ID_Generator.nextId());
-                quicMsg.setData(serialize1);
-                pushCompleteMsg(quicMsg);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1,
+                    peer.serialize());
+            pushCompleteMsg(QuicMsg.local(connectionId, ID_Generator.nextId(), p2PMessage));
         });
         return quicConnection;
     }
-
-
 
     /**
      * 收到连接请求帧后调用该方??
@@ -714,7 +748,9 @@ public class QuicConnectionManager {
             log.warn("连接请求缺少远程地址，连接ID：{}", connectionId);
             return null;
         }
-        if (!allowInboundHandshake()) return null;
+        if (!allowInboundHandshake()) {
+            return null;
+        }
         String remoteIp = remoteAddress.getAddress().getHostAddress();
 
         //发送连接确认帧
@@ -727,7 +763,9 @@ public class QuicConnectionManager {
                     && java.util.Objects.equals(cached.route(), quicFrame.getRelayPath())
                     && Arrays.equals(cached.request(), quicFrame.getPayload())) {
                 QuicConnection existing = getConnection(connectionId);
-                if (existing != null && !existing.isExpired()) sendFrameWithoutResponse(cached.response());
+                if (existing != null && !existing.isExpired()) {
+                    sendFrameWithoutResponse(cached.response());
+                }
                 return existing;
             }
             // 步骤3：黑名单校验 - 拉黑IP直接拒绝
@@ -749,7 +787,7 @@ public class QuicConnectionManager {
             if (currentIpCount > MAX_REQUEST_PER_IP_PER_SECOND) {
                 log.warn("IP请求频率超限，加入黑名单，IP：{}，当前请求数：{}，限制：{}",
                         remoteIp, currentIpCount, MAX_REQUEST_PER_IP_PER_SECOND);
-                IP_BLACKLIST.put(rateKey, true); // A relayed sender must not blacklist every peer behind the relay.
+                IP_BLACKLIST.put(rateKey, true); // 封禁经中继转发的发送方时，不能连带封禁共用该中继的其他节点。
                 return null;
             }
 
@@ -765,7 +803,7 @@ public class QuicConnectionManager {
             //验证签名
             boolean b = deserialize.verifyContext(NETWORK, connectionId, quicFrame.getDataId(),
                     RequestConnect.REQUEST, null, System.currentTimeMillis() / 1000);
-            if (!b){
+            if (!b) {
                 log.warn("连接请求签名验证失败，连接ID：{}，远程IP：{}", connectionId, remoteIp);
                 return null;
             }
@@ -785,7 +823,9 @@ public class QuicConnectionManager {
                 return null;
             }
             String peerIdHexString = bytesToHex(peerIdBytes);
-            if (quicFrame.getRelayPath() != null && !peerIdHexString.equals(quicFrame.getRelayPath().peerId())) return null;
+            if (quicFrame.getRelayPath() != null && !peerIdHexString.equals(quicFrame.getRelayPath().peerId())) {
+                return null;
+            }
             if (P2PSelfNode.isSelfPeerId(peerIdHexString)) {
                 log.warn("拒绝本机PeerId发起的连接请求，连接ID：{}，远程IP：{}", connectionId, remoteIp);
                 return null;
@@ -801,7 +841,10 @@ public class QuicConnectionManager {
             synchronized (HANDSHAKE_NONCES) {
                 HANDSHAKE_NONCES.cleanUp();
                 if (HANDSHAKE_NONCES.estimatedSize() >= 10_000
-                        || HANDSHAKE_NONCES.asMap().putIfAbsent(peerIdHexString + bytesToHex(deserialize.getNonce()), true) != null) return null;
+                        || HANDSHAKE_NONCES.asMap().putIfAbsent(peerIdHexString + bytesToHex(deserialize.getNonce()),
+                                true) != null) {
+                    return null;
+                }
             }
 
             // 步骤9：高消耗操作（密钥生成），所有校验通过后再执行，避免浪费资源
@@ -814,19 +857,24 @@ public class QuicConnectionManager {
                 return null;
             }
 
-                RequestConnect responseConnect = new RequestConnect();
-                responseConnect.setPeerId(SelfPeer.getId());
-                responseConnect.setVersion(RequestConnect.VERSION);
-                responseConnect.bind(NETWORK, connectionId, quicFrame.getDataId(), RequestConnect.RESPONSE, deserialize.getNonce());
-                responseConnect.setLatestHash(mainTipBlock.getHash());
-                responseConnect.setLatestHeight(mainTipBlock.getHeight());
-                responseConnect.setChainWork(mainTipBlock.getChainWork());
-                responseConnect.setSharedSecretPubKey(bPublicKey);
+            RequestConnect responseConnect = new RequestConnect();
+            responseConnect.setPeerId(SelfPeer.getId());
+            responseConnect.setVersion(RequestConnect.VERSION);
+            responseConnect.bind(NETWORK, connectionId, quicFrame.getDataId(), RequestConnect.RESPONSE,
+                    deserialize.getNonce());
+            ChainTipSnapshot tip = currentTip();
+            if (tip == null) {
+                return null;
+            }
+            responseConnect.setLatestHash(tip.hash());
+            responseConnect.setLatestHeight(tip.height());
+            responseConnect.setChainWork(tip.chainWork());
+            responseConnect.setSharedSecretPubKey(bPublicKey);
 
-                byte[] signatureData = responseConnect.getSignatureData();
-                //生成签名
-                byte[] signature = Ed25519Signer.fastSign(SelfPeer.getPrivateKey(),signatureData);//签名
-                responseConnect.setSignature(signature);
+            byte[] signatureData = responseConnect.getSignatureData();
+            //生成签名
+            byte[] signature = Ed25519Signer.fastSign(SelfPeer.getPrivateKey(), signatureData);//签名
+            responseConnect.setSignature(signature);
 
             Arrays.fill(bPrivateKey, (byte) 0);
             // 步骤10：创建连接实例并缓存
@@ -852,7 +900,7 @@ public class QuicConnectionManager {
                 responseFrame.setTotal(1);
                 responseFrame.setFrameType(QuicFrameEnum.CONNECT_RESPONSE_FRAME.getCode());
                 responseFrame.setPayload(serialize);
-                responseFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH+serialize.length);
+                responseFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH + serialize.length);
                 responseFrame.setRemoteAddress(remoteAddress);
                 responseFrame.setRelayPath(quicFrame.getRelayPath());
                 HANDSHAKE_REPLIES.put(connectionId, new HandshakeReply(quicFrame.getPayload().clone(),
@@ -861,7 +909,6 @@ public class QuicConnectionManager {
                 sendFrameWithoutResponse(responseFrame);
                 log.info("成功为PeerId {}（IP：{}）创建连接，连接ID：{}", peerIdHexString, remoteIp, connectionId);
 
-
                 Peer peer = new Peer();
                 peer.setInetSocketAddress(remoteAddress);
                 peer.setId(hexToBytes(peerIdHexString));
@@ -869,19 +916,9 @@ public class QuicConnectionManager {
                 peer.setHashHex(bytesToHex(deserialize.getLatestHash()));
                 peer.setChainWork(deserialize.getChainWork());
 
-                P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1, peer.serialize());
-                byte[] serialize1 = null;
-                try {
-                    serialize1 = p2PMessage.serialize();
-                    QuicMsg quicMsg = new QuicMsg();
-                quicMsg.setTrustedLocal(true);
-                    quicMsg.setConnectionId(connectionId);
-                    quicMsg.setDataId(ID_Generator.nextId());
-                    quicMsg.setData(serialize1);
-                    pushCompleteMsg(quicMsg);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+                P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), ProtocolEnum.Handshake_Success_V1,
+                        peer.serialize());
+                pushCompleteMsg(QuicMsg.local(connectionId, ID_Generator.nextId(), p2PMessage));
             });
 
             return quicConnection;
@@ -890,10 +927,6 @@ public class QuicConnectionManager {
             return null;
         }
     }
-
-
-
-
 
     /**
      * 每秒执行的连接检查逻辑??
@@ -917,7 +950,8 @@ public class QuicConnectionManager {
                 continue;
             }
             //连接是否被标记为过期
-            if (connection.isExpired() || (connection.getRelayPath() != null && !connection.getRelayPath().isAvailable())) {
+            if (connection.isExpired()
+                    || (connection.getRelayPath() != null && !connection.getRelayPath().isAvailable())) {
                 //双删
                 connection.release();
                 PEER_CONNECTION.remove(connection.getPeerId(), connectionId);
@@ -960,7 +994,6 @@ public class QuicConnectionManager {
                 //清理过期数据
                 connection.cleanExpiredData();
 
-
             } catch (Exception e) {
                 // 单个连接异常不影响整体检查流程，强制清理异常连接
                 log.error("检查连接时发生异常，准备强制清理，连接ID：{}", connectionId, e);
@@ -998,10 +1031,6 @@ public class QuicConnectionManager {
         }
     }
 
-
-
-
-
     // 全局出站流量预算
     public static int reserveGlobalOutboundBytes(int requestedBytes) {
         return GLOBAL_OUTBOUND_TRAFFIC.reserve(requestedBytes);
@@ -1037,12 +1066,18 @@ public class QuicConnectionManager {
             RelayPath route = quicFrame.getRelayPath() != null ? quicFrame.getRelayPath()
                     : activeConnection == null ? null : activeConnection.getRelayPath();
             if (route != null) {
-                if (RelayTransport.isRelayFrame(quicFrame.getFrameType())) return false;
+                if (RelayTransport.isRelayFrame(quicFrame.getFrameType())) {
+                    return false;
+                }
                 boolean sent = RelayTransport.send(route, datagram);
-                if (sent && activeConnection != null) activeConnection.recordFrameSent(datagram.length);
+                if (sent && activeConnection != null) {
+                    activeConnection.recordFrameSent(datagram.length);
+                }
                 return sent;
             }
-            if (datagram.length > PathMtuEstimator.MAX_DATAGRAM_BYTES || !Global_Channel.isWritable()) return false;
+            if (datagram.length > PathMtuEstimator.MAX_DATAGRAM_BYTES || !Global_Channel.isWritable()) {
+                return false;
+            }
             buf = ALLOCATOR.buffer(datagram.length);
             buf.writeBytes(datagram);
             // 构建UDP数据包
@@ -1068,8 +1103,7 @@ public class QuicConnectionManager {
                     e.getMessage(),
                     dataId,
                     connectionId,
-                    e
-            ));
+                    e));
             if (buf != null) {
                 buf.release(); // 手动释放ByteBuf，防止内存泄漏
             }
@@ -1077,13 +1111,11 @@ public class QuicConnectionManager {
         }
     }
 
-
-
-    public static boolean disConnectRemoteByPeerId(String peerId){
+    public static boolean disConnectRemoteByPeerId(String peerId) {
         //断开节点下所有的连接
-        if (PEER_CONNECTION.containsKey(peerId)){
+        if (PEER_CONNECTION.containsKey(peerId)) {
             Long conId = PEER_CONNECTION.remove(peerId);
-            if (conId!=null) {
+            if (conId != null) {
                 QuicConnection connection = getConnection(conId);
                 if (connection != null) {
                     //发送下线帧
@@ -1104,12 +1136,18 @@ public class QuicConnectionManager {
         return true;
     }
 
-
-
-
-
     //32字节hex
-    public static byte[] staticSendData(String peerId, ProtocolEnum protocol, byte[] request, int time)  {
+    public static byte[] staticSendData(String peerId, ProtocolEnum protocol, byte[] request, int time) {
+        P2PMessage response = sendRequest(peerId, protocol, request, time);
+        try {
+            return response == null ? null : response.serialize();
+        } catch (IOException e) {
+            log.error("Could not encode response for {}", peerId, e);
+            return null;
+        }
+    }
+
+    public static P2PMessage sendRequest(String peerId, ProtocolEnum protocol, byte[] request, int time) {
         String normalizedPeerId = normalizePeerIdForCleanup(peerId);
         QuicConnection peerConnection = null;
         String requestId = null;
@@ -1123,7 +1161,7 @@ public class QuicConnectionManager {
 
             P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), protocol, request);
             byte[] serialize = p2PMessage.serialize();
-            CompletableFuture<QuicMsg> responseFuture = null;
+            CompletableFuture<P2PMessage> responseFuture = null;
             requestId = bytesToHex(p2PMessage.getRequestId());
             if (protocol.isHasResponse()) {
                 responseFuture = new CompletableFuture<>();
@@ -1135,13 +1173,13 @@ public class QuicConnectionManager {
             if (!protocol.isHasResponse()) {
                 return null;
             }
-            QuicMsg response = responseFuture.get(time, TimeUnit.MILLISECONDS);
+            P2PMessage response = responseFuture.get(time, TimeUnit.MILLISECONDS);
             if (response == null || response.getData() == null) {
                 cleanupFailedPeer(normalizedPeerId, protocol, P2PErrorCode.SEND_MESSAGE_FAILED,
                         "empty response", null, peerConnection);
                 return null;
             }
-            return response.getData();
+            return response;
         } catch (Exception e) {
             P2PErrorCode errorCode = e instanceof TimeoutException
                     ? P2PErrorCode.CONGESTION_TIMEOUT
@@ -1166,11 +1204,11 @@ public class QuicConnectionManager {
     }
 
     private static void cleanupFailedPeer(String peerId,
-                                          ProtocolEnum protocol,
-                                          P2PErrorCode errorCode,
-                                          String message,
-                                          Throwable cause,
-                                          QuicConnection connection) {
+            ProtocolEnum protocol,
+            P2PErrorCode errorCode,
+            String message,
+            Throwable cause,
+            QuicConnection connection) {
         if (peerId == null || peerId.isBlank()) {
             return;
         }
@@ -1190,47 +1228,12 @@ public class QuicConnectionManager {
                 errorMessage,
                 0,
                 connectionId,
-                cause
-        ));
+                cause));
         disConnectRemoteByPeerId(peerId);
 
         RoutingTable routingTable = ROUTING_TABLE_REF;
         if (routingTable != null) {
             routingTable.removeFailedPeer(peerId, errorMessage);
-        }
-    }
-
-    private static byte[] staticSendDataLegacy(String peerId, ProtocolEnum protocol, byte[] request, int time)  {
-        try {
-            QuicConnection peerConnection = getConnectionByPeerId(peerId);
-            if (peerConnection!=null && !peerConnection.isExpired()){
-                P2PMessage p2PMessage = newRequestMessage(SelfPeer.getId(), protocol, request);
-                byte[] serialize = p2PMessage.serialize();
-                CompletableFuture<QuicMsg> responseFuture = null;
-                String requestId = bytesToHex(p2PMessage.getRequestId());
-                if (protocol.isHasResponse()) {
-                    responseFuture = new CompletableFuture<>();
-                    MSG_EXPECTED_CONNECTIONS.put(requestId, peerConnection.getConnectionId());
-                MSG_RESPONSE_FUTURECACHE.put(requestId, responseFuture);
-                }
-                //且协议有返回值
-                peerConnection.sendData(serialize);
-                if (protocol.isHasResponse()){
-                    try {
-                        return responseFuture.get(time, TimeUnit.MILLISECONDS).getData();
-                    } finally {
-                        MSG_RESPONSE_FUTURECACHE.invalidate(requestId);
-                MSG_EXPECTED_CONNECTIONS.invalidate(requestId);
-                    }
-                }else {
-                    return null;
-                }
-            }
-            PEER_CONNECTION.remove(peerId);
-            return null;
-        }catch (Exception e){
-            log.error("静态发送数据失败，PeerId：{}，协议：{}", peerId, protocol, e);
-            return null;
         }
     }
 
@@ -1247,15 +1250,15 @@ public class QuicConnectionManager {
         for (Map.Entry<String, Long> entry : PEER_CONNECTION.entrySet()) {
             String peerId = entry.getKey();
             Long connectionIds = entry.getValue();
-            if (connectionIds!=null){
+            if (connectionIds != null) {
                 QuicConnection connection = getConnection(connectionIds);
-                if (connection!=null && !connection.isExpired()){
+                if (connection != null && !connection.isExpired()) {
                     onlinePeers.add(peerId);
-                }else {
+                } else {
                     //移除
                     PEER_CONNECTION.remove(peerId);
                 }
-            }else {
+            } else {
                 //移除
                 PEER_CONNECTION.remove(peerId);
             }

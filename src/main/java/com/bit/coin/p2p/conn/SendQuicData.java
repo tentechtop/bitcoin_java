@@ -16,39 +16,45 @@ import static com.bit.coin.p2p.conn.QuicConstants.RETRY_INTERVAL_MS;
 
 @Slf4j
 @Data
-public class SendQuicData extends QuicData{
-    private int[] frameRetries;
-    static final int MAX_FRAME_RETRIES = 5;
+public class SendQuicData extends QuicData {
 
+    private int[] frameRetries;
+    static final int MAX_FRAME_RETRIES = 5;  // 每个分片单独允许的最大重试次数
+
+    /** 按该分片已重试次数计算退避延迟，最多放大八倍且不超过 3 秒。 */
     synchronized long retryDelayMillis(int sequence, long initialDelay) {
         int retries = frameRetries == null ? 0 : frameRetries[sequence];
         return Math.min(3000, initialDelay * (1L << Math.min(retries, 3)));
     }
 
     synchronized boolean reserveFrameRetry(int sequence) {
-        if (sequence < 0 || sequence >= getTotal()) return false;
-        if (frameRetries == null) frameRetries = new int[getTotal()];
-        if (frameRetries[sequence] >= MAX_FRAME_RETRIES) return false;
+        if (sequence < 0 || sequence >= getTotal()) {
+            return false;
+        }
+        if (frameRetries == null) {
+            frameRetries = new int[getTotal()];
+        }
+        if (frameRetries[sequence] >= MAX_FRAME_RETRIES) {
+            return false;
+        }
         frameRetries[sequence]++;
         return true;
     }
 
-    // 重传计数（默认0，最多重传1次）
+    // 整条消息的重试次数，与分片重试预算分开记录。
     private AtomicInteger retryCount = new AtomicInteger(0);
 
     // 最后一次重传时间（ms），用于控制150ms间隔，初始为首次发送时间
     private AtomicLong lastRetryTime = new AtomicLong(0);
 
-
     //数据首次发送时间 用于超时重传判断
     private long sendTime;
 
-    //超时时间 默认5秒 后期根据数据大小和网络平均时间来调整 此时触发未确认重传 超时重传机制
+    // 未获确认时触发重传的等待时间，单位为毫秒。
     private long timeout = 2500;
 
     //过期时间 要被删除
     private long expireTime = 5000;
-
 
     //是否发送完成
     private volatile boolean isCompleted = false;
@@ -56,7 +62,6 @@ public class SendQuicData extends QuicData{
     private final Set<Integer> ackedSequences = Collections.newSetFromMap(new ConcurrentHashMap<>());
     //已经发送的序列号 通过已经发送和已经确认能确定哪些是丢失的
     private final Set<Integer> sentSequences = Collections.newSetFromMap(new ConcurrentHashMap<>());
-
 
     //通过int[]来实现填充已经发送的帧序列号
     /**
@@ -92,7 +97,6 @@ public class SendQuicData extends QuicData{
         log.info("[初始化已发送序列号] 连接ID:{} 数据ID:{} 总帧数:{} 传入序列号数:{} 实际新增数:{}",
                 getConnectionId(), getDataId(), totalFrames, sentSequences.length, addedCount);
     }
-
 
     /**
      * 批量获取帧（优先获取已发送但未ACK且超时的重传帧，再补充未发送帧，总字节数≤size）
@@ -206,7 +210,6 @@ public class SendQuicData extends QuicData{
         return result;
     }
 
-
     /**
      * 按字节大小批量获取未发送的帧（按序列号升序，总字节数≤size）
      * @param size 最大字节数限制（正数，若≤0返回空数组）
@@ -282,8 +285,6 @@ public class SendQuicData extends QuicData{
         return result;
     }
 
-
-
     public int[] getUnAckedSequences() {
         //是否完成
         if (isCompleted) {
@@ -323,9 +324,6 @@ public class SendQuicData extends QuicData{
         return unAckedArray;
     }
 
-
-
-
     /**
      * 确认一个序列号
      * @param sequence 需要添加到确认序列好集合中
@@ -353,86 +351,38 @@ public class SendQuicData extends QuicData{
      * @param ackData 批量ACK的比特位数组（长度为 (总帧数+7)/8 向上取整 + 4字节接收窗口）
      * @return 返回接收窗口大小及确认帧数等信息
      */
-    synchronized public AckResult handleBitMapACKFrame(byte[] ackData) {
-        long rtime = System.nanoTime();
-        if (ackData == null || ackData.length == 0) {
-            log.warn("[批量ACK处理] ACK列表为空，连接ID:{} 数据ID:{}", getConnectionId(), getDataId());
-            // 空数据时确认帧数为0
+    public synchronized AckResult handleBitMapACKFrame(byte[] ackData) {
+        int total = getTotal();
+        int bitmapBytes = (total + 7) / 8;
+        if (ackData == null || ackData.length < bitmapBytes + Integer.BYTES) {
             return new AckResult(false, false, 0, 0);
         }
 
-        int totalFrames = getTotal();
-        int expectedByteLength = (totalFrames + 7) / 8 + 4; // 计算预期的字节长度（比特位图 + 4字节接收窗口）
-
-        // 校验ACK列表长度是否匹配总帧数（防止恶意或错误的ACK数据）
-        if (ackData.length < expectedByteLength) {
-            log.warn("[批量ACK处理] ACK列表长度不足，总帧数:{} 预期最小字节数:{} 实际字节数:{}，连接ID:{} 数据ID:{}",
-                    totalFrames, expectedByteLength, ackData.length, getConnectionId(), getDataId());
-            // 长度不匹配时确认帧数为0
-            return new AckResult(false, false, 0, 0);
-        }
-
-        int confirmedCount = 0; // 统计本次批量确认的新序列号数量
-        int bitmapLength = (totalFrames + 7) / 8; // 比特位图的实际长度
-
-        // 解析接收窗口（payload 最后 4 字节）
-        int receiveWindow = 0;
-        if (ackData.length >= bitmapLength + 4) {
-            // 按大端序解析 int（4字节）
-            receiveWindow = ((ackData[bitmapLength] & 0xFF) << 24) |
-                    ((ackData[bitmapLength + 1] & 0xFF) << 16) |
-                    ((ackData[bitmapLength + 2] & 0xFF) << 8) |
-                    (ackData[bitmapLength + 3] & 0xFF);
-            log.debug("[解析接收窗口] 连接ID:{} 数据ID:{} 接收窗口:{}字节",
-                    getConnectionId(), getDataId(), receiveWindow);
-        }
-
-        // 遍历每个字节解析比特位（只解析比特位图部分）
-        for (int byteIndex = 0; byteIndex < bitmapLength; byteIndex++) {
-            byte ackByte = ackData[byteIndex];
-
-            // 遍历当前字节的8个比特（大端序：bitIndex=0对应最高位，代表序列号 byteIndex*8 + 0）
-            for (int bitIndex = 0; bitIndex < 8; bitIndex++) {
-                int sequence = byteIndex * 8 + bitIndex; // 计算对应的序列号
-
-                // 序列号超出总帧数范围时终止（最后一个字节可能有无效比特）
-                if (sequence >= totalFrames) {
-                    break;
+        var newlyAcked = java.util.stream.IntStream.builder();
+        for (int offset = 0; offset < bitmapBytes; offset++) {
+            int bits = Byte.toUnsignedInt(ackData[offset]);
+            while (bits != 0) {
+                int bit = Integer.numberOfTrailingZeros(bits);
+                int sequence = offset * 8 + 7 - bit;
+                if (sequence < total && ackedSequences.add(sequence)) {
+                    newlyAcked.add(sequence);
                 }
-                // 检查当前比特是否为1（已确认）
-                boolean isAcked = (ackByte & (1 << (7 - bitIndex))) != 0;
-                if (isAcked) {
-                    // 调用已有的单ACK处理逻辑（自动去重并检查是否全部确认）
-                    if (ackedSequences.add(sequence)) {
-                        // 帧接收时间
-                        confirmedCount++;
-                        log.debug("[批量ACK确认] 连接ID:{} 数据ID:{} 序列号:{} 已确认",
-                                getConnectionId(), getDataId(), sequence);
-                    }
-                }
+                bits &= bits - 1;
             }
         }
-
-        log.debug("[批量ACK处理完成] 连接ID:{} 数据ID:{} 总帧数:{} 本次确认新序列号:{} 累计确认:{}",
-                getConnectionId(), getDataId(), totalFrames, confirmedCount, ackedSequences.size());
-
-        // 检查是否所有帧都已确认（触发完成逻辑）
-        if (ackedSequences.size() == totalFrames) {
-            log.debug("[所有帧通过批量ACK确认] 连接ID:{} 数据ID:{} 传输完成", getConnectionId(), getDataId());
+        if (ackedSequences.size() == total) {
             handleSendSuccess();
-            // 关键修改：将confirmedCount传入AckResult的ackedFrameCounts字段
-            return new AckResult(true, true, receiveWindow, confirmedCount);
         }
-        // 关键修改：将confirmedCount传入AckResult的ackedFrameCounts字段
-        return new AckResult(true, false, receiveWindow, confirmedCount);
+        int receiveWindow = java.nio.ByteBuffer.wrap(ackData).getInt(ackData.length - Integer.BYTES);
+        int[] sequences = newlyAcked.build().toArray();
+        AckResult result = new AckResult(true, isCompleted, receiveWindow, sequences.length);
+        result.setNewlyAckedSequences(sequences);
+        return result;
     }
-
-
 
     private void handleSendSuccess() {
         isCompleted = true;
     }
-
 
     public int getRetryCount() {
         return retryCount.get();
@@ -442,7 +392,6 @@ public class SendQuicData extends QuicData{
     public void incrementRetryCount() {
         retryCount.incrementAndGet();
     }
-
 
     //超时
     /**
@@ -457,7 +406,6 @@ public class SendQuicData extends QuicData{
         return (currentTime - sendTime) > timeout;
     }
 
-
     //过期
     /**
      * 修正：判断是否过期（修复nanoTime与ms混用问题）
@@ -470,7 +418,6 @@ public class SendQuicData extends QuicData{
         long currentTime = System.currentTimeMillis();
         return (currentTime - sendTime) > expireTime;
     }
-
 
     //超时且到了重传次数了 每150ms重传一次
     /**
@@ -528,7 +475,6 @@ public class SendQuicData extends QuicData{
                 currentRetryCount + 1, MAX_RETRY_COUNT, RETRY_INTERVAL_MS, getConnectionId(), getDataId());
         return true;
     }
-
 
     /**
      * 处理批量ACK（最多10帧）：更新已确认序列号，统计确认数并返回结果

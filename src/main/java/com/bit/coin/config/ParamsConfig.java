@@ -13,14 +13,12 @@ import static ch.qos.logback.core.encoder.ByteArrayUtil.hexStringToByteArray;
  */
 public final class ParamsConfig {
 
-    // 网络参数映射
-
-
 
     /**
      * Params 类定义了比特币网络的核心参数。
      */
     public static final class Params {
+
         // 网络标识
         private final String name;
         private final int net; // 网络标识符
@@ -28,28 +26,26 @@ public final class ParamsConfig {
 
         // 区块链参数
         private final byte[] genesisHash;
-        private final BigInteger powLimit;
-        private final long powLimitBits;
-        private final boolean powNoRetargeting;
+        private final BigInteger powLimit;  // 允许的最大目标哈希，对应最低难度
+        private final long powLimitBits;  // 同一目标在区块头 bits 字段中的紧凑编码
+        private final boolean powNoRetargeting;  // 启用时固定使用该网络的 powLimitBits
 
-
-        private final int coinbaseMaturity;
-        private final int subsidyReductionInterval;
+        private final int coinbaseMaturity;  // 花费 coinbase 时与来源区块的最小高度差
+        private final int subsidyReductionInterval;  // 每经过多少个区块将补贴减半
 
         // 难度调整
-        private final Duration targetTimespan;
-        private final Duration targetTimePerBlock;
-        private final int retargetAdjustmentFactor;
+        private final Duration targetTimespan;  // 一个难度调整周期的目标耗时
+        private final Duration targetTimePerBlock;  // 期望相邻区块之间的时间间隔
+        private final int retargetAdjustmentFactor;  // 单次调难时，实际耗时相对目标耗时可放大或缩小的最大倍数
         private final boolean reduceMinDifficulty;
-        private final Duration minDiffReductionTime;
+        private final Duration minDiffReductionTime;  // 启用最低难度例外时，两块间隔超过此值即可使用最低难度
 
-        // 构造函数
         public Params(String name, int net, String defaultPort,
-                      byte[] genesisHash, BigInteger powLimit,
-                      long powLimitBits, boolean powNoRetargeting,
-                      int coinbaseMaturity, int subsidyReductionInterval,
-                      Duration targetTimespan, Duration targetTimePerBlock, int retargetAdjustmentFactor,
-                      boolean reduceMinDifficulty, Duration minDiffReductionTime) {
+                byte[] genesisHash, BigInteger powLimit,
+                long powLimitBits, boolean powNoRetargeting,
+                int coinbaseMaturity, int subsidyReductionInterval,
+                Duration targetTimespan, Duration targetTimePerBlock, int retargetAdjustmentFactor,
+                boolean reduceMinDifficulty, Duration minDiffReductionTime) {
             this.name = name;
             this.net = net;
             this.defaultPort = defaultPort;
@@ -57,8 +53,6 @@ public final class ParamsConfig {
             this.powLimit = powLimit;
             this.powLimitBits = powLimitBits;
             this.powNoRetargeting = powNoRetargeting;
-
-
 
             this.coinbaseMaturity = coinbaseMaturity;
             this.subsidyReductionInterval = subsidyReductionInterval;
@@ -69,23 +63,61 @@ public final class ParamsConfig {
             this.minDiffReductionTime = minDiffReductionTime;
         }
 
-        // --- Getter 方法 ---
-        public String getName() { return name; }
-        public int getNet() { return net; }
-        public String getDefaultPort() { return defaultPort; }
-        public byte[] getGenesisHash() { return genesisHash.clone(); }
-        public BigInteger getPowLimit() { return powLimit; }
-        public long getPowLimitBits() { return powLimitBits; }
-        public boolean isPowNoRetargeting() { return powNoRetargeting; }
+        public String getName() {
+            return name;
+        }
 
+        public int getNet() {
+            return net;
+        }
 
-        public int getCoinbaseMaturity() { return coinbaseMaturity; }
-        public int getSubsidyReductionInterval() { return subsidyReductionInterval; }
-        public Duration getTargetTimespan() { return targetTimespan; }
-        public Duration getTargetTimePerBlock() { return targetTimePerBlock; }
-        public int getRetargetAdjustmentFactor() { return retargetAdjustmentFactor; }
-        public boolean isReduceMinDifficulty() { return reduceMinDifficulty; }
-        public Duration getMinDiffReductionTime() { return minDiffReductionTime; }
+        public String getDefaultPort() {
+            return defaultPort;
+        }
+
+        public byte[] getGenesisHash() {
+            return genesisHash.clone();
+        }
+
+        public BigInteger getPowLimit() {
+            return powLimit;
+        }
+
+        public long getPowLimitBits() {
+            return powLimitBits;
+        }
+
+        public boolean isPowNoRetargeting() {
+            return powNoRetargeting;
+        }
+
+        public int getCoinbaseMaturity() {
+            return coinbaseMaturity;
+        }
+
+        public int getSubsidyReductionInterval() {
+            return subsidyReductionInterval;
+        }
+
+        public Duration getTargetTimespan() {
+            return targetTimespan;
+        }
+
+        public Duration getTargetTimePerBlock() {
+            return targetTimePerBlock;
+        }
+
+        public int getRetargetAdjustmentFactor() {
+            return retargetAdjustmentFactor;
+        }
+
+        public boolean isReduceMinDifficulty() {
+            return reduceMinDifficulty;
+        }
+
+        public Duration getMinDiffReductionTime() {
+            return minDiffReductionTime;
+        }
     }
 
     // 预定义的网络参数
@@ -100,16 +132,16 @@ public final class ParamsConfig {
                 0xB14A0201,
                 "8333",
                 hexStringToByteArray("00009541df5d2011d46ca0d32f4fc9163369434122566f28a9ba36a607ffcf5d"),
-                new BigInteger("0000ffff0000000000000000000000000000000000000000000000000000000000", 16), // 工作量证明难度上限
-                0x1f00ffffL, // 难度上限的紧凑格式
+                new BigInteger("0000ffff0000000000000000000000000000000000000000000000000000000000", 16),  // 最大目标哈希（最低难度）
+                0x1f00ffffL,  // 最大目标哈希的紧凑编码
                 false, // 是否禁用难度调整
-                10, // Coinbase 交易成熟度
-                210000, // 区块奖励减半间隔
+                10, // coinbase 成熟所需块数
+                210000, // 补贴减半间隔（块）
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(1), // 目标出块时间
                 4, // 难度调整因子
-                false, // 是否降低最小难度
-                Duration.ZERO // 降低最小难度的时间间隔
+                false, // 是否允许出块延迟时使用最低难度
+                Duration.ZERO  // 此网络未启用最低难度例外
         );
 
         // --- 测试网3 (TestNet3) ---
@@ -121,13 +153,13 @@ public final class ParamsConfig {
                 new BigInteger("0000ffff0000000000000000000000000000000000000000000000000000000000", 16),
                 0x1f00ffffL,
                 false,
-                10, // Coinbase 交易成熟度
-                210000, // 区块奖励减半间隔
+                10, // coinbase 成熟所需块数
+                210000, // 补贴减半间隔（块）
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(10), // 目标出块时间
                 4, // 难度调整因子
-                true, // 是否降低最小难度
-                Duration.ofMinutes(20) // 降低最小难度的时间间隔
+                true, // 是否允许出块延迟时使用最低难度
+                Duration.ofMinutes(20) // 触发最低难度例外所需的出块间隔
         );
 
         // --- 回归测试网 (RegressionNet) ---
@@ -139,17 +171,14 @@ public final class ParamsConfig {
                 new BigInteger("7fffff000000000000000000000000000000000000000000000000000000000000", 16),
                 0x207fffffL,
                 true, // 是否禁用难度调整
-                10, // Coinbase 交易成熟度
-                150, // 区块奖励减半间隔
+                10, // coinbase 成熟所需块数
+                150, // 补贴减半间隔（块）
                 Duration.ofDays(14), // 难度调整周期
                 Duration.ofMinutes(10), // 目标出块时间
                 4, // 难度调整因子
-                true, // 是否降低最小难度
-                Duration.ofMinutes(20) // 降低最小难度的时间间隔
+                true, // 是否允许出块延迟时使用最低难度
+                Duration.ofMinutes(20) // 触发最低难度例外所需的出块间隔
         );
     }
-
-
-
 
 }

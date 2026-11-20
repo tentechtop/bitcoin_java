@@ -104,8 +104,8 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
     }
 
     public static String bytesToHex(byte[] bytes, boolean useUpperCase,
-                                    boolean withDelimiter, String delimiter,
-                                    boolean withPrefix) {
+            boolean withDelimiter, String delimiter,
+            boolean withPrefix) {
         if (bytes == null) {
             return null;
         }

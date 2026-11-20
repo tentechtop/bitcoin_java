@@ -21,6 +21,4 @@ public record P2PNodeSnapshot(
         double receiveBytesPerSecond,
         long lastRttMillis,
         FlowControlSnapshot flowControl,
-        long transferErrorCount
-) {
-}
+        long transferErrorCount) {}

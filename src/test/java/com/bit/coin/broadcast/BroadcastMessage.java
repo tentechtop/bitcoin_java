@@ -1,6 +1,7 @@
 package com.bit.coin.broadcast;
 
 public class BroadcastMessage {
+
     // 消息类型（如订单、系统通知、用户消息等）
     private String type;
     // 消息具体内容
@@ -15,10 +16,18 @@ public class BroadcastMessage {
         this.sendTime = System.currentTimeMillis();
     }
 
-    // Getter方法（监听器需要获取消息内容）
-    public String getType() { return type; }
-    public String getContent() { return content; }
-    public long getSendTime() { return sendTime; }
+    // 供监听器读取消息内容的取值方法
+    public String getType() {
+        return type;
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public long getSendTime() {
+        return sendTime;
+    }
 
     // 重写toString，方便打印日志
     @Override

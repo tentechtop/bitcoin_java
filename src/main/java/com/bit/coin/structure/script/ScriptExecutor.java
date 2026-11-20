@@ -49,13 +49,7 @@ public class ScriptExecutor {
         this.conditionStack = new ArrayDeque<>();
     }
 
-    /**
-     * 执行脚本
-     * @param script 要执行的脚本
-     * @param tx 交易（用于签名验证）
-     * @param inputIndex 输入索引
-     * @return 执行结果
-     */
+    /** 用当前输入的交易上下文执行脚本；条件分支须全部闭合，且最终栈顶为真。 */
     public boolean execute(Script script, Transaction tx, int inputIndex) {
         this.script = script;
         this.cursor = 0;
@@ -66,15 +60,22 @@ public class ScriptExecutor {
         this.verified = false;
 
         List<Script.ScriptElement> elements = script.getElements();
-        if (elements.size() > 1200) return false;
+        if (elements.size() > 1200) {
+            return false;
+        }
         int operationCount = 0;
 
         try {
             while (cursor < elements.size()) {
                 Script.ScriptElement element = elements.get(cursor);
                 cursor++;
-                if (element.isOpCode() && element.getOpCode() > Script.OP_16 && ++operationCount > 201) return false;
-                if (conditionStack.size() > 100) return false;
+                // 先计操作数再判断分支，跳过的分支也消耗操作码预算。
+                if (element.isOpCode() && element.getOpCode() > Script.OP_16 && ++operationCount > 201) {
+                    return false;
+                }
+                if (conditionStack.size() > 100) {
+                    return false;
+                }
 
                 if (!exec && !isConditionalOp(element)) {
                     // 当前不执行，跳过（除非是条件控制操作码）
@@ -96,12 +97,12 @@ public class ScriptExecutor {
                     }
                 }
             }
-            
+
             if (stack.isEmpty() || !conditionStack.isEmpty()) {
                 verified = false;
             } else {
                 byte[] result = stack.peek();
-                verified = castToBool(result); 
+                verified = castToBool(result);
             }
             return verified;
         } catch (ScriptExecutionException e) {
@@ -112,8 +113,6 @@ public class ScriptExecutor {
             return false;
         }
     }
-
-
 
     /**
      * 执行操作码
@@ -312,7 +311,7 @@ public class ScriptExecutor {
             case Script.OP_SIZE:
                 return executeSize();
             case Script.OP_CODESEPARATOR:
-                return false; // Reserved until script-code separator sighash semantics are implemented.
+                return false; // 暂时保留此操作码，待实现代码分隔符在签名哈希计算中的处理规则后再启用。
             case Script.OP_CHECKLOCKTIMEVERIFY:
                 return executeCheckLockTimeVerify(tx, inputIndex);
             case Script.OP_CHECKSEQUENCEVERIFY:
@@ -412,8 +411,7 @@ public class ScriptExecutor {
         // 规则3：n必须小于当前栈大小（弹出n后的栈）
         if (stack.size() <= n) {
             throw new ScriptExecutionException(
-                    String.format("无效的索引: OP_PICK - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size())
-            );
+                    String.format("无效的索引: OP_PICK - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size()));
         }
         // 步骤2：获取栈底→栈顶顺序的第n个元素（修复迭代器反向问题）
         // ArrayDeque的iterator是栈顶→栈底，先转为列表并反转得到栈底→栈顶
@@ -441,8 +439,7 @@ public class ScriptExecutor {
         // 规则2：n必须小于当前栈大小（弹出n后的栈）
         if (stack.size() <= n) {
             throw new ScriptExecutionException(
-                    String.format("无效的索引: OP_ROLL - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size())
-            );
+                    String.format("无效的索引: OP_ROLL - n=%d，栈大小=%d（需n < 栈大小）", n, stack.size()));
         }
         // 步骤2：获取栈底→栈顶顺序的元素，并移除原位置元素
         List<byte[]> stackList = new ArrayList<>(stack);
@@ -946,20 +943,20 @@ public class ScriptExecutor {
         // 弹出公钥和签名
         byte[] pubKeyBytes = pop();//[32字节]
         byte[] signatureBytes = pop();//[64字节][1字节类型]
-        log.debug("弹出公钥{} 长度{}",bytesToHex(pubKeyBytes),pubKeyBytes.length);
-        log.debug("弹出签名{} 长度{}",bytesToHex(signatureBytes),signatureBytes.length);
+        log.debug("弹出公钥{} 长度{}", bytesToHex(pubKeyBytes), pubKeyBytes.length);
+        log.debug("弹出签名{} 长度{}", bytesToHex(signatureBytes), signatureBytes.length);
         try {
             byte[] signature = Arrays.copyOfRange(signatureBytes, 0, signatureBytes.length - 1);
-            log.debug("签名{} 长度{}",bytesToHex(signature),signature.length);
+            log.debug("签名{} 长度{}", bytesToHex(signature), signature.length);
             //签名类型
             byte signatureType = signatureBytes[signatureBytes.length - 1];
-            log.debug("签名类型{}",signatureType);
+            log.debug("签名类型{}", signatureType);
 
             // 计算签名哈希
-            byte[] sigHashBytes = tx.calculateSigHash(inputIndex,signatureType);
+            byte[] sigHashBytes = tx.calculateSigHash(inputIndex, signatureType);
 
             // 验证签名
-            boolean result = Ed25519Signer.fastVerify(pubKeyBytes,sigHashBytes, signature);
+            boolean result = Ed25519Signer.fastVerify(pubKeyBytes, sigHashBytes, signature);
             push(encodeNumber(result ? 1 : 0));
             return true;
         } catch (Exception e) {
@@ -1006,8 +1003,7 @@ public class ScriptExecutor {
         // 校验m的合法性
         if (m < 0 || m > n || m > 20) {
             throw new ScriptExecutionException(
-                    String.format("签名数量无效: m=%d (需满足 0≤m≤n=%d 且 m≤20)", m, n)
-            );
+                    String.format("签名数量无效: m=%d (需满足 0≤m≤n=%d 且 m≤20)", m, n));
         }
 
         // ========== 步骤4: 弹出 m 个签名（栈是LIFO，弹出顺序是sigm→sig1，需反转） ==========
@@ -1051,8 +1047,8 @@ public class ScriptExecutor {
                     log.debug("签名{}哈希类型: 0x{}", sigIdx + 1, Integer.toHexString(sigHashType));
 
                     // 计算签名哈希（交易的签名摘要）
-                    byte[] sigHash = tx.calculateSigHash(inputIndex,sigHashType);
-                    log.debug("签名数据{}",bytesToHex(sigHash));
+                    byte[] sigHash = tx.calculateSigHash(inputIndex, sigHashType);
+                    log.debug("签名数据{}", bytesToHex(sigHash));
 
                     // Ed25519签名验证
                     if (Ed25519Signer.fastVerify(pubKey, sigHash, signature)) {
@@ -1107,14 +1103,18 @@ public class ScriptExecutor {
     }
 
     private boolean executeElse() {
-        if (conditionStack.isEmpty()) return false;
+        if (conditionStack.isEmpty()) {
+            return false;
+        }
         conditionStack.push(!conditionStack.pop());
         exec = conditionStack.stream().allMatch(Boolean::booleanValue);
         return true;
     }
 
     private boolean executeEndif() {
-        if (conditionStack.isEmpty()) return false;
+        if (conditionStack.isEmpty()) {
+            return false;
+        }
         conditionStack.pop();
         exec = conditionStack.stream().allMatch(Boolean::booleanValue);
         return true;
@@ -1123,7 +1123,9 @@ public class ScriptExecutor {
     // ==================== 时间锁定实现 ====================
 
     private boolean executeCheckLockTimeVerify(Transaction tx, int inputIndex) throws ScriptExecutionException {
-        if (stack.isEmpty() || stack.peek().length > 5) throw new ScriptExecutionException("Invalid CLTV operand");
+        if (stack.isEmpty() || stack.peek().length > 5) {
+            throw new ScriptExecutionException("Invalid CLTV operand");
+        }
         long required = decodeNumber(stack.peek()).longValueExact();
         return required >= 0 && required <= 0xFFFFFFFFL
                 && tx.getInputs().get(inputIndex).getSequence() != 0xFFFFFFFFL
@@ -1132,10 +1134,16 @@ public class ScriptExecutor {
     }
 
     private boolean executeCheckSequenceVerify(Transaction tx, int inputIndex) throws ScriptExecutionException {
-        if (stack.isEmpty() || stack.peek().length > 5) throw new ScriptExecutionException("Invalid CSV operand");
+        if (stack.isEmpty() || stack.peek().length > 5) {
+            throw new ScriptExecutionException("Invalid CSV operand");
+        }
         long required = decodeNumber(stack.peek()).longValueExact();
-        if (required < 0 || required > 0xFFFFFFFFL) return false;
-        if ((required & 0x80000000L) != 0) return true;
+        if (required < 0 || required > 0xFFFFFFFFL) {
+            return false;
+        }
+        if ((required & 0x80000000L) != 0) {
+            return true;
+        }
         long sequence = tx.getInputs().get(inputIndex).getSequence();
         return tx.getVersion() == 101 && (sequence & 0x80000000L) == 0
                 && (required & 0x400000L) == (sequence & 0x400000L)
@@ -1276,7 +1284,6 @@ public class ScriptExecutor {
 
     // ==================== 公共方法 ====================
 
-
     /**
      * 合并解锁脚本和锁定脚本
      */
@@ -1308,4 +1315,3 @@ public class ScriptExecutor {
         return verified;
     }
 }
-

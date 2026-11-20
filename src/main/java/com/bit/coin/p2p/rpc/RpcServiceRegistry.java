@@ -1,6 +1,5 @@
 package com.bit.coin.p2p.rpc;
 
-
 import com.bit.coin.aop.annotation.RpcServiceAlias;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Scope;
@@ -19,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 @Scope("singleton") // 显式指定单例
 public class RpcServiceRegistry {
+
     // 核心存储：服务接口全限定名 -> 实现类实例
     // 使用ConcurrentHashMap保证线程安全，支持高并发读写
     private final Map<String, Object> serviceMap = new ConcurrentHashMap<>();
@@ -44,7 +44,6 @@ public class RpcServiceRegistry {
         });
     }
 
-
     /**
      * 注册服务（手动指定接口与实现类）
      * @param serviceInterface 服务接口类（如 TransactionService.class）
@@ -64,11 +63,10 @@ public class RpcServiceRegistry {
         if (!serviceInterface.isInstance(serviceImpl)) {
             throw new IllegalArgumentException(
                     "实现类 " + serviceImpl.getClass().getName() +
-                            " 未实现接口 " + serviceInterface.getName()
-            );
+                            " 未实现接口 " + serviceInterface.getName());
         }
 
-        // 3. 注册服务（接口全限定名为key）
+        // 3. 注册服务（以接口的全限定名为键）
         String serviceName = serviceInterface.getName();
         serviceMap.put(serviceName, serviceImpl);
 
@@ -79,14 +77,12 @@ public class RpcServiceRegistry {
                 throw new IllegalArgumentException("服务别名重复: " + alias);
             }
             aliasMap.put(alias, serviceName);
-            log.info("RPC服务注册成功 | 别名: {} | 接口: {} | 实现类: {}", alias, serviceName,serviceImpl.getClass().getName());
+            log.info("RPC服务注册成功 | 别名: {} | 接口: {} | 实现类: {}", alias, serviceName, serviceImpl.getClass().getName());
         } else {
             log.info("RPC服务注册成功 | 接口: {} | 实现类: {}",
                     serviceName, serviceImpl.getClass().getName());
         }
     }
-
-
 
     /**
      * 支持通过别名或全限定名获取服务
@@ -102,11 +98,9 @@ public class RpcServiceRegistry {
         return service;
     }
 
-
     public Map<String, Object> getService() {
         return serviceMap;
     }
-
 
     /**
      * 根据接口类获取服务实例（泛型重载，方便调用）

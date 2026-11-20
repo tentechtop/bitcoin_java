@@ -5,6 +5,4 @@ public record CongestionControlSnapshot(
         long slowStartThresholdBytes,
         long inflightBytes,
         long availableBytes,
-        int mssBytes
-) {
-}
+        int mssBytes) {}

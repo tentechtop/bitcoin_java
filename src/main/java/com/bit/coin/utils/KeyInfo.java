@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class KeyInfo {
+
     private final byte[] privateKey;
     private final byte[] publicKey;
     private final String address;
@@ -16,9 +17,20 @@ public class KeyInfo {
         this.path = path;
     }
 
-    // Getters
-    public byte[] getPrivateKey() { return privateKey; }
-    public byte[] getPublicKey() { return publicKey; }
-    public String getAddress() { return address; }
-    public String getPath() { return path; }
+    // 读取密钥信息
+    public byte[] getPrivateKey() {
+        return privateKey;
+    }
+
+    public byte[] getPublicKey() {
+        return publicKey;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public String getPath() {
+        return path;
+    }
 }

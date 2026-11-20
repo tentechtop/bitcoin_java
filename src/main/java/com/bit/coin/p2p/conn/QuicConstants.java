@@ -1,6 +1,7 @@
 package com.bit.coin.p2p.conn;
 
 import com.bit.coin.utils.SnowflakeIdGenerator;
+import com.bit.coin.p2p.protocol.P2PMessage;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
@@ -15,114 +16,94 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class QuicConstants {
 
-    /** 最大重传次数（可根据业务调整，建议3次） */
+    /** 整条消息的重试次数上限，单个分片另行计数。 */
     public static final int MAX_RETRY_COUNT = 3;
 
-    /** 重传间隔（150ms，固定） */
+    /** 同一消息两次重试的最短间隔，单位为毫秒。 */
     public static final long RETRY_INTERVAL_MS = 150;
 
-
-    //将完整的二进制数据放在缓存中 等待消费者消费 一次全部取走
+    // 消费队列只保留已解码消息，按原始消息大小计入预算。
     private static final BlockingQueue<QuicMsg> MSG_QUEUE = new LinkedBlockingQueue<>(256);
 
-    /**
-     * 推送完整Quic消息到静态队列（非阻塞，避免阻塞Netty IO线程）
-     * @param msg 完整消息体
-     * @return 是否推送成功
-     */
+    /** 按原始报文长度累计队列占用，出队时扣回相应字节数。 */
     private static final java.util.concurrent.atomic.AtomicLong QUEUED_BYTES = new java.util.concurrent.atomic.AtomicLong();
     private static final long MAX_QUEUE_BYTES = 64L * 1024 * 1024;
+
+    /** 非阻塞入队；消息过大、队列已满或字节预算不足时返回 false。 */
     public static boolean pushCompleteMsg(QuicMsg msg) {
-        if (msg == null || msg.getData() == null || msg.getData().length > 8_100_000) return false;
-        int length = msg.getData().length;
+        if (msg == null || msg.wireLength() > 8_100_000) {
+            return false;
+        }
+        int length = msg.wireLength();
         long total = QUEUED_BYTES.addAndGet(length);
-        if (total > MAX_QUEUE_BYTES || !MSG_QUEUE.offer(msg)) { QUEUED_BYTES.addAndGet(-length); return false; }
+        if (total > MAX_QUEUE_BYTES || !MSG_QUEUE.offer(msg)) {
+            QUEUED_BYTES.addAndGet(-length);
+            return false;
+        }
         return true;
     }
+
     private static QuicMsg released(QuicMsg msg) {
-        if (msg != null) QUEUED_BYTES.addAndGet(-msg.getData().length);
+        if (msg != null) {
+            QUEUED_BYTES.addAndGet(-msg.wireLength());
+        }
         return msg;
     }
-    public static long queuedBytes() { return QUEUED_BYTES.get(); }
 
-    // ========== 消费者API：从静态队列取消息（供Spring消费者Bean调用） ==========
-    /**
-     * 阻塞取消息：无数据则挂起，有数据立即返回（核心，CPU≈0消耗）
-     */
+    public static long queuedBytes() {
+        return QUEUED_BYTES.get();
+    }
+
+    /** 阻塞等待一条消息，出队时归还字节预算。 */
     public static QuicMsg takeMsg() throws InterruptedException {
         return released(MSG_QUEUE.take());
     }
-    /**
-     * 带超时的取消息：避免永久阻塞（可选）
-     */
+
+    /** 最多等待指定时长，超时返回 null。 */
     public static QuicMsg pollMsg(long timeout, TimeUnit unit) throws InterruptedException {
         return released(MSG_QUEUE.poll(timeout, unit));
     }
 
-    // ========== 辅助：获取队列当前长度（供监控用） ==========
     public static int getQueueSize() {
         return MSG_QUEUE.size();
     }
-    // ========== 新增：批量提取全部消息 ==========
-    /**
-     * 原子性批量提取队列中所有可用消息（非阻塞，线程安全）
-     * @return 消息列表（队列为空时返回空列表）
-     */
+
+    /** 非阻塞取出最多 16 条消息，并归还相应的队列预算。 */
     public static List<QuicMsg> drainAllMsg() {
         List<QuicMsg> msgList = new ArrayList<>();
-        // drainTo：原子性将队列中所有元素移到集合，返回移走的数量
         MSG_QUEUE.drainTo(msgList, 16);
         msgList.forEach(QuicConstants::released);
         return msgList;
     }
 
-
-    public static final int MAX_FRAME = 8192;//单次最大发送8192帧 当一帧承载1K数据 8192帧 约等于8M数据 极限是一帧1400字节
-
+    public static final int MAX_FRAME = 8192;  // 单条消息允许拆分的最多帧数
 
     //连接ID或数据ID生成器
     public static SnowflakeIdGenerator ID_Generator = new SnowflakeIdGenerator();
 
-    /**
-     * 请求响应Future缓存：最大容量100万个，30秒过期（请求超时后自动清理，避免内存泄漏）
-     * Key：请求ID，Value：响应Future
-     * 16字节的UUIDV7 - > CompletableFuture<byte[]>
-     */
+    /** 将请求 ID 绑定到预期响应的连接，供响应分发时核对。 */
     public static final Cache<String, Long> MSG_EXPECTED_CONNECTIONS = Caffeine.newBuilder()
             .maximumSize(10000).expireAfterWrite(30, TimeUnit.SECONDS).build();
 
-    public static Cache<String, CompletableFuture<QuicMsg>> MSG_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
+    // 用请求 ID 找到等待该响应的调用方。
+    public static Cache<String, CompletableFuture<P2PMessage>> MSG_RESPONSE_FUTURECACHE = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
-            // strong references until bounded expiry
+            // 缓存条目到期前持有强引用
             // .weakValues() // 弱引用存储Future，GC时可回收
             .recordStats()
             .build();
 
-    /**
-     * 请求响应Future缓存：最大容量100万个，30秒过期（请求超时后自动清理，避免内存泄漏）
-     * 标志->CompletableFuture
-     */
-    public static Cache<Long, CompletableFuture<QuicFrame>> QUICFRAME_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
+    public static Cache<Long, CompletableFuture<byte[]>> BYTE_RESPONSE_FUTURECACHE = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
-            // strong references until bounded expiry
-            // .weakValues() // 弱引用存储Future，GC时可回收
-            .recordStats()
-            .build();
-
-
-
-    public static Cache<Long, CompletableFuture<byte[]>> BYTE_RESPONSE_FUTURECACHE  = Caffeine.newBuilder()
-            .maximumSize(10000)
-            .expireAfterWrite(30, TimeUnit.SECONDS)
-            // strong references until bounded expiry
+            // 缓存条目到期前持有强引用
             // .weakValues() // 弱引用存储Future，GC时可回收
             .recordStats()
             .build();
 
     //已经存在的资源 hashHex -> 资源类型
-    public static Cache<String, Integer> EXIST_RESOURCE_CACHE  = Caffeine.newBuilder()
+    public static Cache<String, Integer> EXIST_RESOURCE_CACHE = Caffeine.newBuilder()
             .maximumSize(1000_000)
             .expireAfterWrite(30, TimeUnit.SECONDS)
             .recordStats()

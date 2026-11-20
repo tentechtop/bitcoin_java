@@ -10,21 +10,35 @@ import org.springframework.stereotype.Component;
 
 @Component("nodeHealthIndicator")
 public class NodeHealthIndicator implements HealthIndicator {
+
     private final BlockChainServiceImpl chain;
     private final DataBase database;
     private final SystemConfig config;
     private final com.bit.coin.net.NetService network;
-    public NodeHealthIndicator(BlockChainServiceImpl chain, DataBase database, SystemConfig config, com.bit.coin.net.NetService network) {
-        this.chain = chain; this.database = database; this.config = config; this.network = network;
+
+    public NodeHealthIndicator(BlockChainServiceImpl chain, DataBase database, SystemConfig config,
+            com.bit.coin.net.NetService network) {
+        this.chain = chain;
+        this.database = database;
+        this.config = config;
+        this.network = network;
     }
-    @Override public Health health() {
+
+    /** 检查链状态和数据库；启用网络时还检查传输通道、连接数与同步高度差。 */
+    @Override
+    public Health health() {
         try {
             boolean transport = !config.isNetworkingEnabled() || QuicConnectionManager.Global_Channel != null
                     && QuicConnectionManager.Global_Channel.isActive();
             boolean synchronizedEnough = !config.isNetworkingEnabled() ||
                     QuicConnectionManager.getConnectionCount() >= config.getReadinessMinPeers()
-                    && (long) network.getBestNetworkHeight() - network.getCurrentLocalHeight() <= config.getReadinessMaxSyncLag();
-            return chain.isStateHealthy() && database.checkHealth() && transport && synchronizedEnough ? Health.up().build() : Health.down().build();
-        } catch (Exception failure) { return Health.down().build(); }
+                            && (long) network.getBestNetworkHeight() - network.getCurrentLocalHeight() <= config
+                                    .getReadinessMaxSyncLag();
+            return chain.isStateHealthy() && database.checkHealth() && transport && synchronizedEnough
+                    ? Health.up().build()
+                    : Health.down().build();
+        } catch (Exception failure) {
+            return Health.down().build();
+        }
     }
 }

@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 消息广播器：全局唯一的消息发布中心
  */
 public class MessageBroadcaster {
+
     // 单例模式：保证整个应用只有一个广播器
     private static final MessageBroadcaster INSTANCE = new MessageBroadcaster();
 

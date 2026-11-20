@@ -10,11 +10,11 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 public final class P2PAddressValidator {
+
     private static final Pattern HEX_PEER_ID = Pattern.compile("^[0-9a-fA-F]{64}$");
     private static final Pattern IPV4_SEGMENT = Pattern.compile("^\\d{1,3}$");
 
-    private P2PAddressValidator() {
-    }
+    private P2PAddressValidator() {}
 
     public static P2PAddress parseQuicAddress(String rawAddress) {
         if (rawAddress == null || rawAddress.isBlank()) {
@@ -26,8 +26,11 @@ public final class P2PAddressValidator {
             String relayRaw = String.join("/", java.util.Arrays.copyOf(segments, 7));
             P2PAddress relay = parseQuicAddress(relayRaw);
             String target = normalizePeerId(segments[9]);
-            if (relay.peerIdHex().equals(target)) throw new IllegalArgumentException("Relay and destination must differ");
-            return new P2PAddress(rawAddress.trim(), relay.ipType(), relay.ipAddress(), relay.port(), segments[9], target, relayRaw);
+            if (relay.peerIdHex().equals(target)) {
+                throw new IllegalArgumentException("Relay and destination must differ");
+            }
+            return new P2PAddress(rawAddress.trim(), relay.ipType(), relay.ipAddress(), relay.port(), segments[9],
+                    target, relayRaw);
         }
         if (segments.length != 7 || !segments[0].isEmpty()) {
             throw new IllegalArgumentException("multiAddress must use /ip4/<ip>/quic/<port>/p2p/<peerId>");

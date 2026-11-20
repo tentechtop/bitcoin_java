@@ -7,12 +7,14 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class LocalCongestionWindow {
+
+    // MSS 是增长窗口时采用的默认分段大小；拥塞窗口及阈值均按字节计。
     public static final int MSS = 1400;
     public static final int MIN_CWND = 2 * MSS;
     public static final int INITIAL_CWND = 10 * MSS;
     public static final int MAX_CWND = 10 * 1024 * 1024;
 
-    private static final int DEFAULT_SLOW_START_THRESHOLD = 1024 * 1024;
+    private static final int DEFAULT_SLOW_START_THRESHOLD = 1024 * 1024;  // 窗口达到此字节数后由慢启动转为加性增长的初始阈值
 
     private int congestionWindowBytes = INITIAL_CWND;
     private int slowStartThresholdBytes = DEFAULT_SLOW_START_THRESHOLD;
@@ -87,6 +89,7 @@ public class LocalCongestionWindow {
         congestionWindowBytes = clampWindow((long) congestionWindowBytes + increase);
     }
 
+    /** 拥塞时将窗口减半，超时时直接回到最小窗口。 */
     private synchronized void reduceWindow(boolean timeout) {
         int nextSlowStartThreshold = Math.max(congestionWindowBytes / 2, MIN_CWND);
         slowStartThresholdBytes = nextSlowStartThreshold;

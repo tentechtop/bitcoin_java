@@ -26,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class RoutingTableFailureCleanupTest {
+
     private static final byte[] ROUTING_TABLE_PEERS_KEY = "ROUTING_TABLE_PEERS".getBytes(StandardCharsets.UTF_8);
 
     @Test
@@ -53,7 +54,8 @@ class RoutingTableFailureCleanupTest {
         routingTable.removeFailedPeer(HexFormat.of().formatHex(failedPeerId), "timeout");
 
         assertTrue(routingTable.getAll().stream()
-                .allMatch(peer -> !HexFormat.of().formatHex(peer.getId()).equals(HexFormat.of().formatHex(failedPeerId))));
+                .allMatch(peer -> !HexFormat.of().formatHex(peer.getId())
+                        .equals(HexFormat.of().formatHex(failedPeerId))));
         verify(dataBase).insert(eq(TableEnum.PEER), eq(ROUTING_TABLE_PEERS_KEY), any(byte[].class));
     }
 

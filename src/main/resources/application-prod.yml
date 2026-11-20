@@ -1,4 +1,4 @@
-# Independent consensus revision 2 network. HTTP is private by default.
+# 使用共识版本 2 的独立网络。HTTP 接口默认不对外开放。
 node:
   api:
     public-read: false

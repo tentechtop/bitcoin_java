@@ -53,7 +53,7 @@ def main():
                     [name, str(origin), str(destination), "RegressionNetParams"], name) != 0:
             raise RuntimeError(name + " failed; inspect " + str(root))
 
-    # Both results must reopen through the real application and retain the same identity/tip.
+    # 实际应用必须能重新打开恢复和重建得到的两个数据库，且两者的节点标识和链尖都须与原库一致。
     for name in ("restored", "rebuilt"):
         with socket.socket() as reserved:
             reserved.bind(("127.0.0.1", 0))

@@ -35,6 +35,7 @@ def main():
     findings = []
     for query, result in zip(queries, response["results"]):
         vulnerabilities = list(result.get("vulns", []))
+        # OSV 批量响应按依赖分别分页，每个依赖都要取完自己的后续页。
         while result.get("next_page_token"):
             next_query = dict(query, page_token=result["next_page_token"])
             result = request("https://api.osv.dev/v1/querybatch", {"queries": [next_query]})["results"][0]

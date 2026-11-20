@@ -33,6 +33,4 @@ public record SyncProgress(
         String bestPeerId,
         int bestPeerHeight,
         List<String> recentErrors,
-        List<SyncPeerState> peers
-) {
-}
+        List<SyncPeerState> peers) {}

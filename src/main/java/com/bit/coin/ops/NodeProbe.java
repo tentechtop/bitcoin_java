@@ -4,9 +4,11 @@ import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
 
-/** Dependency-free process exit code for container health probes. */
+/** 通过进程退出码向容器报告健康检查结果，无需外部依赖。 */
 public final class NodeProbe {
+
     private NodeProbe() {}
+
     public static void main(String[] args) {
         try {
             String port = System.getenv().getOrDefault("NODE_HTTP_PORT", "18333");
@@ -16,6 +18,8 @@ public final class NodeProbe {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
             HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build();
             System.exit(client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 200 ? 0 : 1);
-        } catch (Exception unavailable) { System.exit(1); }
+        } catch (Exception unavailable) {
+            System.exit(1);
+        }
     }
 }

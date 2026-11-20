@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PathMtuEstimatorTest {
+
     @Test
     void shrinksAfterRepeatedPotentialBlackHole() {
         PathMtuEstimator estimator = new PathMtuEstimator(1200, 1320, 1429);

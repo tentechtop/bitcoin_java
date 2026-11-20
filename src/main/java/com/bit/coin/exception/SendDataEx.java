@@ -1,6 +1,7 @@
 package com.bit.coin.exception;
 
-public class SendDataEx extends RuntimeException{
+public class SendDataEx extends RuntimeException {
+
     private final int errorCode;
     private final String errorMsg;
 

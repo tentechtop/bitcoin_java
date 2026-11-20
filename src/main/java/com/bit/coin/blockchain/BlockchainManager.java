@@ -1,61 +1,198 @@
 package com.bit.coin.blockchain;
 
+import com.bit.coin.config.ParamsConfig;
+import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockHeader;
+import com.bit.coin.structure.tx.Transaction;
+import com.bit.coin.structure.tx.TransactionValidator;
+import com.bit.coin.utils.UInt256;
 import lombok.Data;
+import lombok.Getter;
 
 import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
 /**
- *         blockchainManager = new BlockchainManager(bytesToHex(hash));
- *         Map<String, BlockHeader> blockHeaders = new ConcurrentHashMap<>();
- *         //查找全部的区块头给到链管理器
- *         dataBase.iterate(TBLOCK_HEADER, (key, value) -> {
- *             blockHeaders.put(bytesToHex(key),BlockHeader.deserialize(value));
- *             return true;
- *         });
- *         blockchainManager.setBlockHeaders(blockHeaders);
- *         //构建区块链
- *         // 4. 获取主链信息
- *         System.out.println("主链末端哈希：" + blockchainManager.getMainChainTip());
- *         System.out.println("主链高度：" + blockchainManager.getMainChainHeight());
- *         System.out.println("主链累计工作量：" + blockchainManager.getMainChainWork());
- *         System.out.println("主链完整哈希列表：" + blockchainManager.getMainChainHashes());
+ * 维护节点的区块头索引和已生效的主链。启动时从所有完整分支中选链，收块时增量更新同一索引。
+ * {@link ChainStateStore} 提交 UTXO、索引和链尖之后，本管理器才向读者发布新的链尖。
+ * <p>{@link #setBlockHeaders(Map)} 也支持从区块头集合重建主链；该区块头视图将创世区块记为高度 1。
  */
 
-@Data
 public class BlockchainManager {
 
     // 全部区块头，键为区块哈希（十六进制字符串）
+    @Getter
     private Map<String, BlockHeader> blockHeaders = new ConcurrentHashMap<>();
 
     // 区块头包装器映射（核心节点结构），键为区块哈希
+    @Getter
     private Map<String, BlockHeaderWrapper> blockHeaderWrappers = new ConcurrentHashMap<>();
 
     // 孤块缓存：key=父区块哈希，value=该父区块的孤块哈希集合
+    @Getter
     private Map<String, Set<String>> orphanBlocks = new ConcurrentHashMap<>();
 
     // 创世区块哈希（缓存）
-    private String genesisBlockHash;
-
-    // 当前主链末端区块哈希
-    private String mainChainTip;
-
-    // 主链累计工作量
-    private BigInteger mainChainWork = BigInteger.ZERO;
-
-    // 主链高度
-    private int mainChainHeight = -1;
-
-    // 私有化无参构造
-    private BlockchainManager() {}
+    @Getter
+    private final String genesisBlockHash;
+    private final ChainStateStore store;
+    private final ParamsConfig.Params params;
+    private volatile BlockHeaderWrapper mainTip;
 
     // 有参构造：初始化创世区块哈希
     public BlockchainManager(String genesisBlockHash) {
+        this(genesisBlockHash, null, null);
+    }
+
+    BlockchainManager(String genesisBlockHash, ChainStateStore store, ParamsConfig.Params params) {
         this.genesisBlockHash = genesisBlockHash;
+        this.store = store;
+        this.params = params;
+    }
+
+    static BlockchainManager open(ChainStateStore store, ParamsConfig.Params params) {
+        Block applied = store.loadAppliedTip(params);
+        BlockchainManager manager = store.readBlockIndex(params, applied.getHash());
+        manager.activateBestChain(applied);
+        return manager;
+    }
+
+    public String getMainChainTip() {
+        var tip = mainTip;
+        return tip == null ? null : tip.getHash();
+    }
+
+    public BigInteger getMainChainWork() {
+        var tip = mainTip;
+        return tip == null ? BigInteger.ZERO : tip.getChainWork();
+    }
+
+    public int getMainChainHeight() {
+        var tip = mainTip;
+        return tip == null ? -1 : tip.getHeight();
+    }
+
+    public ChainTipSnapshot getMainTipSnapshot() {
+        var tip = mainTip;
+        return tip == null ? null : new ChainTipSnapshot(tip.getHeight() - 1, hexToBytes(tip.getHash()),
+                UInt256.fromBigInteger(tip.getChainWork()));
+    }
+
+    Block getMainLatestBlock() {
+        return store.storedBlock(hexToBytes(mainTip.getHash()));
+    }
+
+    Block getHeaderContext(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return null;
+        }
+        String key = HexFormat.of().formatHex(hash);
+        BlockHeaderWrapper indexed = blockHeaderWrappers.get(key);
+        if (indexed == null || indexed.getHeight() < 1) {
+            return null;
+        }
+        Block context = new Block();
+        context.setHash(hash.clone());
+        context.setBlockHeader(BlockHeader.deserialize(blockHeaders.get(key).serialize()));
+        context.setHeight(indexed.getHeight() - 1);
+        context.setChainWork(UInt256.fromBigInteger(indexed.getChainWork()));
+        return context;
+    }
+
+    boolean hasFullBlock(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return false;
+        }
+        BlockHeaderWrapper node = blockHeaderWrappers.get(HexFormat.of().formatHex(hash));
+        return node != null && node.isFullChain();
+    }
+
+    boolean acceptHeader(BlockHeader header, int height, UInt256 claimedWork) {
+        byte[] hash = header.calculateHash();
+        BlockHeaderWrapper node = prepareHeader(hash, header);
+        if (node.getHeight() - 1 != height || !node.getChainWork().equals(claimedWork.toBigInteger())) {
+            return false;
+        }
+        if (!blockHeaderWrappers.containsKey(node.getHash())) {
+            store.commitHeader(hash, header, height, claimedWork);
+            recordHeader(node, header);
+        }
+        return true;
+    }
+
+    ChainStateStore.Accepted accept(Block block) {
+        ForkChoice choice = store.validateAndCommit(block, this, params);
+        recordAccepted(block, choice);
+        List<Block> connected = new ArrayList<>(choice.connectedParents());
+        connected.add(block);
+        return new ChainStateStore.Accepted(choice.replacesTip(), choice.disconnected(), List.copyOf(connected));
+    }
+
+    /** disconnected 从当前链尖向下；connectedParents 从共同祖先之后排到候选块的父块。 */
+    record ForkChoice(BlockHeaderWrapper candidate, boolean replacesTip, int commonHeight,
+            List<Block> disconnected, List<Block> connectedParents) {}
+
+    /** 沿两条分支回溯至共同祖先，计算撤销和接入顺序；工作量相同保留原链顶。 */
+    ForkChoice evaluateCandidate(Block parent, Block block) {
+        BlockHeaderWrapper candidate = prepareHeader(block.getHash(), block.getBlockHeader());
+        BlockHeaderWrapper indexedParent = blockHeaderWrappers.get(candidate.getParentHash());
+        if (indexedParent == null || !indexedParent.isFullChain() || candidate.getHeight() - 1 != block.getHeight()) {
+            throw new IllegalStateException("Candidate parent is not on a validated branch");
+        }
+        List<Block> disconnected = new ArrayList<>();
+        List<Block> connected = new ArrayList<>();
+        long retainedBlockBytes = 0;
+        Block oldCursor = mainTip.getHash().equals(candidate.getParentHash()) ? parent : getMainLatestBlock();
+        Block newCursor = parent;
+        while (!Arrays.equals(oldCursor.getHash(), newCursor.getHash())) {
+            Block retained = oldCursor.getHeight() >= newCursor.getHeight() ? oldCursor : newCursor;
+            retainedBlockBytes += blockWeight(retained);
+            if (disconnected.size() + connected.size() >= 512 || retainedBlockBytes > 64L * 1024 * 1024) {
+                throw new ChainStateLimitException("Candidate branch exceeds automatic reorganization budget");
+            }
+            if (oldCursor.getHeight() >= newCursor.getHeight()) {
+                disconnected.add(oldCursor);
+                oldCursor = parentOf(oldCursor);
+            } else {
+                connected.add(newCursor);
+                newCursor = parentOf(newCursor);
+            }
+        }
+        Collections.reverse(connected);
+        return new ForkChoice(candidate, hasMoreWork(candidate.getChainWork(), mainTip.getChainWork()),
+                oldCursor.getHeight(), List.copyOf(disconnected), List.copyOf(connected));
+    }
+
+    private static boolean hasMoreWork(BigInteger candidate, BigInteger incumbent) {
+        return candidate.compareTo(incumbent) > 0;
+    }
+
+    private static BigInteger accumulatedWork(BigInteger parentWork, BlockHeader header) {
+        return parentWork.add(header.getWork());
+    }
+
+    private static long blockWeight(Block block) {
+        long weight = 512;
+        for (Transaction tx : block.getTransactions()) {
+            weight += TransactionValidator.memoryWeight(tx);
+        }
+        return weight;
+    }
+
+    private Block parentOf(Block block) {
+        if (block.getHeight() == 0) {
+            throw new IllegalArgumentException("Branches do not share genesis");
+        }
+        Block parent = store.storedBlock(block.getBlockHeader().getPreviousHash());
+        if (parent.getHeight() != block.getHeight() - 1) {
+            throw new IllegalStateException("Corrupt ancestor index");
+        }
+        return parent;
     }
 
     // ===================== 新增：重组结果返回类 =====================
@@ -70,200 +207,150 @@ public class BlockchainManager {
     @Data
     public class BlockHeaderWrapper {
         private String hash;          // 区块哈希
-        private int height;           // 区块在链中的高度（创世区块为0）
+        private int height;           // 此管理器中的区块高度（创世区块为1）
         private BigInteger chainWork; // 从创世区块到当前区块的累计工作量
         private String parentHash;    // 父区块哈希
         private Set<String> children; // 子区块哈希集合
+        private volatile boolean fullChain; // 从创世到本块均有已验证的区块体
 
         public BlockHeaderWrapper(String hash, BlockHeader header) {
             this.hash = hash;
-            this.parentHash = bytesToHex(header.getPreviousHash()); // 假设BlockHeader有getPreviousHash()方法
+            this.parentHash = HexFormat.of().formatHex(header.getPreviousHash());
             this.children = ConcurrentHashMap.newKeySet(); // 线程安全的Set
             this.height = -1; // 初始化为无效高度
             this.chainWork = BigInteger.ZERO;
         }
     }
 
-    // ===================== 核心方法：初始化区块链结构 =====================
     public void initBlockchainStructure() {
-        if (blockHeaders.isEmpty()) {
+        setBlockHeaders(blockHeaders);
+    }
+
+    /** 启动阶段的索引在主链及 UTXO 恢复完成后才交给服务的读者。 */
+    void loadStoredHeaders(Map<String, BlockHeader> headers, Set<String> fullBlocks, String preferredTip) {
+        mainTip = indexHeaders(headers, fullBlocks::contains, preferredTip);
+    }
+
+    private void activateBestChain(Block appliedTip) {
+        BlockHeaderWrapper best = mainTip;
+        String appliedHash = bytesToHex(appliedTip.getHash());
+        BlockHeaderWrapper applied = blockHeaderWrappers.get(appliedHash);
+        if (applied == null || !applied.isFullChain() || applied.getHeight() - 1 != appliedTip.getHeight()
+                || !applied.getChainWork().equals(appliedTip.getChainWork().toBigInteger())) {
+            throw new IllegalStateException("Applied chain tip disagrees with the stored block headers");
+        }
+        if (applied != best) {
+            mainTip = applied;
+            Block winner = store.storedBlock(hexToBytes(best.getHash()));
+            if (!accept(winner).mainChanged()) {
+                throw new IllegalStateException("Could not activate the highest-work complete branch");
+            }
+        }
+    }
+
+    private BlockHeaderWrapper indexHeaders(Map<String, BlockHeader> headers, Predicate<String> hasBody,
+            String preferredTip) {
+        if (headers.isEmpty()) {
             throw new IllegalStateException("区块头集合为空，请先设置blockHeaders");
         }
-        if (genesisBlockHash == null || !blockHeaders.containsKey(genesisBlockHash)) {
+        if (genesisBlockHash == null || !headers.containsKey(genesisBlockHash)) {
             throw new IllegalArgumentException("创世区块哈希无效或不存在");
         }
 
-        // 步骤1：构建所有BlockHeaderWrapper
-        buildBlockHeaderWrappers();
-
-        // 步骤2：建立父-子区块关系，筛选孤块
-        buildParentChildRelations();
-
-        // 步骤3：处理孤块（尝试将孤块挂载到已存在的父区块）
-        processOrphanBlocks();
-
-        // 步骤4：计算所有区块的高度和累计工作量（从创世区块开始）
-        calculateChainHeightAndWork(genesisBlockHash, 0, BigInteger.ZERO);
-
-        // 步骤5：选择累计工作量最大的主链（修复后的逻辑）
-        selectMainChain();
-    }
-
-    // ===================== 辅助方法：构建BlockHeaderWrapper =====================
-    private void buildBlockHeaderWrappers() {
-        blockHeaders.forEach((hash, header) -> {
-            blockHeaderWrappers.put(hash, new BlockHeaderWrapper(hash, header));
-        });
-    }
-
-    // ===================== 辅助方法：建立父-子关系 & 筛选孤块 =====================
-    private void buildParentChildRelations() {
-        blockHeaderWrappers.forEach((blockHash, wrapper) -> {
-            String parentHash = wrapper.getParentHash();
-
-            // 创世区块无父区块，跳过
-            if (genesisBlockHash.equals(blockHash)) {
-                return;
-            }
-
-            // 父区块存在：建立父子关系
-            if (blockHeaderWrappers.containsKey(parentHash)) {
-                BlockHeaderWrapper parentWrapper = blockHeaderWrappers.get(parentHash);
-                parentWrapper.getChildren().add(blockHash);
-            } else {
-                // 父区块不存在：加入孤块缓存
-                orphanBlocks.computeIfAbsent(parentHash, k -> ConcurrentHashMap.newKeySet()).add(blockHash);
-            }
-        });
-    }
-
-    // ===================== 辅助方法：处理孤块 =====================
-    private void processOrphanBlocks() {
-        Iterator<Map.Entry<String, Set<String>>> iterator = orphanBlocks.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, Set<String>> entry = iterator.next();
-            String parentHash = entry.getKey();
-            Set<String> orphanBlockHashes = entry.getValue();
-
-            // 父区块已存在：挂载孤块，移除孤块缓存
-            if (blockHeaderWrappers.containsKey(parentHash)) {
-                BlockHeaderWrapper parentWrapper = blockHeaderWrappers.get(parentHash);
-                orphanBlockHashes.forEach(orphanHash -> {
-                    parentWrapper.getChildren().add(orphanHash);
-                    // 递归处理该孤块的子孤块（如果有）
-                    if (orphanBlocks.containsKey(orphanHash)) {
-                        processOrphanBlocks(orphanHash);
-                    }
-                });
-                iterator.remove(); // 移除已处理的孤块缓存
-            }
-        }
-    }
-
-    private void processOrphanBlocks(String parentHash) {
-        Set<String> orphanBlockHashes = orphanBlocks.get(parentHash);
-        if (orphanBlockHashes == null || orphanBlockHashes.isEmpty()) {
-            return;
-        }
-        BlockHeaderWrapper parentWrapper = blockHeaderWrappers.get(parentHash);
-        orphanBlockHashes.forEach(orphanHash -> {
-            parentWrapper.getChildren().add(orphanHash);
-            processOrphanBlocks(orphanHash);
-        });
-        orphanBlocks.remove(parentHash);
-    }
-
-    // ===================== 辅助方法：计算区块高度 & 累计工作量 =====================
-    private void calculateChainHeightAndWork(String blockHash, int parentHeight, BigInteger parentChainWork) {
-        BlockHeaderWrapper wrapper = blockHeaderWrappers.get(blockHash);
-        if (wrapper == null) {
-            return;
-        }
-
-        // 避免重复计算（已计算过高度的区块跳过）
-        if (wrapper.getHeight() != -1) {
-            return;
-        }
-
-        // 1. 设置当前区块高度（父高度+1）
-        wrapper.setHeight(parentHeight + 1);
-
-        // 2. 计算当前区块的工作量（基于难度目标，比特币逻辑：工作量 = 2^256 / (难度目标+1)）
-        BlockHeader blockHeader = blockHeaders.get(blockHash);
-        BigInteger blockWork = blockHeader.getWork();
-
-        // 3. 设置当前区块累计工作量（父累计工作量 + 当前区块工作量）
-        wrapper.setChainWork(parentChainWork.add(blockWork));
-
-        // 4. 递归计算所有子区块
-        for (String childHash : wrapper.getChildren()) {
-            calculateChainHeightAndWork(childHash, wrapper.getHeight(), wrapper.getChainWork());
-        }
-    }
-
-    // ===================== 新增辅助方法：查找所有顶端区块（无孩子的区块） =====================
-    /**
-     * 找出所有“顶端区块”：没有子区块的区块（各分支的末端）
-     * @return 顶端区块哈希集合
-     */
-    private Set<String> findAllTipBlocks() {
-        Set<String> tipBlocks = new HashSet<>();
-        blockHeaderWrappers.forEach((hash, wrapper) -> {
-            // 无子区块 → 是顶端区块
-            if (wrapper.getChildren() == null || wrapper.getChildren().isEmpty()) {
-                tipBlocks.add(hash);
-            }
-        });
-        return tipBlocks;
-    }
-
-    // ===================== 核心方法：选择主链（修复后） =====================
-    /**
-     * 修复后的主链选择逻辑：
-     * 1. 先找到所有无孩子的顶端区块（各分支末端）
-     * 2. 只比较这些顶端区块的累计工作量（代表各分支总工作量）
-     * 3. 选择工作量最大的顶端区块作为主链末端
-     */
-    private void selectMainChain() {
-        // 步骤1：获取所有顶端区块（无孩子的区块）
-        Set<String> tipBlocks = findAllTipBlocks();
-        if (tipBlocks.isEmpty()) {
-            // 极端情况：只有创世区块（也会被判定为顶端区块），这里兜底
-            tipBlocks.add(genesisBlockHash);
-        }
-
-        BigInteger maxWork = BigInteger.ZERO;
-        String maxWorkBlockHash = genesisBlockHash;
-        int maxHeight = 0;
-
-        // 步骤2：只遍历顶端区块，比较工作量（核心优化）
-        for (String tipHash : tipBlocks) {
-            BlockHeaderWrapper wrapper = blockHeaderWrappers.get(tipHash);
-            if (wrapper == null) {
+        Map<String, BlockHeaderWrapper> wrappers = new ConcurrentHashMap<>();
+        Map<String, Set<String>> orphans = new ConcurrentHashMap<>();
+        headers.forEach((hash, header) -> wrappers.put(hash, new BlockHeaderWrapper(hash, header)));
+        for (BlockHeaderWrapper block : wrappers.values()) {
+            if (genesisBlockHash.equals(block.getHash())) {
                 continue;
             }
-            BigInteger currentWork = wrapper.getChainWork();
-            int currentHeight = wrapper.getHeight();
-
-            // 优先按工作量排序，工作量相同则按高度排序
-            if (currentWork.compareTo(maxWork) > 0 ||
-                    (currentWork.equals(maxWork) && currentHeight > maxHeight)) {
-                maxWork = currentWork;
-                maxWorkBlockHash = wrapper.getHash();
-                maxHeight = currentHeight;
+            BlockHeaderWrapper parent = wrappers.get(block.getParentHash());
+            if (parent == null) {
+                orphans.computeIfAbsent(block.getParentHash(), key -> ConcurrentHashMap.newKeySet()).add(block.getHash());
+            } else {
+                parent.getChildren().add(block.getHash());
             }
         }
 
-        // 更新主链核心字段
-        this.mainChainWork = maxWork;
-        this.mainChainTip = maxWorkBlockHash;
-        this.mainChainHeight = maxHeight;
+        BlockHeaderWrapper genesis = wrappers.get(genesisBlockHash);
+        genesis.setHeight(1);
+        genesis.setChainWork(headers.get(genesisBlockHash).getWork());
+        genesis.setFullChain(hasBody.test(genesisBlockHash));
+        connectDescendants(genesis, wrappers, headers, hasBody);
+
+        // 同工作量时保留仍在候选中的当前链尖；首次加载时用高度和哈希稳定裁决平局。
+        Comparator<BlockHeaderWrapper> byWork = Comparator.comparing(BlockHeaderWrapper::getChainWork)
+                .thenComparing(block -> block.getHash().equals(preferredTip))
+                .thenComparingInt(BlockHeaderWrapper::getHeight)
+                .thenComparing(BlockHeaderWrapper::getHash);
+        // 完整分支的末端也可能已有只含区块头的子块。
+        BlockHeaderWrapper best = wrappers.values().stream().filter(BlockHeaderWrapper::isFullChain)
+                .max(byWork).orElseThrow(() -> new IllegalStateException("No complete chain from genesis"));
+
+        blockHeaders = headers;
+        blockHeaderWrappers = wrappers;
+        orphanBlocks = orphans;
+        return best;
+    }
+
+    private void connectDescendants(BlockHeaderWrapper root, Map<String, BlockHeaderWrapper> wrappers,
+            Map<String, BlockHeader> headers, Predicate<String> hasBody) {
+        Deque<BlockHeaderWrapper> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            BlockHeaderWrapper parent = pending.pop();
+            for (String hash : parent.getChildren()) {
+                BlockHeaderWrapper child = wrappers.get(hash);
+                child.setHeight(parent.getHeight() + 1);
+                child.setChainWork(accumulatedWork(parent.getChainWork(), headers.get(hash)));
+                child.setFullChain(parent.isFullChain() && hasBody.test(hash));
+                pending.push(child);
+            }
+        }
+    }
+
+    private BlockHeaderWrapper prepareHeader(byte[] hash, BlockHeader header) {
+        String key = HexFormat.of().formatHex(hash);
+        BlockHeaderWrapper known = blockHeaderWrappers.get(key);
+        if (known != null) {
+            return known;
+        }
+        BlockHeaderWrapper node = new BlockHeaderWrapper(key, header);
+        BlockHeaderWrapper parent = blockHeaderWrappers.get(node.getParentHash());
+        if (parent == null || parent.getHeight() < 1) {
+            throw new IllegalStateException("Header parent missing from block index");
+        }
+        node.setHeight(Math.addExact(parent.getHeight(), 1));
+        node.setChainWork(accumulatedWork(parent.getChainWork(), header));
+        return node;
+    }
+
+    private void recordHeader(BlockHeaderWrapper node, BlockHeader header) {
+        if (!blockHeaderWrappers.containsKey(node.getHash())) {
+            blockHeaders.put(node.getHash(), BlockHeader.deserialize(header.serialize()));
+            blockHeaderWrappers.get(node.getParentHash()).getChildren().add(node.getHash());
+            blockHeaderWrappers.put(node.getHash(), node);
+            Set<String> waiting = orphanBlocks.remove(node.getHash());
+            if (waiting != null) {
+                node.getChildren().addAll(waiting);
+                connectDescendants(node, blockHeaderWrappers, blockHeaders, hash -> false);
+            }
+        }
+    }
+
+    private void recordAccepted(Block block, ForkChoice choice) {
+        BlockHeaderWrapper node = choice.candidate();
+        recordHeader(node, block.getBlockHeader());
+        node.setFullChain(true);
+        if (choice.replacesTip()) {
+            mainTip = node;
+        }
     }
 
     // ===================== 扩展方法：获取主链完整哈希列表 =====================
     public List<String> getMainChainHashes() {
         List<String> mainChain = new ArrayList<>();
-        String currentHash = mainChainTip;
+        String currentHash = getMainChainTip();
 
         // 回溯直到创世区块
         while (currentHash != null) {
@@ -286,10 +373,13 @@ public class BlockchainManager {
 
     // ===================== 覆写setter：设置blockHeaders后自动初始化 =====================
     public void setBlockHeaders(Map<String, BlockHeader> blockHeaders) {
-        this.blockHeaders = blockHeaders;
-        // 自动初始化区块链结构
-        if (genesisBlockHash != null) {
-            initBlockchainStructure();
+        if (store != null) {
+            throw new IllegalStateException("A live chain index must be restored from committed blocks");
+        }
+        if (genesisBlockHash == null) {
+            this.blockHeaders = blockHeaders;
+        } else {
+            mainTip = indexHeaders(blockHeaders, hash -> true, getMainChainTip());
         }
     }
 
@@ -322,21 +412,7 @@ public class BlockchainManager {
             throw new IllegalArgumentException("区块不存在：" + blockHash);
         }
 
-        // 2. 创世区块不是孤儿
-        if (genesisBlockHash.equals(blockHash)) {
-            return false;
-        }
-
-        // 3. 获取父区块哈希并检查是否存在
-        String parentHash = wrapper.getParentHash();
-        boolean parentNotExists = !blockHeaderWrappers.containsKey(parentHash);
-
-        // 4. 双重验证：孤块缓存中是否包含该区块
-        boolean inOrphanCache = orphanBlocks.values().stream()
-                .anyMatch(orphanHashes -> orphanHashes.contains(blockHash));
-
-        // 父区块不存在 或 存在于孤块缓存 → 判定为孤儿
-        return parentNotExists || inOrphanCache;
+        return wrapper.getHeight() < 0;
     }
 
     // ===================== 新增方法3：判断是否需要重组并执行重组 =====================
@@ -352,23 +428,25 @@ public class BlockchainManager {
 
         // 2. 比较新分支和当前主链的工作量
         BigInteger newChainWork = newBlockWrapper.getChainWork();
-        if (newChainWork.compareTo(mainChainWork) <= 0) {
+        if (!newBlockWrapper.isFullChain() || !hasMoreWork(newChainWork, mainTip.getChainWork())) {
             return null; // 工作量不足，不需要重组
         }
 
         // 3. 找到新分支与旧主链的共同祖先
-        String commonAncestor = findCommonAncestor(newBlockHash, mainChainTip);
+        String commonAncestor = findCommonAncestor(newBlockHash, getMainChainTip());
 
         // 4. 构建新链路径（共同祖先 → 新区块）
         List<String> newChainPath = buildChainPath(commonAncestor, newBlockHash);
 
         // 5. 构建旧链路径（共同祖先 → 旧主链末端）
-        List<String> oldChainPath = buildChainPath(commonAncestor, mainChainTip);
+        List<String> oldChainPath = buildChainPath(commonAncestor, getMainChainTip());
 
         // 6. 执行主链重组：更新主链核心字段
-        this.mainChainTip = newBlockHash;
-        this.mainChainWork = newChainWork;
-        this.mainChainHeight = newBlockWrapper.getHeight();
+        if (store == null) {
+            mainTip = newBlockWrapper;
+        } else {
+            accept(store.storedBlock(hexToBytes(newBlockHash)));
+        }
 
         // 7. 封装并返回重组结果
         ChainReorganizationResult result = new ChainReorganizationResult();

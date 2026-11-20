@@ -25,6 +25,4 @@ public record TxPoolTransactionSnapshot(
         List<String> inputOutpoints,
         List<String> outputOutpoints,
         List<String> parents,
-        List<String> children
-) {
-}
+        List<String> children) {}

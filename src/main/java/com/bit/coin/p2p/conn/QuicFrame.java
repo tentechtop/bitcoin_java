@@ -19,6 +19,7 @@ import static com.bit.coin.p2p.conn.QuicFrameEnum.*;
 @Slf4j
 @Data
 public class QuicFrame {
+
     private long connectionId; // 雪花算法生成的连接ID
     private long dataId; // 雪花算法生成的数据ID
     private int total; // 分片数量 4字节
@@ -36,18 +37,14 @@ public class QuicFrame {
     //是否重传帧
     private boolean isRetransmit; // 新增：是否为重传帧（首次发送=false，重传=true）
 
-
     // 固定头部长度 = connectionId(8) + dataId(8) + total(4) + frameType(1) + sequence(4) + frameTotalLength(4)
     public static final int FIXED_HEADER_LENGTH = 8 + 8 + 4 + 1 + 4 + 4;
-    public static final int MAX_FRAME_TOTAL_LENGTH = PathMtuEstimator.MAX_DATAGRAM_BYTES - SessionCipher.OVERHEAD_BYTES;
+    public static final int MAX_FRAME_TOTAL_LENGTH = PathMtuEstimator.MAX_DATAGRAM_BYTES - SessionCipher.OVERHEAD_BYTES;  // 扣除会话封装后的最大帧长，包含帧头，单位为字节
 
     // 无参构造器
-    public QuicFrame() {
-    }
+    public QuicFrame() {}
 
     public static final ByteBufAllocator ALLOCATOR = ByteBufAllocator.DEFAULT;
-
-
 
     // ========== 通用转换方法（提取重复逻辑） ==========
     /**
@@ -168,8 +165,7 @@ public class QuicFrame {
         if (data.length < FIXED_HEADER_LENGTH) {
             throw new IllegalArgumentException(
                     "Insufficient bytes for header: need " + FIXED_HEADER_LENGTH
-                            + ", actual " + data.length
-            );
+                            + ", actual " + data.length);
         }
 
         QuicFrame frame = new QuicFrame();
@@ -203,14 +199,12 @@ public class QuicFrame {
             if (frame.frameTotalLength != data.length) {
                 throw new IllegalArgumentException(
                         "Frame total length mismatch: expected " + frame.frameTotalLength
-                                + ", actual " + data.length
-                );
+                                + ", actual " + data.length);
             }
             if (frame.frameTotalLength > MAX_FRAME_TOTAL_LENGTH) {
                 throw new IllegalArgumentException(
                         "Frame total length exceeds limit: " + frame.frameTotalLength
-                                + ", limit " + MAX_FRAME_TOTAL_LENGTH
-                );
+                                + ", limit " + MAX_FRAME_TOTAL_LENGTH);
             }
 
             // 读取payload（剩余字节）
@@ -261,7 +255,6 @@ public class QuicFrame {
         }
     }
 
-
     //使用池化版本
     public void encode(ByteBuf buf) {
         // 前置校验：帧必须有效
@@ -278,16 +271,13 @@ public class QuicFrame {
             buf.writeInt(frameTotalLength);// 4字节总长度
 
             // 2. 写入payload（有效载荷）
-            if (payload != null){
+            if (payload != null) {
                 buf.writeBytes(payload);//非引用传递
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to encode QuicFrame to ByteBuf", e);
         }
     }
-
-
-
 
     public static QuicFrame decodeFromByteBuf(ByteBuf buf, InetSocketAddress remoteAddress) {
         buf.markReaderIndex();
@@ -297,8 +287,7 @@ public class QuicFrame {
             if (buf.readableBytes() < FIXED_HEADER_LENGTH) {
                 throw new IllegalArgumentException(
                         "Insufficient bytes for header: need " + FIXED_HEADER_LENGTH
-                                + ", actual " + buf.readableBytes()
-                );
+                                + ", actual " + buf.readableBytes());
             }
 
             frame.connectionId = buf.readLong();
@@ -311,23 +300,20 @@ public class QuicFrame {
             if (frame.frameTotalLength < FIXED_HEADER_LENGTH) {
                 throw new IllegalArgumentException(
                         "Invalid frameTotalLength: " + frame.frameTotalLength
-                                + ", must be ≥ " + FIXED_HEADER_LENGTH
-                );
+                                + ", must be ≥ " + FIXED_HEADER_LENGTH);
             }
 
             int payloadLen = frame.frameTotalLength - FIXED_HEADER_LENGTH;
             if (frame.frameTotalLength > MAX_FRAME_TOTAL_LENGTH) {
                 throw new IllegalArgumentException(
                         "Frame total length exceeds limit: " + frame.frameTotalLength
-                                + ", limit " + MAX_FRAME_TOTAL_LENGTH
-                );
+                                + ", limit " + MAX_FRAME_TOTAL_LENGTH);
             }
             if (payloadLen > 0) {
                 if (buf.readableBytes() < payloadLen) {
                     throw new IllegalArgumentException(
                             "Payload length mismatch: expected " + payloadLen
-                                    + ", actual " + buf.readableBytes()
-                    );
+                                    + ", actual " + buf.readableBytes());
                 }
                 frame.payload = new byte[payloadLen];
                 buf.readBytes(frame.payload);
@@ -356,14 +342,10 @@ public class QuicFrame {
                 && (total == 0 || sequence < total);   // 分片数为0时忽略sequence校验，否则sequence<total
     }
 
-
-
-
     // 批量ACK最大支持帧数（避免payload过度膨胀）
     public static final int BATCH_ACK_MAX_FRAMES = 10;
     // 接收窗口固定占用字节数（即使为0也占用）
     private static final int WINDOW_FIXED_BYTES = 4;
-
 
     /**
      * 向【普通ACK帧/取消帧/更新窗口帧】写入接收窗口大小
@@ -419,8 +401,6 @@ public class QuicFrame {
                 || type == UPDATE_WINDOW_FRAME.getCode();
     }
 
-
-
     //向ALL ACK帧中写入窗口大小
     /**
      * 向全量ACK帧（FRAME_TYPE_ALL_ACK）写入接收窗口大小
@@ -429,7 +409,8 @@ public class QuicFrame {
     public void writeAllAckFrameWindowSize(int windowSize) {
         // 1. 校验帧类型
         if (this.frameType != ALL_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_ALL_ACK(" + ALL_ACK_FRAME + ") can write window size, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_ALL_ACK(" + ALL_ACK_FRAME
+                    + ") can write window size, current type: " + this.frameType);
         }
         // 2. 构造payload（仅4字节窗口）
         byte[] payload = new byte[WINDOW_FIXED_BYTES];
@@ -442,6 +423,7 @@ public class QuicFrame {
             throw new IllegalStateException("ALL ACK frame is invalid after write window size: " + this);
         }
     }
+
     //获取ALL ACK帧中的窗口大小
     /**
      * 从全量ACK帧（FRAME_TYPE_ALL_ACK）读取接收窗口大小
@@ -450,11 +432,13 @@ public class QuicFrame {
     public int readAllAckFrameWindowSize() {
         // 1. 校验帧类型
         if (this.frameType != ALL_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_ALL_ACK(" + ALL_ACK_FRAME + ") can read window size, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_ALL_ACK(" + ALL_ACK_FRAME
+                    + ") can read window size, current type: " + this.frameType);
         }
         // 2. 校验payload长度
         if (payload == null || payload.length != WINDOW_FIXED_BYTES) {
-            throw new IllegalStateException("ALL ACK frame payload length invalid: expected " + WINDOW_FIXED_BYTES + ", actual " + (payload == null ? 0 : payload.length));
+            throw new IllegalStateException("ALL ACK frame payload length invalid: expected " + WINDOW_FIXED_BYTES
+                    + ", actual " + (payload == null ? 0 : payload.length));
         }
         // 3. 读取4字节窗口大小
         return readIntFromBytes(payload, 0);
@@ -470,14 +454,16 @@ public class QuicFrame {
     public void writeBatchAckFramePayload(int[] ackSequences, int windowSize) {
         // 1. 校验帧类型
         if (this.frameType != BATCH_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME + ") can write batch payload, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME
+                    + ") can write batch payload, current type: " + this.frameType);
         }
         // 2. 校验序号列表
         if (ackSequences == null || ackSequences.length == 0) {
             throw new IllegalArgumentException("Batch ACK sequences cannot be empty");
         }
         if (ackSequences.length > BATCH_ACK_MAX_FRAMES) {
-            throw new IllegalArgumentException("Batch ACK sequences exceed max limit: " + BATCH_ACK_MAX_FRAMES + ", actual: " + ackSequences.length);
+            throw new IllegalArgumentException("Batch ACK sequences exceed max limit: " + BATCH_ACK_MAX_FRAMES
+                    + ", actual: " + ackSequences.length);
         }
         for (int seq : ackSequences) {
             if (seq < 0) {
@@ -511,7 +497,6 @@ public class QuicFrame {
         }
     }
 
-
     //从批量ACK中拿到ACK列表
     /**
      * 从批量ACK帧（FRAME_TYPE_BATCH_ACK）读取确认序号列表
@@ -520,7 +505,8 @@ public class QuicFrame {
     public int[] readBatchAckFrameSequences() {
         // 1. 校验帧类型
         if (this.frameType != BATCH_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME + ") can read sequences, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME
+                    + ") can read sequences, current type: " + this.frameType);
         }
         // 2. 校验payload长度
         if (payload == null || payload.length < 1 + WINDOW_FIXED_BYTES) {
@@ -534,7 +520,8 @@ public class QuicFrame {
         // 4. 校验payload长度匹配
         int expectedPayloadLen = 1 + sequenceCount * 4 + WINDOW_FIXED_BYTES;
         if (payload.length != expectedPayloadLen) {
-            throw new IllegalStateException("Batch ACK payload length mismatch: expected " + expectedPayloadLen + ", actual " + payload.length);
+            throw new IllegalStateException(
+                    "Batch ACK payload length mismatch: expected " + expectedPayloadLen + ", actual " + payload.length);
         }
         // 5. 读取序号列表
         int[] sequences = new int[sequenceCount];
@@ -554,7 +541,8 @@ public class QuicFrame {
     public int readBatchAckFrameWindowSize() {
         // 1. 校验帧类型
         if (this.frameType != BATCH_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME + ") can read window size, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BATCH_ACK(" + BATCH_ACK_FRAME
+                    + ") can read window size, current type: " + this.frameType);
         }
         // 2. 校验payload长度
         if (payload == null || payload.length < 1 + WINDOW_FIXED_BYTES) {
@@ -565,14 +553,11 @@ public class QuicFrame {
         return readIntFromBytes(payload, windowStartIndex);
     }
 
-
-
     //设置位图帧的位图 通过一个已经编辑好的位图来设置  参数byte[] int windowSize  转成Bit位图
 
     //获取位图帧的位图
 
     //获取位图帧的窗口大小
-
 
     /**
      * 向位图ACK帧（FRAME_TYPE_BITMAP_ACK）写入位图数据和接收窗口大小
@@ -583,7 +568,8 @@ public class QuicFrame {
     public void writeBitmapAckFramePayload(byte[] bitmapBytes, int windowSize) {
         // 1. 校验帧类型
         if (this.frameType != BITMAP_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME + ") can write bitmap payload, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME
+                    + ") can write bitmap payload, current type: " + this.frameType);
         }
         // 2. 校验位图数组（不能为null，空数组表示无位图数据）
         if (bitmapBytes == null) {
@@ -621,14 +607,16 @@ public class QuicFrame {
     public byte[] readBitmapAckFrameBitmap() {
         // 1. 校验帧类型
         if (this.frameType != BITMAP_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME + ") can read bitmap, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME
+                    + ") can read bitmap, current type: " + this.frameType);
         }
         // 2. 校验payload长度（至少包含4字节窗口）
         if (payload == null) {
             throw new IllegalStateException("Bitmap ACK payload is null");
         }
         if (payload.length < WINDOW_FIXED_BYTES) {
-            throw new IllegalStateException("Bitmap ACK payload too short (need at least 4 bytes for window): " + payload.length);
+            throw new IllegalStateException(
+                    "Bitmap ACK payload too short (need at least 4 bytes for window): " + payload.length);
         }
         // 3. 截取位图部分（除最后4字节外的所有数据）
         int bitmapLen = payload.length - WINDOW_FIXED_BYTES;
@@ -648,14 +636,16 @@ public class QuicFrame {
     public int[] readBitmapAckFrameReceivedSequences() {
         // 1. 校验帧类型
         if (this.frameType != BITMAP_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME + ") can read bitmap, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME
+                    + ") can read bitmap, current type: " + this.frameType);
         }
         // 2. 校验payload长度（至少包含4字节窗口）
         if (payload == null) {
             throw new IllegalStateException("Bitmap ACK payload is null");
         }
         if (payload.length < WINDOW_FIXED_BYTES) {
-            throw new IllegalStateException("Bitmap ACK payload too short (need at least 4 bytes for window): " + payload.length);
+            throw new IllegalStateException(
+                    "Bitmap ACK payload too short (need at least 4 bytes for window): " + payload.length);
         }
 
         // 3. 截取纯位图字节数组（剔除最后4字节窗口）
@@ -691,25 +681,22 @@ public class QuicFrame {
     public int readBitmapAckFrameWindowSize() {
         // 1. 校验帧类型
         if (this.frameType != BITMAP_ACK_FRAME.getCode()) {
-            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME + ") can read window size, current type: " + this.frameType);
+            throw new IllegalArgumentException("Only FRAME_TYPE_BITMAP_ACK(" + BITMAP_ACK_FRAME
+                    + ") can read window size, current type: " + this.frameType);
         }
         // 2. 校验payload长度（至少包含4字节窗口）
         if (payload == null || payload.length < WINDOW_FIXED_BYTES) {
-            throw new IllegalStateException("Bitmap ACK payload too short (need at least 4 bytes for window): " + (payload == null ? 0 : payload.length));
+            throw new IllegalStateException("Bitmap ACK payload too short (need at least 4 bytes for window): "
+                    + (payload == null ? 0 : payload.length));
         }
         // 3. 读取最后4字节窗口大小（大端序）
         int windowStartIndex = payload.length - WINDOW_FIXED_BYTES;
         return readIntFromBytes(payload, windowStartIndex);
     }
 
-
-
-
     public String getPayloadAsString() {
         return payload == null ? "" : new String(payload, StandardCharsets.UTF_8);
     }
-
-
 
     public int getSize() {
         return this.frameTotalLength;
@@ -719,5 +706,3 @@ public class QuicFrame {
         return this.frameTotalLength - FIXED_HEADER_LENGTH;
     }
 }
-
-

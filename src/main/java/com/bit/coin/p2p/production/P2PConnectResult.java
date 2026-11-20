@@ -5,8 +5,8 @@ public record P2PConnectResult(
         P2PNodeStatus status,
         String peerId,
         String message,
-        long connectionId
-) {
+        long connectionId) {
+
     public static P2PConnectResult success(String peerId, long connectionId) {
         return new P2PConnectResult(true, P2PNodeStatus.CONNECTED, peerId, "connected", connectionId);
     }

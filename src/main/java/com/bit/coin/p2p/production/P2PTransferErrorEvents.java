@@ -8,10 +8,10 @@ import java.util.function.Consumer;
 
 @Slf4j
 public final class P2PTransferErrorEvents {
+
     private static final CopyOnWriteArrayList<Consumer<P2PTransferErrorRecord>> LISTENERS = new CopyOnWriteArrayList<>();
 
-    private P2PTransferErrorEvents() {
-    }
+    private P2PTransferErrorEvents() {}
 
     public static AutoCloseable subscribe(Consumer<P2PTransferErrorRecord> listener) {
         Objects.requireNonNull(listener, "listener");

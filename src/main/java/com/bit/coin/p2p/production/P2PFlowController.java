@@ -3,7 +3,8 @@ package com.bit.coin.p2p.production;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class P2PFlowController {
-    public static final long DEFAULT_RECEIVE_WINDOW = 8L * 1024 * 1024;
+
+    public static final long DEFAULT_RECEIVE_WINDOW = 8L * 1024 * 1024;  // 收发双方的初始接收额度，单位为字节；对端额度随确认更新
 
     private final long localMaxReceiveWindow;
     private final AtomicLong localReceiveWindow;
@@ -28,6 +29,7 @@ public class P2PFlowController {
         return congestionController.tryReserve(bytes, remoteReceiveWindow.get());
     }
 
+    /** 接收数据前扣减本地窗口，处理完成后调用 releaseInbound 归还。 */
     public boolean tryAcquireInbound(long bytes) {
         if (bytes <= 0) {
             return false;
@@ -79,7 +81,6 @@ public class P2PFlowController {
                 localReceiveWindow.get(),
                 localMaxReceiveWindow,
                 remoteWindow,
-                congestionController.snapshot(remoteWindow)
-        );
+                congestionController.snapshot(remoteWindow));
     }
 }

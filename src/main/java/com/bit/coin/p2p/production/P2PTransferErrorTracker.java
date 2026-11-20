@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.LongAdder;
 
 @Component
 public class P2PTransferErrorTracker {
+
     private static final int DEFAULT_PER_KEY_LIMIT = 200;
     private final ConcurrentHashMap<String, Deque<P2PTransferErrorRecord>> records = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LongAdder> counts = new ConcurrentHashMap<>();
@@ -55,12 +56,12 @@ public class P2PTransferErrorTracker {
     }
 
     public void record(String peerId,
-                       InetSocketAddress remoteAddress,
-                       P2PErrorCode errorCode,
-                       String message,
-                       long dataId,
-                       long connectionId,
-                       Throwable cause) {
+            InetSocketAddress remoteAddress,
+            P2PErrorCode errorCode,
+            String message,
+            long dataId,
+            long connectionId,
+            Throwable cause) {
         record(P2PTransferErrorRecord.now(
                 normalizePeerIdOrNull(peerId),
                 remoteAddress == null ? "" : remoteAddress.toString(),
@@ -68,8 +69,7 @@ public class P2PTransferErrorTracker {
                 message,
                 dataId,
                 connectionId,
-                cause
-        ));
+                cause));
     }
 
     public List<P2PTransferErrorRecord> recent(String peerIdOrKey) {

@@ -2,64 +2,58 @@ package com.bit.coin.structure.tx;
 
 import java.util.ArrayList;
 import java.util.List;
+
 /**
  * UTXO状态解析器（基于位运算实现多状态共存）
  * 低32位：生命周期状态
  * 高32位：附加状态标志
  */
 public class UTXOStatusResolver {
+
     // ======================== 生命周期状态（互斥，只能有一个）========================
-    public static final long UNCONFIRMED_OUTPUT  = 1L << 0;  // 新生成未确认(一笔已经通过交易池验证的交易产生的UTXO)
-    public static final long CONFIRMED_UNSPENT   = 1L << 1;  // 已确认未花费（已上链）
-    public static final long PENDING_SPENT       = 1L << 2;  // 花费中（被未确认交易引用 一笔已经通过交易池验证的交易正在使用该UTXO 但等待确认）
-    public static final long SPENT               = 1L << 3;  // 已花费（输入交易已确认）
-    public static final long ORPHANED            = 1L << 4;  // 被孤立/被回滚
-
-
+    public static final long UNCONFIRMED_OUTPUT = 1L << 0;  // 新生成未确认(一笔已经通过交易池验证的交易产生的UTXO)
+    public static final long CONFIRMED_UNSPENT = 1L << 1;  // 已确认未花费（已上链）
+    public static final long PENDING_SPENT = 1L << 2;  // 花费中（被未确认交易引用 一笔已经通过交易池验证的交易正在使用该UTXO 但等待确认）
+    public static final long SPENT = 1L << 3;  // 已花费（输入交易已确认）
+    public static final long ORPHANED = 1L << 4;  // 被孤立/被回滚
 
     // 主要状态掩码（用于清除操作）
-    public static final long LIFECYCLE_MASK =
-            UNCONFIRMED_OUTPUT | CONFIRMED_UNSPENT | PENDING_SPENT | SPENT | ORPHANED  ;
+    public static final long LIFECYCLE_MASK = UNCONFIRMED_OUTPUT | CONFIRMED_UNSPENT | PENDING_SPENT | SPENT | ORPHANED;
 
     // ======================== 附加状态标志（可组合）========================
     // 高32位：附加状态标志
     private static final int FLAG_OFFSET = 32;
 
     // 交易相关标志
-    public static final long HIGH_VALUE           = 1L << (FLAG_OFFSET + 0);  // 高价值UTXO
-    public static final long DUST_OUTPUT          = 1L << (FLAG_OFFSET + 1);  // 粉尘输出
-    public static final long RBF_ENABLED          = 1L << (FLAG_OFFSET + 2);  // 支持RBF替换
-    public static final long CPFP_ENABLED         = 1L << (FLAG_OFFSET + 3);  // 支持CPFP追加手续费
+    public static final long HIGH_VALUE = 1L << (FLAG_OFFSET + 0);  // 高价值UTXO
+    public static final long DUST_OUTPUT = 1L << (FLAG_OFFSET + 1);  // 粉尘输出
+    public static final long RBF_ENABLED = 1L << (FLAG_OFFSET + 2);  // 支持RBF替换
+    public static final long CPFP_ENABLED = 1L << (FLAG_OFFSET + 3);  // 支持CPFP追加手续费
 
     // 验证相关标志
-    public static final long VERIFIED             = 1L << (FLAG_OFFSET + 4);  // 已完全验证
-    public static final long SIGNATURE_CHECKED    = 1L << (FLAG_OFFSET + 5);  // 签名已验证
-    public static final long SCRIPT_CHECKED       = 1L << (FLAG_OFFSET + 6);  // 脚本已验证
+    public static final long VERIFIED = 1L << (FLAG_OFFSET + 4);  // 已完全验证
+    public static final long SIGNATURE_CHECKED = 1L << (FLAG_OFFSET + 5);  // 签名已验证
+    public static final long SCRIPT_CHECKED = 1L << (FLAG_OFFSET + 6);  // 脚本已验证
 
     // 内存状态标志
-    public static final long MEMPOOL_LOCKED       = 1L << (FLAG_OFFSET + 7);  // 内存池锁定
-    public static final long DOUBLE_SPEND_FLAG    = 1L << (FLAG_OFFSET + 8);  // 双花嫌疑标记
-    public static final long CONFIRMED_WEAK       = 1L << (FLAG_OFFSET + 9);  // 弱确认（小于6个确认）
-    public static final long CONFIRMED_SAFE       = 1L << (FLAG_OFFSET + 10); // 安全确认（6+确认）
+    public static final long MEMPOOL_LOCKED = 1L << (FLAG_OFFSET + 7);  // 内存池锁定
+    public static final long DOUBLE_SPEND_FLAG = 1L << (FLAG_OFFSET + 8);  // 双花嫌疑标记
+    public static final long CONFIRMED_WEAK = 1L << (FLAG_OFFSET + 9);  // 弱确认（小于6个确认）
+    public static final long CONFIRMED_SAFE = 1L << (FLAG_OFFSET + 10); // 安全确认（6+确认）
 
     // 特殊场景标志
-    public static final long COINBASE_MATURING    = 1L << (FLAG_OFFSET + 11); // Coinbase成熟中
-    public static final long TIME_LOCKED          = 1L << (FLAG_OFFSET + 12); // 时间锁定
-    public static final long MULTISIG_OUTPUT      = 1L << (FLAG_OFFSET + 13); // 多重签名输出
-    public static final long CONTRACT_BOUND       = 1L << (FLAG_OFFSET + 14); // 合约绑定输出
-    public static final long COINBASE_MATURED    = 1L << (FLAG_OFFSET + 15); // 已经成熟
-
-
+    public static final long COINBASE_MATURING = 1L << (FLAG_OFFSET + 11); // Coinbase成熟中
+    public static final long TIME_LOCKED = 1L << (FLAG_OFFSET + 12); // 时间锁定
+    public static final long MULTISIG_OUTPUT = 1L << (FLAG_OFFSET + 13); // 多重签名输出
+    public static final long CONTRACT_BOUND = 1L << (FLAG_OFFSET + 14); // 合约绑定输出
+    public static final long COINBASE_MATURED = 1L << (FLAG_OFFSET + 15); // 已经成熟
 
     // 常用组合
-    public static final long ACTIVE_UNSPENT =
-            CONFIRMED_UNSPENT | VERIFIED | SIGNATURE_CHECKED | SCRIPT_CHECKED;
+    public static final long ACTIVE_UNSPENT = CONFIRMED_UNSPENT | VERIFIED | SIGNATURE_CHECKED | SCRIPT_CHECKED;
 
-    public static final long SAFE_SPENDABLE =
-            CONFIRMED_UNSPENT | CONFIRMED_SAFE | VERIFIED;
+    public static final long SAFE_SPENDABLE = CONFIRMED_UNSPENT | CONFIRMED_SAFE | VERIFIED;
 
-    public static final long RISKY_OUTPUT =
-            UNCONFIRMED_OUTPUT | HIGH_VALUE | DOUBLE_SPEND_FLAG;
+    public static final long RISKY_OUTPUT = UNCONFIRMED_OUTPUT | HIGH_VALUE | DOUBLE_SPEND_FLAG;
 
     /**
      * 获取当前生命周期状态
@@ -193,27 +187,65 @@ public class UTXOStatusResolver {
         List<String> parts = new ArrayList<>();
 
         // 生命周期状态
-        if (hasLifecycle(statusMask, UNCONFIRMED_OUTPUT)) parts.add("未确认输出");
-        if (hasLifecycle(statusMask, CONFIRMED_UNSPENT)) parts.add("已确认未花费");
-        if (hasLifecycle(statusMask, PENDING_SPENT)) parts.add("花费中");
-        if (hasLifecycle(statusMask, SPENT)) parts.add("已花费");
-        if (hasLifecycle(statusMask, ORPHANED)) parts.add("被孤立");
+        if (hasLifecycle(statusMask, UNCONFIRMED_OUTPUT)) {
+            parts.add("未确认输出");
+        }
+        if (hasLifecycle(statusMask, CONFIRMED_UNSPENT)) {
+            parts.add("已确认未花费");
+        }
+        if (hasLifecycle(statusMask, PENDING_SPENT)) {
+            parts.add("花费中");
+        }
+        if (hasLifecycle(statusMask, SPENT)) {
+            parts.add("已花费");
+        }
+        if (hasLifecycle(statusMask, ORPHANED)) {
+            parts.add("被孤立");
+        }
 
         // 附加标志
-        if (hasFlag(statusMask, HIGH_VALUE)) parts.add("高价值");
-        if (hasFlag(statusMask, DUST_OUTPUT)) parts.add("粉尘");
-        if (hasFlag(statusMask, RBF_ENABLED)) parts.add("RBF");
-        if (hasFlag(statusMask, CPFP_ENABLED)) parts.add("CPFP");
-        if (hasFlag(statusMask, VERIFIED)) parts.add("已验证");
-        if (hasFlag(statusMask, MEMPOOL_LOCKED)) parts.add("内存池锁定");
-        if (hasFlag(statusMask, DOUBLE_SPEND_FLAG)) parts.add("双花嫌疑");
-        if (hasFlag(statusMask, CONFIRMED_WEAK)) parts.add("弱确认");
-        if (hasFlag(statusMask, CONFIRMED_SAFE)) parts.add("安全确认");
-        if (hasFlag(statusMask, COINBASE_MATURING)) parts.add("成熟中");
-        if (hasFlag(statusMask, COINBASE_MATURED)) parts.add("已经成熟");
-        if (hasFlag(statusMask, TIME_LOCKED)) parts.add("时间锁定");
-        if (hasFlag(statusMask, MULTISIG_OUTPUT)) parts.add("多重签名");
-        if (hasFlag(statusMask, CONTRACT_BOUND)) parts.add("合约绑定");
+        if (hasFlag(statusMask, HIGH_VALUE)) {
+            parts.add("高价值");
+        }
+        if (hasFlag(statusMask, DUST_OUTPUT)) {
+            parts.add("粉尘");
+        }
+        if (hasFlag(statusMask, RBF_ENABLED)) {
+            parts.add("RBF");
+        }
+        if (hasFlag(statusMask, CPFP_ENABLED)) {
+            parts.add("CPFP");
+        }
+        if (hasFlag(statusMask, VERIFIED)) {
+            parts.add("已验证");
+        }
+        if (hasFlag(statusMask, MEMPOOL_LOCKED)) {
+            parts.add("内存池锁定");
+        }
+        if (hasFlag(statusMask, DOUBLE_SPEND_FLAG)) {
+            parts.add("双花嫌疑");
+        }
+        if (hasFlag(statusMask, CONFIRMED_WEAK)) {
+            parts.add("弱确认");
+        }
+        if (hasFlag(statusMask, CONFIRMED_SAFE)) {
+            parts.add("安全确认");
+        }
+        if (hasFlag(statusMask, COINBASE_MATURING)) {
+            parts.add("成熟中");
+        }
+        if (hasFlag(statusMask, COINBASE_MATURED)) {
+            parts.add("已经成熟");
+        }
+        if (hasFlag(statusMask, TIME_LOCKED)) {
+            parts.add("时间锁定");
+        }
+        if (hasFlag(statusMask, MULTISIG_OUTPUT)) {
+            parts.add("多重签名");
+        }
+        if (hasFlag(statusMask, CONTRACT_BOUND)) {
+            parts.add("合约绑定");
+        }
 
         return String.join(" | ", parts);
     }
@@ -249,7 +281,6 @@ public class UTXOStatusResolver {
             throw new IllegalArgumentException("无效的附加标志: " + flag);
         }
     }
-
 
     /**
      * 设置Coinbase为成熟中状态

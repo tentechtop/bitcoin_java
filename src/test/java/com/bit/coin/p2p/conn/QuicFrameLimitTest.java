@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class QuicFrameLimitTest {
+
     @Test
     void deserializeRejectsOversizedFrameBeforePayloadAllocation() {
         byte[] bytes = new byte[QuicFrame.FIXED_HEADER_LENGTH];
@@ -31,8 +32,8 @@ class QuicFrameLimitTest {
         buffer.writeInt(0);
         buffer.writeInt(QuicFrame.MAX_FRAME_TOTAL_LENGTH + 1);
 
-        assertThrows(RuntimeException.class, () ->
-                QuicFrame.decodeFromByteBuf(buffer, new InetSocketAddress("127.0.0.1", 8334)));
+        assertThrows(RuntimeException.class,
+                () -> QuicFrame.decodeFromByteBuf(buffer, new InetSocketAddress("127.0.0.1", 8334)));
     }
 
     private void writeLong(byte[] bytes, int offset, long value) {

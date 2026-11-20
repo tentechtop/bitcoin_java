@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.*;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
@@ -58,12 +57,6 @@ public class ChainApi {
         return blockChainService.getMainLatestBlock();
     }
 
-
-
-
-
-
-
     /**
      * 分页查询区块 开始高度 结束高度 每次不超过100个
      */
@@ -95,7 +88,6 @@ public class ChainApi {
         return block;
     }
 
-
     @GetMapping("/getBlockHeaderByHash")
     public BlockHeader getBlockHeaderByHash(String hash) {
         return blockChainService.getBlockHeaderByHash(hexToBytes(hash));
@@ -115,15 +107,14 @@ public class ChainApi {
      */
     @GetMapping("/utxos")
     public Map<String, Object> utxoPage(@RequestParam String address, @RequestParam(defaultValue = "100") int limit,
-                                      @RequestParam(required = false) String cursor, @RequestParam(required = false) String expectedTip) {
+            @RequestParam(required = false) String cursor, @RequestParam(required = false) String expectedTip) {
         return blockChainService.utxoPage(address, limit, cursor, expectedTip);
     }
 
     @GetMapping("/getUTXOListByAddres")
-    public Map<String,Object> getUTXOs(String address) {
+    public Map<String, Object> getUTXOs(String address) {
         return blockChainService.getUTXOs(address);
     }
-
 
     /**
      * 根据地址查询地址下所有的UTXO
@@ -149,14 +140,10 @@ public class ChainApi {
         return utxoCache.getUTXOsByAddressAndCount(address);
     }
 
-
-
-
     @GetMapping("/getUTXOsByAddres2")
     public Map<String, Object> getUTXOsByAddres2(String address) {
         return utxoCache.getAddressAllUTXOAndTotalByStatus(address, CONFIRMED_UNSPENT);
     }
-
 
     //查询地址余额
     @GetMapping("/getBalance")
@@ -164,16 +151,13 @@ public class ChainApi {
         return utxoCache.getBalance(address);
     }
 
-
-
     /**
      * 查询地址下所有的UTXO
      */
     @GetMapping("/getAddressAllUTXO")
-    public List<UTXO> getAddressAllUTXOByStatus(String address,long status) {
-        return utxoCache.getAddressAllUTXOByStatus(address,status);
+    public List<UTXO> getAddressAllUTXOByStatus(String address, long status) {
+        return utxoCache.getAddressAllUTXOByStatus(address, status);
     }
-
 
     /**
      * 查询地址下所有的交易
@@ -191,15 +175,12 @@ public class ChainApi {
         return List.of(txPool.getTxsByAddress(address));
     }
 
-
-
     @GetMapping("/getUtxo")
     public UTXO getUtxo(String key) {
         byte[] bytes = hexToBytes(key);
-        log.info("打印Key{}",bytes);
+        log.info("打印Key{}", bytes);
         return blockChainService.getUtxo(key);
     }
-
 
     //开始同步
     @PostMapping("/startSync")
@@ -254,13 +235,11 @@ public class ChainApi {
         return routingTable.getOnlineNodes();
     }
 
-
     //从在线节点获取最新的区块
     @GetMapping("/getLatestBlockFromOnlinePeers")
     public Block getLatestBlockFromOnlinePeers() {
         return netService.getLatestBlockFromOnlinePeers();
     }
-
 
     /**
      * 下一个区块应有难度
@@ -271,7 +250,6 @@ public class ChainApi {
         return blockChainService.calculateNextBlockDifficulty();
     }
 
-
     @PostMapping("/startMining")
     public Block startMining() throws Exception {
         miningService.startMining();
@@ -279,7 +257,9 @@ public class ChainApi {
     }
 
     @PostMapping("/stopMining")
-    public void stopMining() { miningService.stopMining(); }
+    public void stopMining() {
+        miningService.stopMining();
+    }
 
     @PostMapping("/mingOneBlock")
     public Block mingOneBlock() throws Exception {
@@ -290,18 +270,17 @@ public class ChainApi {
 
     @PostMapping("/mingOneBlockByCount")
     public List<Block> mingOneBlock(int count) throws Exception {
-        if (count < 1 || count > 100 || !"regtest".equals(blockChainService.getNetworkName())) throw new IllegalArgumentException("Batch mining requires regtest and count 1..100");
+        if (count < 1 || count > 100 || !"regtest".equals(blockChainService.getNetworkName())) {
+            throw new IllegalArgumentException("Batch mining requires regtest and count 1..100");
+        }
         ArrayList<Block> blocks = new ArrayList<>();
-        for (int i = 0; i < count; i++){
+        for (int i = 0; i < count; i++) {
             miningService.initAllResources();
             Block block = miningService.mineOneBlock();
             blocks.add(block);
         }
         return blocks;
     }
-
-
-
 
     @GetMapping("/getRoadMark")
     public List<Landmark> getRoadMark(int height) {
@@ -311,18 +290,16 @@ public class ChainApi {
 
     @GetMapping("/getLoclRoadMark")
     public List<Landmark> getLoclRoadMark() {
-        List<Landmark> landmarksLocal = blockChainService.generateSyncLandmarks(mainTipBlock.getHeight());
+        List<Landmark> landmarksLocal = blockChainService
+                .generateSyncLandmarks(blockChainService.getMainTipSnapshot().height());
         return landmarksLocal;
     }
 
-
     //用这个路标和本地做对比找到共同祖先
     @PostMapping("/getCommonAncestor")
-    public Landmark getCommonAncestor(@RequestBody  List<Landmark> landmarks) {
+    public Landmark getCommonAncestor(@RequestBody List<Landmark> landmarks) {
         return blockChainService.findCommonAncestorByLandmark(landmarks);
     }
-
-
 
     //指定广播一个区块 参数hashhex
     @PostMapping("/broadcastResource")
@@ -331,22 +308,16 @@ public class ChainApi {
         routingTable.BroadcastResource(0, hash);
     }
 
-
     //广播交易池中的交易
     @PostMapping("/broadcastTxPool")
     public void broadcastTxPool() {
         txPool.broadcastTxPool();
     }
 
-
     //获取全部的孤儿区块
     @GetMapping("/getOrphanBlocks")
     public List<Block> getOrphanBlocks() {
         return blockChainService.getOrphanBlocks();
     }
-
-
-
-
 
 }

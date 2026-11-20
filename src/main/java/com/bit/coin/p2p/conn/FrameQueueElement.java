@@ -10,6 +10,7 @@ import java.util.Objects;
  */
 @Data
 public class FrameQueueElement implements Comparable<FrameQueueElement> {
+
     // 优先级：重传帧（高）=0，新帧（低）=1
     public static final int PRIORITY_RETRY = 0;
     public static final int PRIORITY_NORMAL = 1;
@@ -45,8 +46,12 @@ public class FrameQueueElement implements Comparable<FrameQueueElement> {
     // 唯一标识：dataId+sequence（避免重复）
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
         FrameQueueElement that = (FrameQueueElement) o;
         return dataId == that.dataId && sequence == that.sequence;
     }
@@ -56,7 +61,7 @@ public class FrameQueueElement implements Comparable<FrameQueueElement> {
         return Objects.hash(dataId, sequence);
     }
 
-    // 生成唯一key（用于已发送未确认映射表）
+    // 为已发送但尚未确认的帧生成唯一的映射键
     public String getUniqueKey() {
         return dataId + "_" + sequence;
     }

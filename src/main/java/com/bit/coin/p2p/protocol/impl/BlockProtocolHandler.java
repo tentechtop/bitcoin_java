@@ -7,7 +7,6 @@ import java.io.IOException;
 
 public class BlockProtocolHandler implements ProtocolHandler.ResultProtocolHandler {
 
-
     @Override
     public byte[] handleResult(P2PMessage requestParams) throws IOException {
         return new byte[0];

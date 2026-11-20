@@ -1,4 +1,4 @@
-# Local regression network. Administration remains disabled unless a token is supplied.
+# 本地回归测试网络。未提供令牌时，管理功能保持禁用。
 node:
   api:
     public-read: true

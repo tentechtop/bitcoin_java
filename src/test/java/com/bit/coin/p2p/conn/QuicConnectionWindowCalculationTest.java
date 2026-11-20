@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuicConnectionWindowCalculationTest {
+
     private static final InetSocketAddress REMOTE = new InetSocketAddress("127.0.0.1", 8334);
 
     @AfterEach
@@ -65,12 +66,11 @@ class QuicConnectionWindowCalculationTest {
         sendData.setConnectionId(1L);
         sendData.setDataId(1L);
         sendData.setTotal(1);
-        sendData.setFrameArray(new QuicFrame[] {dataFrame(frameBytes)});
+        sendData.setFrameArray(new QuicFrame[] { dataFrame(frameBytes) });
         connection.getUnAckedDataMap().put(1L, sendData);
         connection.getFrameSendQueue().batchEnqueuePending(
                 java.util.List.of(new BoundedFrameSendQueue.FrameMeta(1L, 0, frameBytes)),
-                PRIORITY_NORMAL
-        );
+                PRIORITY_NORMAL);
         return connection;
     }
 

@@ -3,16 +3,18 @@ package com.bit.coin.p2p.protocol;
 import com.bit.coin.utils.UInt256;
 import com.bit.coin.utils.Ed25519Signer;
 import lombok.Data;
+
 import java.nio.ByteBuffer;
 import java.security.SecureRandom;
 import java.util.Arrays;
 
-/** Revision 2 handshake: identity signs the network, direction and fresh session transcript. */
+/** 第 2 版握手使用节点的身份密钥对网络标识、握手方向和本次会话的握手记录签名。 */
 @Data
 public class RequestConnect {
+
     public static final int VERSION = 2;
-    public static final int SIGNED_BYTES = 229;
-    public static final int WIRE_BYTES = SIGNED_BYTES + 64;
+    public static final int SIGNED_BYTES = 229;  // 握手中受签名保护的固定字段总长度，单位为字节
+    public static final int WIRE_BYTES = SIGNED_BYTES + 64;  // 完整握手长度，包含末尾的 Ed25519 签名
     public static final byte REQUEST = 0, RESPONSE = 1;
     private byte[] peerId;
     private int version = VERSION;
@@ -29,6 +31,7 @@ public class RequestConnect {
     private byte[] replyTo = new byte[32];
     private byte[] signature;
 
+    /** 生成本次握手的随机数和秒级时间戳，并绑定网络、连接及请求方向。 */
     public void bind(int network, long connectionId, long dataId, byte kind, byte[] replyTo) {
         this.network = network;
         this.connectionId = connectionId;
@@ -41,10 +44,14 @@ public class RequestConnect {
     }
 
     public byte[] getSignatureData() {
-        require(peerId, 32); require(sharedSecretPubKey, 32); require(latestHash, 32);
-        require(nonce, 32); require(replyTo, 32);
-        if (chainWork == null || latestHeight < 0 || kind < REQUEST || kind > RESPONSE)
+        require(peerId, 32);
+        require(sharedSecretPubKey, 32);
+        require(latestHash, 32);
+        require(nonce, 32);
+        require(replyTo, 32);
+        if (chainWork == null || latestHeight < 0 || kind < REQUEST || kind > RESPONSE) {
             throw new IllegalArgumentException("Invalid handshake fields");
+        }
         return ByteBuffer.allocate(SIGNED_BYTES).put(peerId).putInt(version).put(sharedSecretPubKey)
                 .put(latestHash).putInt(latestHeight).put(chainWork.toBytes()).putInt(network)
                 .putLong(timestamp).putLong(connectionId).putLong(dataId).put(kind).put(nonce).put(replyTo).array();
@@ -59,16 +66,27 @@ public class RequestConnect {
         require(data, WIRE_BYTES);
         ByteBuffer b = ByteBuffer.wrap(data);
         RequestConnect r = new RequestConnect();
-        r.peerId = read(b, 32); r.version = b.getInt(); r.sharedSecretPubKey = read(b, 32);
-        r.latestHash = read(b, 32); r.latestHeight = b.getInt(); r.chainWork = UInt256.fromBytes(read(b, 32));
-        r.network = b.getInt(); r.timestamp = b.getLong(); r.connectionId = b.getLong(); r.dataId = b.getLong();
-        r.kind = b.get(); r.nonce = read(b, 32); r.replyTo = read(b, 32); r.signature = read(b, 64);
+        r.peerId = read(b, 32);
+        r.version = b.getInt();
+        r.sharedSecretPubKey = read(b, 32);
+        r.latestHash = read(b, 32);
+        r.latestHeight = b.getInt();
+        r.chainWork = UInt256.fromBytes(read(b, 32));
+        r.network = b.getInt();
+        r.timestamp = b.getLong();
+        r.connectionId = b.getLong();
+        r.dataId = b.getLong();
+        r.kind = b.get();
+        r.nonce = read(b, 32);
+        r.replyTo = read(b, 32);
+        r.signature = read(b, 64);
         r.getSignatureData();
         return r;
     }
 
+    /** 核对握手归属、应答关联值、时间偏差（最多 60 秒）和身份签名。 */
     public boolean verifyContext(int expectedNetwork, long expectedConnection, long expectedDataId,
-                                 byte expectedKind, byte[] expectedReply, long now) {
+            byte expectedKind, byte[] expectedReply, long now) {
         return version == VERSION && network == expectedNetwork && connectionId == expectedConnection
                 && dataId == expectedDataId && kind == expectedKind && timestamp >= now - 60 && timestamp <= now + 60
                 && nonce != null && !Arrays.equals(nonce, new byte[32])
@@ -76,11 +94,23 @@ public class RequestConnect {
     }
 
     public boolean verifySignature() {
-        try { require(signature, 64); return Ed25519Signer.fastVerify(peerId, getSignatureData(), signature); }
-        catch (RuntimeException invalid) { return false; }
+        try {
+            require(signature, 64);
+            return Ed25519Signer.fastVerify(peerId, getSignatureData(), signature);
+        } catch (RuntimeException invalid) {
+            return false;
+        }
     }
-    private static byte[] read(ByteBuffer b, int n) { byte[] v = new byte[n]; b.get(v); return v; }
+
+    private static byte[] read(ByteBuffer b, int n) {
+        byte[] v = new byte[n];
+        b.get(v);
+        return v;
+    }
+
     private static void require(byte[] value, int size) {
-        if (value == null || value.length != size) throw new IllegalArgumentException("Invalid handshake field length");
+        if (value == null || value.length != size) {
+            throw new IllegalArgumentException("Invalid handshake field length");
+        }
     }
 }

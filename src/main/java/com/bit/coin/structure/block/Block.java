@@ -13,7 +13,6 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.annotation.JsonSerialize;
 
-
 import java.io.*;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -34,6 +33,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @Slf4j
 @Data
 public class Block {
+
     //非核心不参与序列化
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] hash;
@@ -54,27 +54,23 @@ public class Block {
     @JsonIgnore
     private long medianTime;
 
-
-
-    public BigInteger getChainWorkDecimal(){
-        if (chainWork==null){
+    public BigInteger getChainWorkDecimal() {
+        if (chainWork == null) {
             chainWork = UInt256.fromLong(0L);
         }
         return chainWork.toBigInteger();
     }
 
-
-    public byte[] getHash(){
-        if (hash==null){
+    public byte[] getHash() {
+        if (hash == null) {
             hash = blockHeader.calculateHash();
         }
         return hash;
     }
 
-
     //获取区块中全部的交易输出
     @JsonIgnore
-    public List<UTXO> getUTXOs(){
+    public List<UTXO> getUTXOs() {
         List<UTXO> utxos = new ArrayList<>();
         for (Transaction tx : transactions) {
             for (int i = 0; i < tx.getOutputs().size(); i++) {
@@ -98,12 +94,12 @@ public class Block {
      * @return
      */
     @JsonIgnore
-    public List<UTXO> getSpentUTXOKeys(){
+    public List<UTXO> getSpentUTXOKeys() {
         List<UTXO> utxos = new ArrayList<>();
         for (Transaction tx : transactions) {
             for (int i = 0; i < tx.getInputs().size(); i++) {
                 boolean coinbase = tx.isCoinbase();
-                if (!coinbase){
+                if (!coinbase) {
                     Map<String, UTXO> utxoMap = tx.getUtxoMap();
                     TxInput txInput = tx.getInputs().get(i);
                     int index = txInput.getIndex();
@@ -117,18 +113,12 @@ public class Block {
         return utxos;
     }
 
-
-
-
-
-
-
     //序列化反序列化
     /**
      * 序列化 Block 对象为字节数组
      */
-    public byte[] serialize()  {
-        try{
+    public byte[] serialize() {
+        try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
 
@@ -159,17 +149,18 @@ public class Block {
             baos.close();
 
             return result;
-        }catch (Exception e){
-            throw new  IllegalArgumentException("区块序列化失败",e);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("区块序列化失败", e);
         }
     }
 
     /**
      * 从字节数组反序列化为 Block 对象
      */
-    public static Block deserialize(byte[] data)  {
+    public static Block deserialize(byte[] data) {
         try {
-            if (data == null || data.length == 0 || data.length > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_BYTES) {
+            if (data == null || data.length == 0
+                    || data.length > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_BYTES) {
                 throw new IllegalArgumentException("Invalid block size");
             }
 
@@ -192,13 +183,22 @@ public class Block {
 
                 // 反序列化 Transaction 列表
                 int txCount = dis.readInt();
-                if (txCount < 1 || txCount > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_TRANSACTIONS || txCount > dis.available() / 40) throw new IOException("Invalid transaction count");
-                if (txCount != block.getTxCount()) throw new IOException("Mismatched transaction count");
+                if (txCount < 1 || txCount > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_TRANSACTIONS
+                        || txCount > dis.available() / 40) {
+                    throw new IOException("Invalid transaction count");
+                }
+                if (txCount != block.getTxCount()) {
+                    throw new IOException("Mismatched transaction count");
+                }
                 if (txCount > 0) {
                     List<Transaction> txList = new ArrayList<>(txCount);
                     for (int i = 0; i < txCount; i++) {
                         int txLength = dis.readInt();
-                        if (txLength < 40 || txLength > com.bit.coin.structure.tx.TransactionValidator.MAX_TRANSACTION_BYTES || txLength > dis.available()) throw new IOException("Invalid transaction size");
+                        if (txLength < 40
+                                || txLength > com.bit.coin.structure.tx.TransactionValidator.MAX_TRANSACTION_BYTES
+                                || txLength > dis.available()) {
+                            throw new IOException("Invalid transaction size");
+                        }
                         byte[] txBytes = new byte[txLength];
                         dis.readFully(txBytes);
                         Transaction tx = Transaction.deserialize(txBytes);
@@ -209,20 +209,21 @@ public class Block {
                     block.setTransactions(new ArrayList<>());
                 }
 
-                if (dis.available() != 0) throw new IOException("Trailing block data");
+                if (dis.available() != 0) {
+                    throw new IOException("Trailing block data");
+                }
             } finally {
                 dis.close();
                 bais.close();
             }
             return block;
-        }catch (Exception e){
+        } catch (Exception e) {
             throw new IllegalArgumentException("区块反序列化失败");
         }
     }
 
-
     //根据区块头和区块体组合成完整区块
-    public static Block buildBlock(BlockHeader blockHeader,BlockBody blockBody) {
+    public static Block buildBlock(BlockHeader blockHeader, BlockBody blockBody) {
         Block block = new Block();
         block.setBlockHeader(blockHeader);
         block.setTransactions(blockBody.getTransactions());
@@ -232,7 +233,7 @@ public class Block {
     }
 
     @JsonIgnore
-    public BlockBody getBlockBody(){
+    public BlockBody getBlockBody() {
         BlockBody blockBody = new BlockBody();
         blockBody.setTransactions(transactions);
         blockBody.setHeight(height);

@@ -1,9 +1,10 @@
 package com.bit.coin.p2p.protocol;
 
 import com.bit.coin.p2p.kad.RoutingTable;
+import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.blockchain.ChainTipSnapshot;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.message.NodeStatusPayload;
-import com.bit.coin.structure.block.Block;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -15,17 +16,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
 import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
 public class SmartUpdateService {
+
     private static final long INITIAL_DELAY_SECONDS = 5L;
-    private static final long TIP_SCAN_INTERVAL_SECONDS = 2L;
+    private static final long TIP_SCAN_INTERVAL_SECONDS = 2L;  // 两次检查本地链顶之间的间隔，单位为秒
 
     private final RoutingTable routingTable;
+    @org.springframework.beans.factory.annotation.Autowired
+    private BlockChainServiceImpl blockChainService;
     @org.springframework.beans.factory.annotation.Autowired
     private com.bit.coin.config.SystemConfig systemConfig;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -43,17 +46,18 @@ public class SmartUpdateService {
 
     @PostConstruct
     public void start() {
-        if (!systemConfig.isNetworkingEnabled()) return;
+        if (!systemConfig.isNetworkingEnabled()) {
+            return;
+        }
         executor.scheduleWithFixedDelay(
                 this::announceTipChangeSafely,
                 INITIAL_DELAY_SECONDS,
                 TIP_SCAN_INTERVAL_SECONDS,
-                TimeUnit.SECONDS
-        );
+                TimeUnit.SECONDS);
     }
 
     public void announceCurrentStateToPeer(String peerId, int reason) {
-        Block tip = mainTipBlock;
+        ChainTipSnapshot tip = blockChainService.getMainTipSnapshot();
         if (tip == null || peerId == null || peerId.isBlank()) {
             return;
         }
@@ -62,7 +66,7 @@ public class SmartUpdateService {
     }
 
     public void announceCurrentState(int reason) {
-        Block tip = mainTipBlock;
+        ChainTipSnapshot tip = blockChainService.getMainTipSnapshot();
         if (tip == null) {
             return;
         }
@@ -74,21 +78,22 @@ public class SmartUpdateService {
             }
             staticSendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Node_Status, payload, 3_000);
         }
-        log.debug("Announced node state: reason={}, height={}, peers={}", reason, tip.getHeight(), peers.size());
+        log.debug("Announced node state: reason={}, height={}, peers={}", reason, tip.height(), peers.size());
     }
 
+    /** 高度或哈希有变化才广播，因而同高度的主链切换也会触发通告。 */
     private void announceTipChangeSafely() {
         try {
-            Block tip = mainTipBlock;
-            if (tip == null || tip.getHash() == null) {
+            ChainTipSnapshot tip = blockChainService.getMainTipSnapshot();
+            if (tip == null || tip.hash() == null) {
                 return;
             }
-            if (tip.getHeight() == lastAnnouncedHeight && Arrays.equals(tip.getHash(), lastAnnouncedTipHash)) {
+            if (tip.height() == lastAnnouncedHeight && Arrays.equals(tip.hash(), lastAnnouncedTipHash)) {
                 return;
             }
 
-            lastAnnouncedHeight = tip.getHeight();
-            lastAnnouncedTipHash = tip.getHash().clone();
+            lastAnnouncedHeight = tip.height();
+            lastAnnouncedTipHash = tip.hash();
             announceCurrentState(NodeStatusPayload.REASON_TIP_CHANGED);
         } catch (Exception e) {
             log.debug("Smart update announcement failed: {}", e.getMessage());

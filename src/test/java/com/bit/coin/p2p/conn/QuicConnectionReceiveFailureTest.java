@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuicConnectionReceiveFailureTest {
+
     private static final InetSocketAddress REMOTE = new InetSocketAddress("127.0.0.1", 8334);
 
     @Test
@@ -50,10 +51,9 @@ class QuicConnectionReceiveFailureTest {
         }
 
         assertFalse(connection.getReceiveMap().containsKey(2L));
-        assertTrue(records.stream().anyMatch(record ->
-                record.errorCode() == P2PErrorCode.RECEIVE_DECRYPT_FAILED
-                        && record.dataId() == 2L
-                        && record.connectionId() == 1L
-                        && "peer-a".equals(record.peerId())));
+        assertTrue(records.stream().anyMatch(record -> record.errorCode() == P2PErrorCode.RECEIVE_DECRYPT_FAILED
+                && record.dataId() == 2L
+                && record.connectionId() == 1L
+                && "peer-a".equals(record.peerId())));
     }
 }

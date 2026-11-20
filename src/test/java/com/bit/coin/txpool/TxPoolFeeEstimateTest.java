@@ -25,15 +25,20 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class TxPoolFeeEstimateTest {
+
     private final TxPoolImpl pool = new TxPoolImpl();
 
     @AfterEach
-    void close() { pool.close(); }
+    void close() {
+        pool.close();
+    }
 
     @Test
     void confirmedTransactionsCreateHistoryForSingleAndRecommendedQuotes() {
         FeeEstimate.reorg(-1, Integer.MAX_VALUE);
-        for (int i = 0; i < 5; i++) FeeEstimate.recordConfirmed(100, 101, 1_000, 100);
+        for (int i = 0; i < 5; i++) {
+            FeeEstimate.recordConfirmed(100, 101, 1_000, 100);
+        }
         var single = pool.estimateFee(1, 250);
         assertEquals(0, single.sampleCount());
         assertEquals(10, single.feeRate());
@@ -41,7 +46,6 @@ class TxPoolFeeEstimateTest {
         assertEquals(List.of(10L, 10L, 10L), pool.recommendedFeeEstimates(250).stream()
                 .map(FeeEstimate.Estimate::feeRate).toList());
     }
-
 
     @Test
     void transactionEstimateUsesWireSizeWithoutResolvingUtxosOrMutatingTheTransaction() throws Exception {
@@ -61,7 +65,7 @@ class TxPoolFeeEstimateTest {
         FeeEstimate.reorg(-1, Integer.MAX_VALUE);
         Map<String, Transaction> entries = (Map<String, Transaction>) ReflectionTestUtils.getField(pool, "mempool");
         assertNotNull(entries);
-        // Populate pool state directly: these are size fixtures, not admission/signature tests.
+        // 直接填充交易池以构造所需规模的测试数据，省去入池检查和签名验证。
         for (int i = 0; i < 150; i++) {
             Transaction tx = transaction(i, 9_000);
             tx.setFee(FeeEstimate.transactionSize(tx) * 5);
@@ -72,8 +76,8 @@ class TxPoolFeeEstimateTest {
         assertEquals(150, quote.sampleCount());
         assertEquals(5, quote.feeRate());
         assertEquals(1_250, quote.fee());
-        assertTrue(entries.values().stream().allMatch(tx ->
-                TransactionStatusResolver.hasLifecycle(tx.getStatus(), TransactionStatusResolver.IN_POOL)));
+        assertTrue(entries.values().stream().allMatch(
+                tx -> TransactionStatusResolver.hasLifecycle(tx.getStatus(), TransactionStatusResolver.IN_POOL)));
 
         entries.clear();
         FeeEstimate.reorg(-1, Integer.MAX_VALUE);
@@ -110,7 +114,9 @@ class TxPoolFeeEstimateTest {
         }
         Transaction[] listed = pool.getAllTxs();
         assertEquals(100, listed.length);
-        for (Transaction tx : listed) sources.remove(bytesToHex(tx.getTxId()));
+        for (Transaction tx : listed) {
+            sources.remove(bytesToHex(tx.getTxId()));
+        }
         assertEquals(1, sources.size());
         var unlisted = sources.entrySet().iterator().next();
         byte[] missingKey = unlisted.getValue().getKey();

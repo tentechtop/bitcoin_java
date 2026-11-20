@@ -7,6 +7,7 @@ import java.io.IOException;
  */
 @FunctionalInterface
 public interface ProtocolHandler {
+
     /**
      * 处理协议请求
      * @param requestParams 请求参数（protobuf反序列化后的字节数组）
@@ -19,6 +20,7 @@ public interface ProtocolHandler {
      */
     @FunctionalInterface
     interface VoidProtocolHandler extends ProtocolHandler {
+
         void handleVoid(P2PMessage requestParams) throws IOException;
 
         @Override
@@ -33,6 +35,7 @@ public interface ProtocolHandler {
      */
     @FunctionalInterface
     interface ResultProtocolHandler extends ProtocolHandler {
+
         byte[] handleResult(P2PMessage requestParams) throws Exception;
 
         @Override

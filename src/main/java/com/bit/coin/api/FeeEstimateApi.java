@@ -12,15 +12,17 @@ import java.util.List;
 @RestController
 @RequestMapping("/txpool")
 public class FeeEstimateApi {
+
     private final TxPool txPool;
 
     public FeeEstimateApi(TxPool txPool) {
         this.txPool = txPool;
     }
 
+    /** 按目标确认块数与完整交易字节数估算费率（聪/字节）和总费用（聪）。 */
     @GetMapping("/fee-estimate")
     public FeeEstimate.Estimate estimate(@RequestParam(defaultValue = "3") int targetBlocks,
-                                         @RequestParam long txSize) {
+            @RequestParam long txSize) {
         return txPool.estimateFee(targetBlocks, txSize);
     }
 

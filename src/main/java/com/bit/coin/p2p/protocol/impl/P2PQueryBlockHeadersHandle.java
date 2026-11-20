@@ -44,8 +44,7 @@ public class P2PQueryBlockHeadersHandle implements ProtocolHandler.ResultProtoco
                 SelfPeer.getId(),
                 ProtocolEnum.P2P_Query_Block_Headers,
                 requestParams.getRequestId(),
-                payload
-        );
+                payload);
         return response.serialize();
     }
 }

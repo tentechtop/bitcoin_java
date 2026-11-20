@@ -1,6 +1,7 @@
 package com.bit.coin.broadcast;
 
 public class BroadcastTest {
+
     public static void main(String[] args) {
         // 1. 获取广播器实例
         MessageBroadcaster broadcaster = MessageBroadcaster.getInstance();

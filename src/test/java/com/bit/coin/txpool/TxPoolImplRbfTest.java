@@ -34,6 +34,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class TxPoolImplRbfTest {
+
     private static final long FINAL_SEQUENCE = 0xFFFFFFFFL;
     private static final long RBF_SEQUENCE = 0xFFFFFFFDL;
 
@@ -57,8 +58,10 @@ class TxPoolImplRbfTest {
             return Arrays.equals(key, sourceUtxo.getKey()) ? sourceUtxo : null;
         });
 
-        when(dataBase.get(eq(TableEnum.TUTXO), any(byte[].class))).thenAnswer(invocation ->
-                Arrays.equals((byte[]) invocation.getArgument(1), sourceUtxo.getKey()) ? sourceUtxo.serialize() : null);
+        when(dataBase.get(eq(TableEnum.TUTXO), any(byte[].class)))
+                .thenAnswer(invocation -> Arrays.equals((byte[]) invocation.getArgument(1), sourceUtxo.getKey())
+                        ? sourceUtxo.serialize()
+                        : null);
         ReflectionTestUtils.setField(txPool, "dataBase", dataBase);
         ReflectionTestUtils.setField(txPool, "utxoCache", utxoCache);
         ReflectionTestUtils.setField(txPool, "routingTable", routingTable);

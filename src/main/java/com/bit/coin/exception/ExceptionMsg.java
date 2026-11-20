@@ -1,7 +1,5 @@
 package com.bit.coin.exception;
 
-
-
 public class ExceptionMsg {
 
     // ==================== 交易验证错误 ====================
@@ -157,6 +155,7 @@ public class ExceptionMsg {
      * 为每个错误定义错误码（可选，便于日志分析和监控）
      */
     public static class ErrorCode {
+
         // 交易验证错误码: 1000-1999
         public static final int TX_FEE_INSUFFICIENT_CODE = 1001;
         public static final int UTXO_NOT_FOUND_CODE = 1002;

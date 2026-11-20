@@ -15,7 +15,6 @@ public class TxInputDTO {
      */
     private int index;
 
-
     /**
      * 解锁脚本
      * 包含签名和公钥 [固定64字节签名][1字节签名类型][32公钥]

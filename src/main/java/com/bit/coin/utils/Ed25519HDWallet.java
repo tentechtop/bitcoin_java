@@ -1,6 +1,5 @@
 package com.bit.coin.utils;
 
-
 import lombok.extern.slf4j.Slf4j;
 import org.bitcoinj.base.Base58;
 import org.bitcoinj.crypto.MnemonicCode;
@@ -19,13 +18,14 @@ import java.util.List;
 
 @Slf4j
 public class Ed25519HDWallet {
-    // Solana 的 BIP-44 路径参数
+
+    // 派生路径的前两级分别指定用途和本项目使用的币种编号。
     private static final int BIP44_PURPOSE = 44;
     private static final int SOLANA_COIN_TYPE = 0;
     // Ed25519 密钥长度（私钥/公钥均为 32 字节）
     private static final int KEY_LENGTH = 32;
     // 助记词熵长度（12 个单词对应 128 位熵）
-    private static final int MNEMONIC_ENTROPY_LENGTH = 16; // 16*8=128 bits
+    private static final int MNEMONIC_ENTROPY_LENGTH = 16; // 16 字节 × 8 位/字节 = 128 位
 
     // Ed25519 根密钥派生的 HMAC 盐值
     private static final byte[] ED25519_SEED = "ed25519 seed".getBytes(StandardCharsets.UTF_8);
@@ -123,10 +123,10 @@ public class Ed25519HDWallet {
 
         byte[] rootPrivateKey = generateRootPrivateKey(seed);
 
-        // 派生路径：m/44'/501'/account'/0/addressIndex
+        // 派生顺序为用途、币种、账户、找零分支和地址序号，前三层使用强化索引。
         byte[] childKey = rootPrivateKey;
         childKey = deriveChildPrivateKey(childKey, BIP44_PURPOSE | 0x80000000); // 44'
-        childKey = deriveChildPrivateKey(childKey, SOLANA_COIN_TYPE | 0x80000000); // 501'
+        childKey = deriveChildPrivateKey(childKey, SOLANA_COIN_TYPE | 0x80000000);  // 本项目币种索引为 0，最高位标记强化派生
         childKey = deriveChildPrivateKey(childKey, accountIndex | 0x80000000); // account'
         childKey = deriveChildPrivateKey(childKey, 0); // 0（非强化）
         childKey = deriveChildPrivateKey(childKey, addressIndex); // addressIndex（非强化）
@@ -142,7 +142,7 @@ public class Ed25519HDWallet {
      * int 转 4 字节数组（大端序）
      */
     private static byte[] intToBytes(int value) {
-        return new byte[]{
+        return new byte[] {
                 (byte) (value >>> 24),
                 (byte) (value >>> 16),
                 (byte) (value >>> 8),
@@ -158,8 +158,8 @@ public class Ed25519HDWallet {
         System.out.println("派生路径: " + keyInfo.getPath());
         System.out.println("公钥(hex): " + Hex.toHexString(keyInfo.getPublicKey()));
         System.out.println("Solana地址: " + keyInfo.getAddress());
-        System.out.println("Solana地址长度"+keyInfo.getAddress().length());
-        System.out.println("Solana地址: " +  Hex.toHexString(Base58.decode(keyInfo.getAddress())));
+        System.out.println("Solana地址长度" + keyInfo.getAddress().length());
+        System.out.println("Solana地址: " + Hex.toHexString(Base58.decode(keyInfo.getAddress())));
 
         // 验证地址一致性
         KeyInfo keyInfo2 = getSolanaKeyPair(mnemonic, 0, 0);
@@ -167,7 +167,6 @@ public class Ed25519HDWallet {
 
         getSolanaKeyPair(mnemonic, 1, 0); // 改变账户
         getSolanaKeyPair(mnemonic, 0, 1); // 改变地址
-
 
         // 验证签名并计算耗时
         byte[] data = "测试Solana签名".getBytes(StandardCharsets.UTF_8);

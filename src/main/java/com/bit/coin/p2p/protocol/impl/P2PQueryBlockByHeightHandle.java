@@ -30,8 +30,7 @@ public class P2PQueryBlockByHeightHandle implements ProtocolHandler.ResultProtoc
                 SelfPeer.getId(),
                 ProtocolEnum.P2P_Query_Block_By_Height,
                 requestParams.getRequestId(),
-                payload
-        );
+                payload);
         return response.serialize();
     }
 }

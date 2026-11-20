@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P2PFlowControllerTest {
+
     @Test
     void controlsInboundReceiveWindow() {
         P2PFlowController flow = new P2PFlowController(1_000,

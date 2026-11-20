@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OrderedConcurrentSetTest {
+
     @Test
     void boundedOfferRollsBackWhenFull() {
         OrderedConcurrentSet set = new OrderedConcurrentSet(1);

@@ -1,5 +1,6 @@
 package com.bit.coin.p2p.protocol.message;
 
+import com.bit.coin.blockchain.ChainTipSnapshot;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.utils.UInt256;
 
@@ -10,10 +11,13 @@ import java.io.DataOutputStream;
 import java.util.Arrays;
 
 public final class NodeStatusPayload {
-    public static final int WIRE_VERSION = 1;
+
+    public static final int WIRE_VERSION = 1;  // 状态消息本身的编码版本，接收时先校验此字段
+    // 服务能力按位组合，可同时声明区块服务和交易中继。
     public static final int SERVICE_BLOCKS = 1;
     public static final int SERVICE_TX_RELAY = 1 << 1;
 
+    // 通告原因只取一项，区分握手、链顶变化和定时广播。
     public static final int REASON_HANDSHAKE = 1;
     public static final int REASON_TIP_CHANGED = 2;
     public static final int REASON_PERIODIC = 3;
@@ -36,8 +40,7 @@ public final class NodeStatusPayload {
             byte[] tipHash,
             UInt256 chainWork,
             long timestampMillis,
-            int reason
-    ) {
+            int reason) {
         this.protocolVersion = protocolVersion;
         this.services = services;
         this.height = height;
@@ -56,8 +59,7 @@ public final class NodeStatusPayload {
                     new byte[HASH_LENGTH],
                     UInt256.ZERO,
                     System.currentTimeMillis(),
-                    reason
-            );
+                    reason);
         }
         return new NodeStatusPayload(
                 WIRE_VERSION,
@@ -66,13 +68,20 @@ public final class NodeStatusPayload {
                 tip.getHash(),
                 tip.getChainWork(),
                 System.currentTimeMillis(),
-                reason
-        );
+                reason);
+    }
+
+    public static NodeStatusPayload fromTip(ChainTipSnapshot tip, int reason) {
+        if (tip == null) {
+            return fromTip((Block) null, reason);
+        }
+        return new NodeStatusPayload(WIRE_VERSION, SERVICE_BLOCKS | SERVICE_TX_RELAY, tip.height(), tip.hash(),
+                tip.chainWork(), System.currentTimeMillis(), reason);
     }
 
     public byte[] serialize() {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream(WIRE_LENGTH);
-             DataOutputStream dos = new DataOutputStream(baos)) {
+                DataOutputStream dos = new DataOutputStream(baos)) {
             dos.writeInt(WIRE_VERSION);
             dos.writeInt(protocolVersion);
             dos.writeInt(services);
@@ -112,8 +121,7 @@ public final class NodeStatusPayload {
                     tipHash,
                     UInt256.fromBytes(chainWorkBytes),
                     timestampMillis,
-                    reason
-            );
+                    reason);
         } catch (Exception e) {
             throw new IllegalArgumentException("Deserialize node status payload failed", e);
         }

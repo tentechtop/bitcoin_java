@@ -13,6 +13,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @Slf4j
 @Component
 public class P2PNodeStatusHandle implements ProtocolHandler.VoidProtocolHandler {
+
     private final RoutingTable routingTable;
     private final SmartSyncTrigger smartSyncTrigger;
 

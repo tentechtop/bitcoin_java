@@ -4,6 +4,4 @@ public record P2PTransportConnection(
         String peerId,
         long connectionId,
         String remoteAddress,
-        boolean outbound
-) {
-}
+        boolean outbound) {}

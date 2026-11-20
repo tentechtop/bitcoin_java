@@ -11,6 +11,4 @@ public record PeerScoreSnapshot(
         long avgRttMillis,
         long lastSeenMillis,
         long lastSuccessMillis,
-        long lastFailureMillis
-) {
-}
+        long lastFailureMillis) {}

@@ -11,18 +11,22 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReceiveQuicDataTest {
-    @Test void duplicateNonzeroSequenceProducesSerializableAck() {
+
+    @Test
+    void duplicateNonzeroSequenceProducesSerializableAck() {
         ReceiveQuicData receive = new ReceiveQuicData();
-        QuicFrame frame = dataFrame(1, 2, 223, 300, new byte[]{1});
+        QuicFrame frame = dataFrame(1, 2, 223, 300, new byte[] { 1 });
         receive.handleFrame(frame, 1024);
         QuicFrame ack = receive.handleFrame(frame, 1024).getAckFrame();
         assertEquals(223, QuicFrame.deserialize(ack.serialize()).getSequence());
         assertEquals(QuicFrameEnum.DATA_ACK_FRAME.getCode(), ack.getFrameType());
     }
-    @Test void flushesPartialAckBatchWithoutWaitingForAnotherPacket() {
+
+    @Test
+    void flushesPartialAckBatchWithoutWaitingForAnotherPacket() {
         ReceiveQuicData receive = new ReceiveQuicData();
         receive.setLastAckTime(System.currentTimeMillis());
-        receive.handleFrame(dataFrame(1, 2, 0, 3, new byte[]{1}), 1024);
+        receive.handleFrame(dataFrame(1, 2, 0, 3, new byte[] { 1 }), 1024);
         long lastAck = receive.getLastAckTime();
         assertNull(receive.pollDelayedAck(lastAck + 99, 512));
         QuicFrame ack = receive.pollDelayedAck(lastAck + 100, 512);
@@ -32,13 +36,14 @@ class ReceiveQuicDataTest {
         assertEquals(0, ack.readBitmapAckFrameReceivedSequences()[0]);
         assertNull(receive.pollDelayedAck(lastAck + 200, 512));
     }
+
     private static final InetSocketAddress REMOTE = new InetSocketAddress("127.0.0.1", 8334);
 
     @Test
     void rejectsInvalidSequenceWithoutAllocatingReceiveBuffer() {
         ReceiveQuicData receive = new ReceiveQuicData();
 
-        ReceiveResult result = receive.handleFrame(dataFrame(1L, 2L, 2, 2, new byte[]{1}), 1024);
+        ReceiveResult result = receive.handleFrame(dataFrame(1L, 2L, 2, 2, new byte[] { 1 }), 1024);
 
         assertFalse(result.isSuccess());
         assertFalse(result.isCompleted());
@@ -50,8 +55,8 @@ class ReceiveQuicDataTest {
     void rejectsInconsistentTotalForSameDataId() {
         ReceiveQuicData receive = new ReceiveQuicData();
 
-        ReceiveResult first = receive.handleFrame(dataFrame(1L, 2L, 0, 2, new byte[]{1}), 1024);
-        ReceiveResult inconsistent = receive.handleFrame(dataFrame(1L, 2L, 1, 3, new byte[]{2}), 1024);
+        ReceiveResult first = receive.handleFrame(dataFrame(1L, 2L, 0, 2, new byte[] { 1 }), 1024);
+        ReceiveResult inconsistent = receive.handleFrame(dataFrame(1L, 2L, 1, 3, new byte[] { 2 }), 1024);
 
         assertTrue(first.isSuccess());
         assertFalse(first.isCompleted());
@@ -65,7 +70,7 @@ class ReceiveQuicDataTest {
     @Test
     void duplicateFrameIsHandledAndAcked() {
         ReceiveQuicData receive = new ReceiveQuicData();
-        QuicFrame frame = dataFrame(1L, 2L, 0, 2, new byte[]{1});
+        QuicFrame frame = dataFrame(1L, 2L, 0, 2, new byte[] { 1 });
 
         ReceiveResult first = receive.handleFrame(frame, 1024);
         ReceiveResult duplicate = receive.handleFrame(frame, 1024);
@@ -84,7 +89,7 @@ class ReceiveQuicDataTest {
         data.setDataId(2L);
         data.setTotal(2);
         data.setFrameArray(new QuicFrame[2]);
-        data.getFrameArray()[0] = dataFrame(1L, 2L, 0, 2, new byte[]{1});
+        data.getFrameArray()[0] = dataFrame(1L, 2L, 0, 2, new byte[] { 1 });
 
         assertNull(data.getCombinedFullData());
     }

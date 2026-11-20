@@ -45,7 +45,7 @@ public class ChainResultApi {
      * 查询地址下所有的UTXO
      */
     @GetMapping("/getAddressAllUTXO")
-    public Result<List<UTXO>>  getAddressAllUTXOByStatus(String address) {
+    public Result<List<UTXO>> getAddressAllUTXOByStatus(String address) {
         ArrayList<UTXO> utxos = new ArrayList<>();
         List<UTXO> addressAllUTXOByStatus = utxoCache.getAddressAllUTXOByStatus(address, CONFIRMED_UNSPENT);
         List<UTXO> addressAllUTXOByStatus1 = utxoCache.getAddressAllUTXOByStatus(address, UNCONFIRMED_OUTPUT);
@@ -56,11 +56,11 @@ public class ChainResultApi {
 
     //分页查询用户的交易
     @GetMapping("/getTxListByAddres")
-    public Result<PageResult<Transaction>> getTxListByAddres(String address,int pageSize,String lastKey) {
-        PageResult<Transaction> transactionsByPage = blockChainService.getTransactionsByPage(address, pageSize, lastKey);
+    public Result<PageResult<Transaction>> getTxListByAddres(String address, int pageSize, String lastKey) {
+        PageResult<Transaction> transactionsByPage = blockChainService.getTransactionsByPage(address, pageSize,
+                lastKey);
         return Result.OK(transactionsByPage);
     }
-
 
     //进行中
     //查询用户交易池中的交易
@@ -78,7 +78,6 @@ public class ChainResultApi {
         return utxoCache.getUTXOsByAddressAndCount(address);
     }
 
-
     /**
      * 查询地址下所有的UTXO
      */
@@ -86,7 +85,6 @@ public class ChainResultApi {
     public Map<String, Object> getUTXOsByAddressAndCountAndUTXO(String address) {
         return utxoCache.getUTXOsByAddressAndCountAndUTXO(address);
     }
-
 
     /**
      * 查询地址可以用于交易的UTXO
@@ -96,9 +94,6 @@ public class ChainResultApi {
         return txPool.getUTXOsAvailableBalance(address);
     }
 
-
-
-
     //查询地址最近的交易
     @GetMapping("/getRecentTx")
     public Result<Transaction[]> getRecentTx(String address) {
@@ -106,11 +101,10 @@ public class ChainResultApi {
         return Result.OK(txByAddress);
     }
 
-
     //判断地址是否有交易
     @GetMapping("/hasTx")
     public boolean hasTx(String address) {
-       return blockChainService.hasTx(address);
+        return blockChainService.hasTx(address);
     }
 
     @PostMapping("/hasTx")
@@ -132,18 +126,11 @@ public class ChainResultApi {
     //查询地址下已经确认的交易带出输入引用 分页
     //查询交易池中的交易带出输入引用
 
-
-
-
-
-
-
     //区块是否主链区块
     @GetMapping("/isMainChain")
     public boolean isMainChain(String hash) {
         return blockChainService.isMainBlock(hash);
     }
-
 
     //构建一笔交易给到区块链
     @PostMapping("/transfer")
@@ -151,32 +138,29 @@ public class ChainResultApi {
         return txPool.addTx(transferDTO);
     }
 
-
-
     //main方法
-/*    public static void main(String[] args) throws Exception {
+    /*    public static void main(String[] args) throws Exception {
         byte[] bytes = Base58.decode("J5JGY238f6TGBuscTBs5AQjDu6Jpau1mUaFYq89ty3GR");
         byte[] bytes1 = Sha.applyRIPEMD160(Sha.applySHA256(bytes));
         log.info("解锁脚本{}",bytesToHex(bytes1));
     }*/
 
-
     public static void main(String[] args) throws Exception {
         byte[] bytes2 = Base58.decode("J5JGY238f6TGBuscTBs5AQjDu6Jpau1mUaFYq89ty3GR");
-        log.info("公钥Hash{}",bytesToHex(bytes2));
+        log.info("公钥Hash{}", bytesToHex(bytes2));
         byte[] bytes3 = Sha.applyRIPEMD160(Sha.applySHA256(bytes2));
-        log.info("解锁脚本{}",bytesToHex(bytes3));
+        log.info("解锁脚本{}", bytesToHex(bytes3));
 
         byte[] bytes = Base58.decode("Fu7zmpRzRmp89CJvqJPTB6cKGVNFJPDuDZvwXNj3ZCoz");
-        log.info("公钥Hash{}",bytesToHex(bytes));
+        log.info("公钥Hash{}", bytesToHex(bytes));
 
         byte[] bytes1 = Sha.applyRIPEMD160(Sha.applySHA256(bytes));
-        log.info("解锁脚本{}",bytesToHex(bytes1));
+        log.info("解锁脚本{}", bytesToHex(bytes1));
 
         //[64][1][32]
-        byte[] bytes4 = hexToBytes("deb53d6b5f472d77872c97ff2ffc44f1521f763528f7a50e4c976b59f93fa94c4772f6e4bb613df2e2a504ffc63c00a5e8014cce499f4dd362fe3d67d14bbe0e01");
-        log.info("签名长度{}",bytes4.length);
+        byte[] bytes4 = hexToBytes(
+                "deb53d6b5f472d77872c97ff2ffc44f1521f763528f7a50e4c976b59f93fa94c4772f6e4bb613df2e2a504ffc63c00a5e8014cce499f4dd362fe3d67d14bbe0e01");
+        log.info("签名长度{}", bytes4.length);
 
     }
 }
-

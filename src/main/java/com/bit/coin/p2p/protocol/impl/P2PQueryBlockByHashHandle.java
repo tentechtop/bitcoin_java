@@ -9,13 +9,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-
 import static com.bit.coin.config.SystemConfig.SelfPeer;
 import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
 
 @Slf4j
 @Component
-public class P2PQueryBlockByHashHandle implements ProtocolHandler.ResultProtocolHandler{
+public class P2PQueryBlockByHashHandle implements ProtocolHandler.ResultProtocolHandler {
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -27,7 +26,8 @@ public class P2PQueryBlockByHashHandle implements ProtocolHandler.ResultProtocol
         byte[] senderId = requestParams.getSenderId();
         Block blockByHash = blockChainService.getBlockByHash(data);
         byte[] payload = blockByHash == null ? new byte[0] : blockByHash.serialize();
-        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Hash,requestParams.getRequestId(), payload);
+        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Query_Block_By_Hash,
+                requestParams.getRequestId(), payload);
         return p2PMessage.serialize();
     }
 }

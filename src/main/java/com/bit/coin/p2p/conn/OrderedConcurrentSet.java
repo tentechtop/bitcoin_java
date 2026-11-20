@@ -13,6 +13,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * 功能目的：维护未确认 dataId 的有序集合；实现原因：队列与索引必须原子更新，避免重传优先级和存在性状态不一致。
  */
 public class OrderedConcurrentSet {
+
     private static final int UNBOUNDED_CAPACITY = Integer.MAX_VALUE;
 
     private final ReentrantLock lock = new ReentrantLock();
@@ -155,6 +156,7 @@ public class OrderedConcurrentSet {
         }
         Iterator<Long> iterator = snapshot.iterator();
         return new Iterator<>() {
+
             @Override
             public boolean hasNext() {
                 return iterator.hasNext();

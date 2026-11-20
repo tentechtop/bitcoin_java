@@ -10,6 +10,7 @@ import java.util.Optional;
 
 @Component
 public class QuicP2PTransportGateway implements P2PTransportGateway {
+
     @Override
     public Optional<P2PTransportConnection> connect(P2PAddress address) {
         QuicConnection connection = QuicConnectionManager.connectRemoteByAddr(address.rawAddress());
@@ -20,8 +21,7 @@ public class QuicP2PTransportGateway implements P2PTransportGateway {
                 normalizePeer(connection.getPeerId()),
                 connection.getConnectionId(),
                 connection.getRemoteAddress() == null ? "" : connection.getRemoteAddress().toString(),
-                connection.isOutbound()
-        ));
+                connection.isOutbound()));
     }
 
     @Override

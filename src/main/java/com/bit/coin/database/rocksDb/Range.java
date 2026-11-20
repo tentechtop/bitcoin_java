@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class Range {
-    public  byte[] start; // 范围起始键（包含）
-    public  byte[] end;   // 范围结束键（不包含）
+
+    public byte[] start; // 范围起始键（包含）
+    public byte[] end;   // 范围结束键（不包含）
 }

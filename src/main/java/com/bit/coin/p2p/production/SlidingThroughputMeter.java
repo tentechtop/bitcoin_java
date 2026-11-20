@@ -6,6 +6,7 @@ import java.util.Deque;
 import java.util.function.LongSupplier;
 
 public class SlidingThroughputMeter {
+
     private final long windowMillis;
     private final LongSupplier nowMillis;
     private final Deque<Sample> samples = new ArrayDeque<>();
@@ -60,6 +61,5 @@ public class SlidingThroughputMeter {
         }
     }
 
-    private record Sample(long atMillis, long bytes) {
-    }
+    private record Sample(long atMillis, long bytes) {}
 }

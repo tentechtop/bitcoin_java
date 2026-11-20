@@ -54,7 +54,7 @@ public class HexByteArrayDeserializer extends StdDeserializer<byte[]> {
         } catch (IllegalArgumentException e) {
             // 4. 异常适配：将自定义的参数异常包装为Jackson的解析异常
             // 符合Jackson的异常规范，反序列化失败时抛出统一的JacksonException
-            throw new JsonParseException("解析十六进制字符串为字节数组失败：",500);
+            throw new JsonParseException("解析十六进制字符串为字节数组失败：", 500);
         }
     }
 }

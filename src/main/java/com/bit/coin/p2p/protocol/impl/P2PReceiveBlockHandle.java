@@ -16,7 +16,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
-public class P2PReceiveBlockHandle implements ProtocolHandler.VoidProtocolHandler{
+public class P2PReceiveBlockHandle implements ProtocolHandler.VoidProtocolHandler {
 
     @Autowired
     private BlockChainServiceImpl blockChainService;
@@ -36,10 +36,13 @@ public class P2PReceiveBlockHandle implements ProtocolHandler.VoidProtocolHandle
         byte[] hash = block.getHash();
         boolean missingParent = blockChainService.isMissingParentBlock(block);
         boolean verified = blockChainService.hasBlockBody(hash) || blockChainService.verifyBlock(block);
-        if (senderId == null) return;
+        if (senderId == null) {
+            return;
+        }
         if (verified) {
             Block stored = blockChainService.getHeaderContext(hash);
-            routingTable.updateLatest(bytesToHex(senderId), bytesToHex(hash), stored.getHeight(), stored.getChainWork());
+            routingTable.updateLatest(bytesToHex(senderId), bytesToHex(hash), stored.getHeight(),
+                    stored.getChainWork());
         } else if (missingParent && block.getHeight() > 0 && block.getBlockHeader().verifyProofOfWork(false)) {
             routingTable.updateLatest(bytesToHex(senderId), bytesToHex(hash), block.getHeight(), block.getChainWork());
             smartSyncTrigger.triggerIfRemoteAhead(block.getChainWork(), "block-with-missing-parent");

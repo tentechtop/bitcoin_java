@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProductionP2PServiceTest {
+
     @BeforeEach
     @AfterEach
     void clearSelfPeer() {
@@ -125,8 +126,7 @@ class ProductionP2PServiceTest {
                 64_000,
                 0.0,
                 0.5,
-                700
-        ));
+                700));
 
         List<P2PNodeSnapshot> snapshots = service.nodeSnapshots();
 
@@ -196,8 +196,7 @@ class ProductionP2PServiceTest {
                 64_000,
                 0.0,
                 0.5,
-                700
-        ));
+                700));
 
         P2PNodeSnapshot snapshot = service.nodeSnapshot(peerHex()).orElseThrow();
 
@@ -224,8 +223,8 @@ class ProductionP2PServiceTest {
     }
 
     private static ProductionP2PService service(FakeGateway gateway,
-                                                P2PBlacklist blacklist,
-                                                P2PTransferErrorTracker tracker) {
+            P2PBlacklist blacklist,
+            P2PTransferErrorTracker tracker) {
         return new ProductionP2PService(gateway, blacklist, tracker);
     }
 
@@ -254,6 +253,7 @@ class ProductionP2PServiceTest {
     }
 
     private static final class FakeGateway implements P2PTransportGateway {
+
         private int connectAttempts;
         private boolean failConnect;
         private boolean disconnectSucceeds = true;
@@ -273,8 +273,7 @@ class ProductionP2PServiceTest {
                     peerId,
                     nextConnectionId++,
                     address.endpointKey(),
-                    true
-            ));
+                    true));
         }
 
         @Override

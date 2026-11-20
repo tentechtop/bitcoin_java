@@ -9,6 +9,7 @@ import java.security.Security;
 
 @Slf4j
 public class Sha {
+
     // ThreadLocal存储每个线程独立的SHA-256实例
     private static final ThreadLocal<MessageDigest> SHA256_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
         try {
@@ -44,7 +45,6 @@ public class Sha {
             throw new RuntimeException("创建线程本地RIPEMD160实例失败", e);
         }
     });
-
 
     // ========== 新增 SHA3/Keccak 系列 ThreadLocal 实例 ==========
     // 标准SHA3-224 (NIST标准)
@@ -93,9 +93,6 @@ public class Sha {
         }
     });
 
-
-
-
     // 静态代码块：确保BouncyCastle先注册
     static {
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
@@ -103,7 +100,8 @@ public class Sha {
         }
         // 提前验证BouncyCastle是否可用
         try {
-            BouncyCastleProvider provider = (BouncyCastleProvider) Security.getProvider(BouncyCastleProvider.PROVIDER_NAME);
+            BouncyCastleProvider provider = (BouncyCastleProvider) Security
+                    .getProvider(BouncyCastleProvider.PROVIDER_NAME);
             if (provider == null) {
                 throw new IllegalStateException("BouncyCastleProvider未注册，请检查依赖");
             }
@@ -118,8 +116,6 @@ public class Sha {
             MessageDigest.getInstance("SHA3-384", provider);
             MessageDigest.getInstance("SHA3-512", provider);
             MessageDigest.getInstance("Keccak-256", provider);
-
-
 
             // 提前触发ThreadLocal初始化（预热）
             SHA256_THREAD_LOCAL.get();
@@ -137,8 +133,6 @@ public class Sha {
         }
 
     }
-
-
 
     /**
      * 线程安全的SHA-256计算（每个线程复用自己的实例）
@@ -215,7 +209,6 @@ public class Sha {
         return digest.digest(data); // 直接使用digest()，内部已包含update+digest
     }
 
-
     /**
      * 优化后的线程安全的RIPEMD160计算
      */
@@ -227,8 +220,6 @@ public class Sha {
         digest.reset(); // 重置实例状态，避免上次计算残留影响
         return digest.digest(data);
     }
-
-
 
     /**
      * 手动清理线程本地资源（建议在线程池任务结束时调用）
@@ -242,7 +233,6 @@ public class Sha {
     public static byte[] doubleSha256(byte[] serialized) {
         return applySHA256(applyRIPEMD160(serialized));
     }
-
 
     // ========== 新增 SHA3/Keccak 系列方法 ==========
     @Deprecated

@@ -14,12 +14,12 @@ import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.Security;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
-
 
 /**
  * 基于Curve25519密钥交换和AES-GCM对称加密的实现（线程优化版）
@@ -72,12 +72,11 @@ public class ECCWithAESGCM {
         var keyPair = KEY_PAIR_GENERATOR.get().generateKeyPair();
         X25519PrivateKeyParameters privateKey = (X25519PrivateKeyParameters) keyPair.getPrivate();
         X25519PublicKeyParameters publicKey = (X25519PublicKeyParameters) keyPair.getPublic();
-        return new byte[][]{
+        return new byte[][] {
                 privateKey.getEncoded(),
                 publicKey.getEncoded()
         };
     }
-
 
     /**
      * 使用Curve25519进行密钥交换，生成共享密钥
@@ -93,7 +92,6 @@ public class ECCWithAESGCM {
         localPrivate.generateSecret(remotePublic, sharedSecret, 0);
         return sharedSecret;
     }
-
 
     /**
      * 使用HKDF从共享密钥派生AES-256密钥（确定性算法，确保双方一致）
@@ -138,7 +136,6 @@ public class ECCWithAESGCM {
         return Arrays.concatenate(iv, ciphertext);
     }
 
-
     /**
      * 使用AES-GCM解密数据
      * @param key AES密钥
@@ -162,7 +159,6 @@ public class ECCWithAESGCM {
         return cipher.doFinal(ciphertext);
     }
 
-
     // 测试示例
     public static void main(String[] args) throws Exception {
         // 1. 预生成密钥对（只生成一次，避免影响性能统计）
@@ -171,7 +167,7 @@ public class ECCWithAESGCM {
         byte[] alicePublicKey = aliceKeys[1];
 
         //打印长度
-        System.out.println("alicePublicKey长度:"+alicePublicKey.length);
+        System.out.println("alicePublicKey长度:" + alicePublicKey.length);
 
         byte[][] bobKeys = generateCurve25519KeyPair();
         byte[] bobPrivateKey = bobKeys[0];
@@ -181,7 +177,7 @@ public class ECCWithAESGCM {
         byte[] aliceShared = generateSharedSecret(alicePrivateKey, bobPublicKey);
         byte[] bobShared = generateSharedSecret(bobPrivateKey, alicePublicKey);
         System.out.println("共享密钥是否一致: " + Arrays.areEqual(aliceShared, bobShared));
-        System.out.println("共享密钥:"+bytesToHex(aliceShared));
+        System.out.println("共享密钥:" + bytesToHex(aliceShared));
 
         // 3. 派生AES密钥（只派生一次，复用密钥）
         SecretKey aliceAesKey = deriveAesKey(aliceShared);

@@ -23,7 +23,6 @@ import static com.bit.coin.structure.tx.Transaction.SIGHASH_ALL;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 
-
 @Slf4j
 public class ScriptTest {
 
@@ -79,7 +78,6 @@ public class ScriptTest {
         testNumericOperations();
 
         testTimeLockOperations();
-
 
     }
 
@@ -142,7 +140,6 @@ public class ScriptTest {
             unlockingScript.addData(publicKey);
             log.info("解锁脚本: {}", unlockingScript.toString());
 
-
             // ========== 步骤5：测试1 - 标准OP_DUP脚本（预期成功） ==========
             Script standardLockingScript = new Script();
             standardLockingScript.addOpCode(Script.OP_DUP);
@@ -178,9 +175,6 @@ public class ScriptTest {
             for (TxOutput output : outputs) {
                 log.info("输出脚本: {}", output.getScriptPubKeyWk());
             }
-
-
-
 
             // ========== 步骤6：测试2 - 直接替换OP_OVER（预期失败，解释原因） ==========
             Script overLockingScript = new Script();
@@ -234,8 +228,6 @@ public class ScriptTest {
         }
     }
 
-
-
     // ========== 新增main方法 ==========
     public static void test1() {
         try {
@@ -270,7 +262,6 @@ public class ScriptTest {
             txInputs.add(txInput2);
             tx.setInputs(txInputs);
 
-
             // 添加交易输出
             TxOutput txOutput1 = new TxOutput();
             txOutput1.setValue(5000000000L); // 输出金额（单位：satoshi）
@@ -284,7 +275,6 @@ public class ScriptTest {
             tx.setOutputs(txOutputs);
             tx.setVersion(1);
             tx.setLockTime(0);
-
 
             //根据模拟交易构建UTXOMap
             Map<String, UTXO> utxoMap = new HashMap<>();
@@ -316,13 +306,11 @@ public class ScriptTest {
             utxoMap.put(bytesToHex(utxoKey2), utxo2);
             tx.setUtxoMap(utxoMap);
 
-
             // ========== 步骤3：签名交易 ==========
             log.info("\n===== 3. 对交易进行签名 =====");
-            byte[] sigHash = tx.prepareDataForSigning(0, hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"), SIGHASH_ALL);
+            byte[] sigHash = tx.prepareDataForSigning(0, hexToBytes("a57f11a1cbb1d0a7841b5b1c374fbc46f42f8c56"),
+                    SIGHASH_ALL);
             byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(sigHash));
-
-
 
             log.info("签名哈希: {}", SerializeUtils.bytesToHex(sigHash));
             log.info("交易签名: {}", SerializeUtils.bytesToHex(signature));
@@ -331,7 +319,6 @@ public class ScriptTest {
             byte[] signatureWithHashType = new byte[signature.length + 1];
             System.arraycopy(signature, 0, signatureWithHashType, 0, signature.length);
             signatureWithHashType[signature.length] = SIGHASH_ALL; // 追加0x01
-
 
             // ========== 步骤4：构造P2PKH脚本 ==========
             log.info("\n===== 4. 构造P2PKH解锁/锁定脚本 =====");
@@ -364,18 +351,14 @@ public class ScriptTest {
             boolean verifyResult = executor.execute(
                     combinedScript,
                     tx,
-                    0
-            );
+                    0);
             //验证结果
             log.info("验证结果: {}", verifyResult);
-
-
 
         } catch (Exception e) {
             log.error("脚本验证过程出错: ", e);
         }
     }
-
 
     //OP_DUP OP_HASH160 与 OP_OVER OP_HASH160
     public static void test2() {
@@ -423,7 +406,7 @@ public class ScriptTest {
 
             String previousTxId = "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456";
             int previousOutputIndex = 0;
-            long utxoValue = 100000000L;  // 1 BTC = 100,000,000 satoshis
+            long utxoValue = 100000000L;  // 1 BTC 等于 1 亿聪
 
             UTXO utxo = new UTXO();
             utxo.setTxId(hexToBytes(previousTxId));
@@ -482,21 +465,20 @@ public class ScriptTest {
             // 对于P2SH，签名时需要将锁定脚本替换为赎回脚本
             // 准备签名数据
             byte[] serialize = redeemScript.serialize();
-            log.info("脚本数据{}",bytesToHex(serialize));
-            log.info("脚本数据Hash160{}",bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(serialize))));
+            log.info("脚本数据{}", bytesToHex(serialize));
+            log.info("脚本数据Hash160{}", bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(serialize))));
 
             byte[] sigHash2 = spendingTx.prepareDataForSigning(
                     0,  // 输入索引
                     p2shLockingScript.serialize(),  // 使用P2SH锁定脚本
-                    SIGHASH_ALL
-            );
+                    SIGHASH_ALL);
             log.info("签名哈希: {}", bytesToHex(sigHash2).substring(0, 20) + "...");
             // 使用私钥1和私钥2进行签名（2-of-3）
             byte[] sigHashDigest = Sha.applySHA256(sigHash2);
-            log.info("原始签名数据{}",bytesToHex(sigHashDigest));
+            log.info("原始签名数据{}", bytesToHex(sigHashDigest));
 
-            byte[] bytes = spendingTx.calculateSigHash(0,SIGHASH_ALL);
-            log.info("原始签名数据2{}",bytesToHex(bytes));
+            byte[] bytes = spendingTx.calculateSigHash(0, SIGHASH_ALL);
+            log.info("原始签名数据2{}", bytesToHex(bytes));
 
             // 第一个签名
             byte[] signature1 = Ed25519Signer.fastSign(privateKey1, sigHashDigest);
@@ -504,13 +486,11 @@ public class ScriptTest {
             System.arraycopy(signature1, 0, signatureWithHashType1, 0, signature1.length);
             signatureWithHashType1[signature1.length] = SIGHASH_ALL;
 
-
             // 第二个签名
             byte[] signature2 = Ed25519Signer.fastSign(privateKey2, sigHashDigest);
             byte[] signatureWithHashType2 = new byte[signature2.length + 1];
             System.arraycopy(signature2, 0, signatureWithHashType2, 0, signature2.length);
             signatureWithHashType2[signature2.length] = SIGHASH_ALL;
-
 
             // ========== 8. 构造P2SH解锁脚本 ==========
             log.info("======= 8. 构造P2SH解锁脚本 =======");
@@ -534,16 +514,13 @@ public class ScriptTest {
             // 创建脚本执行器
             ScriptExecutor executor1 = new ScriptExecutor();
 
-
             Script combinedP2SHScript = combineScripts(unlockingScript2, p2shLockingScript);
-
 
             // 执行验证
             boolean verificationResult = executor1.execute(
                     combinedP2SHScript,
                     spendingTx,
-                    0
-            );
+                    0);
 
             if (verificationResult) {
                 log.info("✅ 验证成功！2-of-3多重签名P2SH交易有效。");
@@ -565,7 +542,7 @@ public class ScriptTest {
             boolean redeemVerify = redeemExecutor.execute(combinedRedeemScript, spendingTx, 0);
             if (!redeemVerify) {
                 log.error("P2SH赎回脚本执行失败（多签验证不通过）");
-            }else {
+            } else {
                 log.info("✅ P2SH赎回脚本执行成功（多签验证通过）");
             }
 
@@ -573,7 +550,6 @@ public class ScriptTest {
             log.error("脚本验证过程出错: ", e);
         }
     }
-
 
     private static void testStackOperations() throws IOException {
         // 1. OP_DUP 测试（增加容错，先判断栈大小）
@@ -644,7 +620,6 @@ public class ScriptTest {
                     bytesToHex(stack.get(0)), bytesToHex(stack.get(1)), bytesToHex(stack.get(2)));
         }
     }
-
 
     /**
      * 数值操作指令测试（增加鲁棒性，修复越界问题）
@@ -760,7 +735,6 @@ public class ScriptTest {
         result = castToBool(stack.get(0));
         log.info("OP_BOOLOR测试 - 结果: {} | 预期: true", result, true);
     }
-
 
     /**
      * 加密哈希操作指令测试（无越界问题，保留原逻辑）
@@ -906,8 +880,6 @@ public class ScriptTest {
         result = executor.execute(returnScript, null, 0);
         log.info("OP_RETURN测试 - 结果: {} | 预期: false", result, false);
     }
-
-
 
     /**
      * OP_CHECKLOCKTIMEVERIFY (CLTV) 和 OP_CHECKSEQUENCEVERIFY (CSV) 测试
@@ -1082,7 +1054,6 @@ public class ScriptTest {
         }
     }
 
-
     /**
      * 辅助方法：复制交易（避免修改原交易影响后续测试）
      */
@@ -1095,7 +1066,6 @@ public class ScriptTest {
         copy.setUtxoMap(new HashMap<>(original.getUtxoMap()));
         return copy;
     }
-
 
     //{
     //    "version": 1,
@@ -1118,6 +1088,5 @@ public class ScriptTest {
     //        }
     //    ]
     //}
-
 
 }

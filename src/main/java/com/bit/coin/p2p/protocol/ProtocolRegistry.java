@@ -1,6 +1,5 @@
 package com.bit.coin.p2p.protocol;
 
-
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -14,7 +13,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 public class ProtocolRegistry {
-
 
     // 单例模式（P2P节点全局唯一）
     private static final ProtocolRegistry INSTANCE = new ProtocolRegistry();
@@ -60,12 +58,9 @@ public class ProtocolRegistry {
             throw new IllegalArgumentException(
                     "协议[" + protocolEnum.getProtocol() + "]的返回值属性不匹配：预期" +
                             (expectHasResponse ? "有返回值" : "无返回值") +
-                            "，实际" + (protocolEnum.isHasResponse() ? "有返回值" : "无返回值")
-            );
+                            "，实际" + (protocolEnum.isHasResponse() ? "有返回值" : "无返回值"));
         }
     }
-
-
 
     // ========== 处理方法 ==========
     /**
@@ -100,7 +95,5 @@ public class ProtocolRegistry {
     public static ProtocolRegistry getInstance() {
         return INSTANCE;
     }
-
-
 
 }

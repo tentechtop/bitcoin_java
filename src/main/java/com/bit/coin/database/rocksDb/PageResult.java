@@ -10,6 +10,7 @@ import java.util.List;
 @Getter
 @Setter
 public class PageResult<T> {
+
     private List<T> data; // 当前页数据
 
     @JsonSerialize(using = HexByteArraySerializer.class)

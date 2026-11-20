@@ -5,7 +5,6 @@ import com.bit.coin.p2p.protocol.ProtocolHandler;
 
 public class TxHandler implements ProtocolHandler.VoidProtocolHandler {
 
-
     @Override
     public void handleVoid(P2PMessage requestParams) {
 

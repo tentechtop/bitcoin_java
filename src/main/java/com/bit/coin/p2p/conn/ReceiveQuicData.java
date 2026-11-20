@@ -13,7 +13,7 @@ import static com.bit.coin.p2p.conn.QuicConstants.pushCompleteMsg;
 
 @Slf4j
 @Data
-public class ReceiveQuicData extends QuicData{
+public class ReceiveQuicData extends QuicData {
 
     //开始接收时间
     private long startReceiveTime;
@@ -31,28 +31,26 @@ public class ReceiveQuicData extends QuicData{
 
     private final Deque<Integer> latestReceivedSequences = new ConcurrentLinkedDeque<>();
 
-
     //自适应ACK策略
     private int lastAckSize = 0;
     private long lastAckTime = System.currentTimeMillis();
-    private static final int ACK_BATCH_SIZE = 10;  // 每10帧发送一次批量ACK
-    private static final long ACK_MAX_DELAY_MS = 100;  // 最大延迟100ms
+    private static final int ACK_BATCH_SIZE = 10;  // 累计到此帧数即可批量确认
+    private static final long ACK_MAX_DELAY_MS = 100;  // 未凑满一批时等待确认的最长时间，单位为毫秒
     private QuicFrame lastReceivedFrame;
 
-    /** Flush the tail of an ACK batch even when no further data arrives. */
+    /** 即使没有后续数据到达，也要为本批次尚未确认的帧发送 ACK。 */
     public synchronized QuicFrame pollDelayedAck(long now, int receiveWindow) {
         if (isCompleted || lastReceivedFrame == null || receivedSequences.size() <= lastAckSize
-                || now - lastAckTime < ACK_MAX_DELAY_MS) return null;
+                || now - lastAckTime < ACK_MAX_DELAY_MS) {
+            return null;
+        }
         QuicFrame ack = buildBitMapAckFrame(lastReceivedFrame, receiveWindow);
         lastAckSize = receivedSequences.size();
         lastAckTime = now;
         return ack;
     }
 
-
-
-
-    synchronized public ReceiveResult handleFrame(QuicFrame quicFrame,int receiveWindow) {
+    synchronized public ReceiveResult handleFrame(QuicFrame quicFrame, int receiveWindow) {
         int sequence = quicFrame.getSequence();
         int total = quicFrame.getTotal();
         long dataId = quicFrame.getDataId();
@@ -69,7 +67,8 @@ public class ReceiveQuicData extends QuicData{
             return new ReceiveResult(false, isCompleted, null);
         }
         if (getFrameArray() != null && total != getTotal()) {
-            log.warn("[receive inconsistent frame total] connectionId={} dataId={} sequence={} expectedTotal={} actualTotal={}",
+            log.warn(
+                    "[receive inconsistent frame total] connectionId={} dataId={} sequence={} expectedTotal={} actualTotal={}",
                     connectionId, dataId, sequence, getTotal(), total);
             return new ReceiveResult(false, isCompleted, null);
         }
@@ -80,13 +79,12 @@ public class ReceiveQuicData extends QuicData{
             return new ReceiveResult(true, true, ackFrame);
         }
 
-
         // ========== 重复帧处理 ==========
         if (receivedSequences.contains(sequence)) {
             log.debug("[重复帧] 连接ID:{} 数据ID:{} 序列号:{} 总帧数:{}，直接回复ACK",
                     connectionId, dataId, sequence, total);
-            QuicFrame ackFrame = buildAckFrame(quicFrame,receiveWindow);
-            return new ReceiveResult(true,isCompleted, ackFrame);
+            QuicFrame ackFrame = buildAckFrame(quicFrame, receiveWindow);
+            return new ReceiveResult(true, isCompleted, ackFrame);
         }
         if (getFrameArray() == null) {
             setFrameArray(new QuicFrame[total]);
@@ -107,11 +105,11 @@ public class ReceiveQuicData extends QuicData{
             handleReceiveSuccess();
             //构建一个ALL_ACK帧
             //本地接收窗口
-            log.debug("本地接收窗口{}",receiveWindow);
-            QuicFrame ackFrame = buildAllAckFrame(quicFrame,receiveWindow);
+            log.debug("本地接收窗口{}", receiveWindow);
+            QuicFrame ackFrame = buildAllAckFrame(quicFrame, receiveWindow);
             //立即返回一个全部接收完成帧
-            return new ReceiveResult(true,true, ackFrame);
-        }else{
+            return new ReceiveResult(true, true, ackFrame);
+        } else {
             // 计算当前已接收帧数、距离上次ACK的耗时
             int currentReceivedSize = receivedSequences.size();
             long elapsedSinceLastAck = System.currentTimeMillis() - lastAckTime;
@@ -162,37 +160,33 @@ public class ReceiveQuicData extends QuicData{
         }
     }
 
-
     public boolean hasReceivedSequence(int sequence) {
         return receivedSequences.contains(sequence);
     }
 
-
-    private QuicFrame buildAckFrame(QuicFrame quicFrame,int receiveWindow) {
+    private QuicFrame buildAckFrame(QuicFrame quicFrame, int receiveWindow) {
         long connectionId = quicFrame.getConnectionId();
         long dataId = quicFrame.getDataId();
         int sequence = quicFrame.getSequence();
-        QuicFrame ackFrame =  new QuicFrame();
+        QuicFrame ackFrame = new QuicFrame();
         ackFrame.setConnectionId(connectionId);
         ackFrame.setDataId(dataId);
         ackFrame.setSequence(sequence); // ACK帧序列号使用当前帧序列号
-        ackFrame.setTotal(quicFrame.getTotal()); // Sequence refers to the original data frame.
+        ackFrame.setTotal(quicFrame.getTotal()); // 序号指向被确认的原始数据帧。
         ackFrame.setFrameType(QuicFrameEnum.DATA_ACK_FRAME.getCode()); // 自定义：ACK帧类型
         ackFrame.setRemoteAddress(quicFrame.getRemoteAddress());
         // 计算总长度：固定头部 + 载荷长度
         //null+接收窗口大小
         byte[] bytes = intToBytes(receiveWindow);
         ackFrame.setPayload(bytes);
-        ackFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH+ackFrame.getPayload().length);
+        ackFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH + ackFrame.getPayload().length);
         return ackFrame;
     }
 
-
-
-    private QuicFrame buildAllAckFrame(QuicFrame quicFrame,int receiveWindow) {
+    private QuicFrame buildAllAckFrame(QuicFrame quicFrame, int receiveWindow) {
         long connectionId = quicFrame.getConnectionId();
         long dataId = quicFrame.getDataId();
-        QuicFrame ackFrame =  new QuicFrame();
+        QuicFrame ackFrame = new QuicFrame();
         ackFrame.setConnectionId(connectionId);
         ackFrame.setDataId(dataId);
         ackFrame.setSequence(0); // ACK帧序列号固定为0
@@ -202,16 +196,13 @@ public class ReceiveQuicData extends QuicData{
         //null+接收窗口大小
         byte[] bytes = intToBytes(receiveWindow);
         ackFrame.setPayload(bytes);
-        ackFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH+ackFrame.getPayload().length);
+        ackFrame.setFrameTotalLength(QuicFrame.FIXED_HEADER_LENGTH + ackFrame.getPayload().length);
         return ackFrame;
     }
-
-
 
     private void handleReceiveSuccess() {
         isCompleted = true;
     }
-
 
     /**
      * 当超时时发送一个位图ACK 帮助发送方快速找到确实的ACK
@@ -220,11 +211,10 @@ public class ReceiveQuicData extends QuicData{
      * @param quicFrame 参考数据帧（用于获取连接ID、数据ID等元信息）
      * @return 批量ACK帧
      */
-     private QuicFrame buildBitMapAckFrame(QuicFrame quicFrame,int receiveWindow) {
+    private QuicFrame buildBitMapAckFrame(QuicFrame quicFrame, int receiveWindow) {
         long connectionId = quicFrame.getConnectionId();
         long dataId = quicFrame.getDataId();
         int totalFrames = getTotal(); // 总帧数（从当前接收数据的元信息中获取）
-
 
         QuicFrame ackFrame = new QuicFrame();
         ackFrame.setConnectionId(connectionId);
@@ -321,8 +311,6 @@ public class ReceiveQuicData extends QuicData{
         return baseArray;
     }
 
-
-
     /**
      * 构建普通批量ACK帧（最多10帧，确认最新接收的帧）
      * payload结构：字节数量 + N×4字节序号（N<=10）+ 4字节接收窗口
@@ -369,7 +357,5 @@ public class ReceiveQuicData extends QuicData{
                 connectionId, dataId, ackSequences.length, receiveWindow, Arrays.toString(ackSequences));
         return batchAckFrame;
     }
-
-
 
 }

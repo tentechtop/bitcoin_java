@@ -18,7 +18,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
-public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandler{
+public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandler {
 
     @Autowired
     private RoutingTable routingTable;
@@ -35,8 +35,7 @@ public class HandshakeSuccessHandle implements ProtocolHandler.VoidProtocolHandl
             routingTable.addPeer(deserialize);
             smartUpdateService.announceCurrentStateToPeer(
                     bytesToHex(deserialize.getId()),
-                    NodeStatusPayload.REASON_HANDSHAKE
-            );
+                    NodeStatusPayload.REASON_HANDSHAKE);
         }
     }
 }

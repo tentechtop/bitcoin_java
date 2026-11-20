@@ -7,6 +7,7 @@ import java.util.Objects;
  * 无符号256位整数实现（32字节），基于BigInteger封装，支持与BigInteger互操作、数学运算和格式转换
  */
 public class UInt256 implements Comparable<UInt256> {
+
     // 常量定义：2^256（用于校验最大值）
     private static final BigInteger TWO_POW_256 = BigInteger.ONE.shiftLeft(256);
     // UInt256最大值：2^256 - 1
@@ -24,8 +25,7 @@ public class UInt256 implements Comparable<UInt256> {
         }
         if (value.compareTo(MIN_VALUE) < 0 || value.compareTo(MAX_VALUE) > 0) {
             throw new IllegalArgumentException(
-                    String.format("UInt256 value must be between 0 and %s (2^256 - 1)", MAX_VALUE)
-            );
+                    String.format("UInt256 value must be between 0 and %s (2^256 - 1)", MAX_VALUE));
         }
         this.value = value;
     }
@@ -200,8 +200,12 @@ public class UInt256 implements Comparable<UInt256> {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
         UInt256 uint256 = (UInt256) o;
         return value.equals(uint256.value);
     }
@@ -221,7 +225,6 @@ public class UInt256 implements Comparable<UInt256> {
     public static final UInt256 ZERO = fromBigInteger(MIN_VALUE);
     public static final UInt256 ONE = fromBigInteger(BigInteger.ONE);
     public static final UInt256 MAX = fromBigInteger(MAX_VALUE);
-
 
     public static void main(String[] args) {
         // 1. 基础构造与格式输出
@@ -252,9 +255,6 @@ public class UInt256 implements Comparable<UInt256> {
         System.out.println("a + b = " + a.add(b).toDecimalString());
         System.out.println("a * b = " + a.multiply(b).toDecimalString());
         System.out.println("a / b = " + a.divide(b).toDecimalString());
-
-
-
 
         // 5. 字节数组转换
         System.out.println("\n=== 字节数组转换 ===");

@@ -781,6 +781,7 @@
             }
         }
     </style>
+<link rel="stylesheet" href="/node-theme.css">
 <script src="/node-api.js"></script>
 </head>
 <body>
@@ -799,7 +800,7 @@
             </select>
             <input class="search" id="searchInput" placeholder="高度或区块 Hash" autocomplete="off">
             <button class="primary" id="searchBtn" type="button">查询</button>
-            <button class="icon" id="refreshBtn" type="button" aria-label="刷新">↻</button>
+            <button class="icon" id="refreshBtn" type="button" aria-label="刷新数据">刷新</button>
             <button class="icon" id="autoBtn" type="button" aria-label="自动刷新">Ⅱ</button>
         </div>
     </header>
@@ -893,6 +894,8 @@
     const state = {
         blocks: [],
         orphans: [],
+        tip: null,
+        searchedBlock: null,
         selectedHash: null,
         view: 'height',
         autoRefresh: true,
@@ -973,14 +976,15 @@
         return 0;
     }
 
-    function normalizeBlock(raw, index, latestHeight) {
+    function normalizeBlock(raw, tip, onMainChain = true) {
         const height = Number(raw.height ?? raw.blockHeight ?? 0);
         const hash = String(raw.hash ?? raw.blockHash ?? '');
         const txCount = readTxCount(raw);
         const time = Number(raw.time ?? raw.timestamp ?? 0);
-        const confirmations = Math.max(0, latestHeight - height + 1);
+        const confirmations = onMainChain ? Math.max(0, Number(tip.height) - height + 1) : 0;
         let status = 'history';
-        if (confirmations <= 1) status = 'latest';
+        if (!onMainChain) status = 'fork';
+        else if (hash === tip.hash) status = 'latest';
         else if (confirmations <= 2) status = 'pending';
         else if (confirmations <= 5) status = 'confirmed';
         return {
@@ -1017,7 +1021,7 @@
         const count = Number(els.blockCount.value);
         const start = Math.max(0, latestHeight - count + 1);
         let blocks = await fetchJson(`/chain/getBlocksByPage?start=${start}&end=${latestHeight}`);
-        if (!Array.isArray(blocks) || blocks.length === 0) {
+        if (!Array.isArray(blocks) || !blocks.some(block => block.hash === latest.hash)) {
             blocks = [latest];
         }
 
@@ -1036,17 +1040,19 @@
             mempool = null;
         }
 
+        state.tip = normalizeBlock(latest, latest);
+        state.searchedBlock = null;
         state.blocks = blocks
-            .map((block, index) => normalizeBlock(block, index, latestHeight))
+            .map(block => normalizeBlock(block, latest))
             .sort((a, b) => a.height - b.height);
-        state.orphans = orphans.map((block, index) => ({
-            ...normalizeBlock(block, index, latestHeight),
+        state.orphans = orphans.map(block => ({
+            ...normalizeBlock(block, latest, false),
             status: 'orphan'
         }));
         state.mempool = mempool;
         state.source = 'live';
         if (!state.selectedHash || !state.blocks.some(block => block.hash === state.selectedHash)) {
-            state.selectedHash = state.blocks[state.blocks.length - 1]?.hash ?? null;
+            state.selectedHash = state.tip.hash;
         }
     }
 
@@ -1056,6 +1062,7 @@
         const txs = [1188, 2460, 1732, 2543, 1690, 2779, 4304, 3204, 1858, 2368, 1420, 3910, 2105, 1764, 2960, 3318];
         const count = Number(els.blockCount.value);
         const latestHeight = base + count - 1;
+        const mockTip = {height: latestHeight, hash: makeHash(latestHeight)};
         state.blocks = Array.from({length: count}, (_, index) => {
             const height = base + index;
             const txCount = txs[index % txs.length];
@@ -1071,7 +1078,7 @@
                 nonce: 3982411507 - index * 17493,
                 chainWorkDecimal: String(928374982734982734n + BigInt(index) * 8192n),
                 transactions: makeMockTxs(height, txCount)
-            }, index, latestHeight);
+            }, mockTip);
         });
         state.orphans = [
             normalizeBlock({
@@ -1085,11 +1092,13 @@
                 bits: 486604799,
                 nonce: 285147921,
                 transactions: makeMockTxs(latestHeight + 77, 947)
-            }, 0, latestHeight)
+            }, mockTip, false)
         ].map(block => ({...block, status: 'orphan'}));
         state.mempool = {totalTransactions: 12931, pendingCount: 12931, totalFees: 182400};
         state.source = 'mock';
-        state.selectedHash = state.blocks[state.blocks.length - 1]?.hash ?? null;
+        state.tip = state.blocks[state.blocks.length - 1];
+        state.searchedBlock = null;
+        state.selectedHash = state.tip.hash;
     }
 
     function makeHash(seed) {
@@ -1163,12 +1172,13 @@
         return blocks.find(block => block.hash === state.selectedHash)
             || state.blocks.find(block => block.hash === state.selectedHash)
             || state.orphans.find(block => block.hash === state.selectedHash)
-            || state.blocks[state.blocks.length - 1]
+            || (state.searchedBlock?.hash === state.selectedHash ? state.searchedBlock : null)
+            || state.tip
             || null;
     }
 
     function renderMetrics(blocks) {
-        const latest = [...blocks].sort((a, b) => b.height - a.height)[0];
+        const latest = state.tip;
         const peak = [...blocks].sort((a, b) => b.txCount - a.txCount)[0];
         const intervals = blocks.slice(1).map((block, index) => Math.abs(block.time - blocks[index].time)).filter(Boolean);
         const avg = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0;
@@ -1301,6 +1311,7 @@
             pending: ['PENDING', 'var(--amber)'],
             confirmed: ['CONFIRMED', 'var(--blue)'],
             history: ['HISTORY', '#94a3b8'],
+            fork: ['侧链', 'var(--red)'],
             orphan: ['STALE', 'var(--red)']
         }[block.status] || ['BLOCK', '#94a3b8'];
         els.detailBadge.textContent = badge[0];
@@ -1383,13 +1394,18 @@
         setSource('loading');
         try {
             const isHeight = /^\d+$/.test(query);
-            const block = await fetchJson(isHeight ? `/chain/getBlockByHeight?height=${query}` : `/chain/getBlockByHash?hash=${encodeURIComponent(query)}`);
-            const latestHeight = Math.max(Number(block.height), ...state.blocks.map(item => item.height));
-            const normalized = normalizeBlock(block, 0, latestHeight);
+            const [block] = await Promise.all([
+                fetchJson(isHeight ? `/chain/getBlockByHeight?height=${query}` : `/chain/getBlockByHash?hash=${encodeURIComponent(query)}`),
+                loadLiveData()
+            ]);
+            const onMainChain = state.blocks.some(item => item.hash === block.hash)
+                || await fetchJson(`/bitcoin/chain/isMainChain?hash=${encodeURIComponent(block.hash)}`);
+            const normalized = normalizeBlock(block, state.tip, onMainChain);
             const exists = state.blocks.some(item => item.hash === normalized.hash);
-            if (!exists) {
+            if (!exists && onMainChain) {
                 state.blocks = [...state.blocks.slice(1), normalized].sort((a, b) => a.height - b.height);
             }
+            state.searchedBlock = normalized;
             state.selectedHash = normalized.hash;
             state.source = 'live';
             render();

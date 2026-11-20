@@ -22,6 +22,7 @@ public class SimpleEVM {
 
     // 操作码常量
     public static class OpCode {
+
         public static final int STOP = 0x00;
         public static final int ADD = 0x01;
         public static final int MUL = 0x02;
@@ -78,6 +79,7 @@ public class SimpleEVM {
      * EVM执行上下文
      */
     public static class ExecutionContext {
+
         public Stack<BigInteger> stack = new Stack<>();
         public Map<BigInteger, BigInteger> memory = new HashMap<>();
         public Map<BigInteger, BigInteger> storage = new HashMap<>();
@@ -123,6 +125,7 @@ public class SimpleEVM {
      * EVM执行结果
      */
     public static class ExecutionResult {
+
         public boolean success;
         public byte[] returnData;
         public BigInteger gasUsed;
@@ -131,8 +134,8 @@ public class SimpleEVM {
         public BigInteger stackResult; // 栈顶结果（如果有）
 
         public ExecutionResult(boolean success, byte[] returnData,
-                               BigInteger gasUsed, String error,
-                               Map<BigInteger, BigInteger> storage, BigInteger stackResult) {
+                BigInteger gasUsed, String error,
+                Map<BigInteger, BigInteger> storage, BigInteger stackResult) {
             this.success = success;
             this.returnData = returnData;
             this.gasUsed = gasUsed;
@@ -142,8 +145,8 @@ public class SimpleEVM {
         }
 
         public ExecutionResult(boolean success, byte[] returnData,
-                               BigInteger gasUsed, String error,
-                               Map<BigInteger, BigInteger> storage) {
+                BigInteger gasUsed, String error,
+                Map<BigInteger, BigInteger> storage) {
             this(success, returnData, gasUsed, error, storage, null);
         }
     }
@@ -152,6 +155,7 @@ public class SimpleEVM {
      * ERC20代币元数据
      */
     public static class ERC20Metadata {
+
         public String name;
         public String symbol;
         public int decimals;
@@ -159,7 +163,7 @@ public class SimpleEVM {
         public BigInteger creator; // 创建者地址
 
         public ERC20Metadata(String name, String symbol, int decimals,
-                             BigInteger totalSupply, BigInteger creator) {
+                BigInteger totalSupply, BigInteger creator) {
             this.name = name;
             this.symbol = symbol;
             this.decimals = decimals;
@@ -168,11 +172,11 @@ public class SimpleEVM {
         }
     }
 
-
     /**
      * EVM实现
      */
     public static class EVM {
+
         private Map<Integer, Operation> operations = new HashMap<>();
         private Map<BigInteger, ERC20Metadata> tokens = new HashMap<>(); // 合约地址 -> 代币元数据
         private Map<BigInteger, Map<BigInteger, BigInteger>> tokenStorage = new HashMap<>(); // 合约地址 -> 存储
@@ -276,7 +280,6 @@ public class SimpleEVM {
                 ctx.stack.push(result);
                 ctx.gas = ctx.gas.subtract(BigInteger.valueOf(3));
             });
-
 
             operations.put(OpCode.GT, ctx -> {
                 if (ctx.stack.size() < 2) {
@@ -515,7 +518,7 @@ public class SimpleEVM {
         }
 
         public ExecutionResult execute(byte[] code, byte[] callData,
-                                       BigInteger caller, BigInteger callValue) {
+                BigInteger caller, BigInteger callValue) {
             ExecutionContext ctx = new ExecutionContext(code, callData, caller, callValue);
             BigInteger initialGas = ctx.gas;
             BigInteger stackResult = null;
@@ -531,7 +534,8 @@ public class SimpleEVM {
                         // 未知操作码
                         return new ExecutionResult(false, new byte[0],
                                 initialGas.subtract(ctx.gas), "Unknown opcode: 0x" +
-                                Integer.toHexString(opcode), ctx.storage);
+                                        Integer.toHexString(opcode),
+                                ctx.storage);
                     }
 
                     // 如果栈不为空，记录栈顶值
@@ -545,8 +549,7 @@ public class SimpleEVM {
                             initialGas, "Out of gas", ctx.storage, stackResult);
                 }
 
-                return new ExecutionResult(true, ctx.returnData != null ?
-                        ctx.returnData : new byte[0],
+                return new ExecutionResult(true, ctx.returnData != null ? ctx.returnData : new byte[0],
                         initialGas.subtract(ctx.gas), null, ctx.storage, stackResult);
 
             } catch (Exception e) {
@@ -559,7 +562,7 @@ public class SimpleEVM {
          * 部署ERC20代币合约
          */
         public BigInteger deployERC20(String name, String symbol, int decimals,
-                                      BigInteger totalSupply, BigInteger creator) {
+                BigInteger totalSupply, BigInteger creator) {
             BigInteger contractAddress = generateContractAddress();
 
             // 创建代币元数据
@@ -571,17 +574,17 @@ public class SimpleEVM {
             Map<BigInteger, BigInteger> storage = new HashMap<>();
 
             // 存储布局 (简化版本)
-            // slot 0: 总供应量
+            // 存储槽 0：总供应量
             storage.put(BigInteger.ZERO, totalSupply);
-            // slot 1: 小数位数
+            // 存储槽 1：小数位数
             storage.put(BigInteger.ONE, BigInteger.valueOf(decimals));
-            // slot 2: 代币名称长度
+            // 存储槽 2：代币名称长度
             storage.put(BigInteger.valueOf(2), BigInteger.valueOf(name.length()));
-            // slot 3: 代币符号长度
+            // 存储槽 3：代币符号长度
             storage.put(BigInteger.valueOf(3), BigInteger.valueOf(symbol.length()));
 
             // 将总供应量分配给创建者
-            // 使用创建者地址的哈希值作为key
+            // 使用创建者地址的哈希值作为键
             BigInteger creatorBalanceKey = getBalanceKey(creator);
             storage.put(creatorBalanceKey, totalSupply);
 
@@ -598,7 +601,7 @@ public class SimpleEVM {
          * 调用ERC20合约的transfer函数
          */
         public ExecutionResult transfer(BigInteger contractAddress, BigInteger from,
-                                        BigInteger to, BigInteger amount) {
+                BigInteger to, BigInteger amount) {
             Map<BigInteger, BigInteger> storage = tokenStorage.get(contractAddress);
             if (storage == null) {
                 return new ExecutionResult(false, new byte[0], BigInteger.ZERO,
@@ -650,7 +653,7 @@ public class SimpleEVM {
         }
 
         /**
-         * 获取余额存储key
+         * 获取存储余额所用的键
          */
         private BigInteger getBalanceKey(BigInteger account) {
             // 使用固定的偏移量 + 账户地址
@@ -671,13 +674,13 @@ public class SimpleEVM {
             return new ArrayList<>(tokens.keySet());
         }
 
-
     }
 
     /**
      * 操作接口
      */
     private interface Operation {
+
         void execute(ExecutionContext ctx);
     }
 
@@ -685,12 +688,17 @@ public class SimpleEVM {
      * 字节码汇编器
      */
     public static class Assembler {
+
         private List<Byte> code = new ArrayList<>();
 
         public Assembler push(BigInteger value) {
             int byteCount = (value.bitLength() + 7) / 8;
-            if (byteCount == 0) byteCount = 1;
-            if (byteCount > 32) byteCount = 32;
+            if (byteCount == 0) {
+                byteCount = 1;
+            }
+            if (byteCount > 32) {
+                byteCount = 32;
+            }
 
             int opcode = OpCode.PUSH1 + byteCount - 1;
             code.add((byte) opcode);
@@ -922,8 +930,7 @@ public class SimpleEVM {
         BigInteger creator = BigInteger.valueOf(123456);
         BigInteger totalSupply = BigInteger.valueOf(1000000).multiply(BigInteger.TEN.pow(18));
         BigInteger contractAddress = evm3.deployERC20(
-                "MyToken", "MTK", 18, totalSupply, creator
-        );
+                "MyToken", "MTK", 18, totalSupply, creator);
 
         System.out.println("合约地址: " + contractAddress);
         ERC20Metadata tokenInfo = evm3.getTokenInfo(contractAddress);
@@ -1012,15 +1019,12 @@ public class SimpleEVM {
             byte[] publicKey = hexToBytes("291b960b5ca8591653bea10d11afd883b240616a02ba49acc82be4fcd3aa5dc3");
             byte[] message = "Hello, World!".getBytes();
 
-
-            byte[] signature = Ed25519Signer.fastSign(hexToBytes("46405ee67af3e85c64ff84c6a6df9a3ac4739e71a2147cb02f4e36b70127487d"),message);
-
+            byte[] signature = Ed25519Signer
+                    .fastSign(hexToBytes("46405ee67af3e85c64ff84c6a6df9a3ac4739e71a2147cb02f4e36b70127487d"), message);
 
             // 执行验证
             boolean isValid = Ed25519Signer.fastVerify(publicKey, message, signature);
             System.out.println("签名验证结果: " + (isValid ? "通过" : "失败"));
-
-
 
         } catch (Exception e) {
             System.out.println("签名验证错误: " + e.getMessage());
@@ -1033,8 +1037,8 @@ public class SimpleEVM {
         // 准备测试数据
         byte[] testPublicKey = hexToBytes("291b960b5ca8591653bea10d11afd883b240616a02ba49acc82be4fcd3aa5dc3");
         byte[] testMessage = "Test message".getBytes();
-        byte[] testSignature = Ed25519Signer.fastSign(hexToBytes("46405ee67af3e85c64ff84c6a6df9a3ac4739e71a2147cb02f4e36b70127487d"),testMessage);
-
+        byte[] testSignature = Ed25519Signer
+                .fastSign(hexToBytes("46405ee67af3e85c64ff84c6a6df9a3ac4739e71a2147cb02f4e36b70127487d"), testMessage);
 
         System.out.println("\n=== 演示完成 ===");
 

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 public class P2PPeerHintsHandle implements ProtocolHandler.VoidProtocolHandler {
+
     @Autowired
     private RoutingTable routingTable;
 

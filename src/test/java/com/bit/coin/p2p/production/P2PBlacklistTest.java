@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P2PBlacklistTest {
+
     @Test
     void blocksAndUnblocksPeerAndIp() {
         AtomicLong now = new AtomicLong(1_000);

@@ -10,8 +10,8 @@ import java.util.HexFormat;
 import java.util.Locale;
 
 public final class P2PSelfNode {
-    private P2PSelfNode() {
-    }
+
+    private P2PSelfNode() {}
 
     public static boolean isSelfAddress(P2PAddress address) {
         return address != null

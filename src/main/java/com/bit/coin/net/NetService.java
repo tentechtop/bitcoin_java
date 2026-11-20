@@ -7,6 +7,7 @@ import com.bit.coin.utils.UInt256;
 import java.util.List;
 
 public interface NetService {
+
     SyncProgress startSyncBlock();
 
     SyncProgress startSyncBlockHeadersFirst();

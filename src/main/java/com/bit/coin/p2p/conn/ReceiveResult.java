@@ -8,7 +8,6 @@ public class ReceiveResult {
     //本次接收处理 是否处理成功
     private boolean success;
 
-
     //是否全部全部确认 或者 是否发送完成
     private boolean completed;
 
@@ -18,9 +17,8 @@ public class ReceiveResult {
     //需要回补的窗口大小
     private int window = 0;
 
-
     //全参构造
-    public ReceiveResult(boolean success,boolean completed, QuicFrame ackFrame) {
+    public ReceiveResult(boolean success, boolean completed, QuicFrame ackFrame) {
         this.success = success;
         this.completed = completed;
         this.ackFrame = ackFrame;

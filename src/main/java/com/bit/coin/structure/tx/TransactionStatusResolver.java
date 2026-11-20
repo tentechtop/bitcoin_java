@@ -9,92 +9,85 @@ import java.util.List;
  * 高32位：附加状态标志
  */
 public class TransactionStatusResolver {
+
     // ======================== 生命周期状态（互斥，只能有一个）========================
-    public static final long PENDING         = 1L << 0;  // 待处理（刚接收，未验证）
-    public static final long IN_POOL          = 1L << 1;  // 在交易池中（已验证，等待打包）
-    public static final long PACKING          = 1L << 2;  // 打包中（已提取到区块，等待上链）
-    public static final long CONFIRMED        = 1L << 3;  // 已确认（已上链）
-    public static final long ORPHANED         = 1L << 4;  // 被孤立（父交易缺失）
-    public static final long REJECTED         = 1L << 5;  // 已拒绝（验证失败）
-    public static final long REPLACED         = 1L << 6;  // 已被替换（RBF）
-    public static final long EXPIRED          = 1L << 7;  // 已过期（超时未确认）
-    public static final long FORK             = 1L << 8;  // 所在区块非主链
+    public static final long PENDING = 1L << 0;  // 待处理（刚接收，未验证）
+    public static final long IN_POOL = 1L << 1;  // 在交易池中（已验证，等待打包）
+    public static final long PACKING = 1L << 2;  // 打包中（已提取到区块，等待上链）
+    public static final long CONFIRMED = 1L << 3;  // 已确认（已上链）
+    public static final long ORPHANED = 1L << 4;  // 被孤立（父交易缺失）
+    public static final long REJECTED = 1L << 5;  // 已拒绝（验证失败）
+    public static final long REPLACED = 1L << 6;  // 已被替换（RBF）
+    public static final long EXPIRED = 1L << 7;  // 已过期（超时未确认）
+    public static final long FORK = 1L << 8;  // 所在区块非主链
 
     // 主要状态掩码（用于清除操作）
-    public static final long LIFECYCLE_MASK =
-            PENDING | IN_POOL | PACKING | CONFIRMED | ORPHANED | REJECTED | REPLACED | EXPIRED;
+    public static final long LIFECYCLE_MASK = PENDING | IN_POOL | PACKING | CONFIRMED | ORPHANED | REJECTED | REPLACED
+            | EXPIRED;
 
     // ======================== 附加状态标志（可组合）========================
     // 高32位：附加状态标志
     private static final int FLAG_OFFSET = 32;
 
     // 交易属性标志
-    public static final long COINBASE           = 1L << (FLAG_OFFSET + 0);  // Coinbase交易
-    public static final long HIGH_FEE           = 1L << (FLAG_OFFSET + 1);  // 高手续费交易
-    public static final long DUST_TX            = 1L << (FLAG_OFFSET + 2);  // 粉尘交易
-    public static final long LARGE_SIZE          = 1L << (FLAG_OFFSET + 3);  // 大体积交易
+    public static final long COINBASE = 1L << (FLAG_OFFSET + 0);  // Coinbase交易
+    public static final long HIGH_FEE = 1L << (FLAG_OFFSET + 1);  // 高手续费交易
+    public static final long DUST_TX = 1L << (FLAG_OFFSET + 2);  // 粉尘交易
+    public static final long LARGE_SIZE = 1L << (FLAG_OFFSET + 3);  // 大体积交易
 
     // 验证相关标志
-    public static final long VERIFIED           = 1L << (FLAG_OFFSET + 4);  // 已完全验证
-    public static final long SIG_CHECKED        = 1L << (FLAG_OFFSET + 5);  // 签名已验证
-    public static final long SCRIPT_CHECKED     = 1L << (FLAG_OFFSET + 6);  // 脚本已验证
-    public static final long INPUTS_VERIFIED    = 1L << (FLAG_OFFSET + 7);  // 输入已验证
-    public static final long OUTPUTS_VERIFIED   = 1L << (FLAG_OFFSET + 8);  // 输出已验证
+    public static final long VERIFIED = 1L << (FLAG_OFFSET + 4);  // 已完全验证
+    public static final long SIG_CHECKED = 1L << (FLAG_OFFSET + 5);  // 签名已验证
+    public static final long SCRIPT_CHECKED = 1L << (FLAG_OFFSET + 6);  // 脚本已验证
+    public static final long INPUTS_VERIFIED = 1L << (FLAG_OFFSET + 7);  // 输入已验证
+    public static final long OUTPUTS_VERIFIED = 1L << (FLAG_OFFSET + 8);  // 输出已验证
 
     // 内存池状态标志
-    public static final long MEMPOOL_LOCKED     = 1L << (FLAG_OFFSET + 9);  // 内存池锁定（打包中）
-    public static final long PRIORITY_HIGH      = 1L << (FLAG_OFFSET + 10); // 高优先级
-    public static final long PRIORITY_LOW       = 1L << (FLAG_OFFSET + 11); // 低优先级
-    public static final long RBF_ENABLED       = 1L << (FLAG_OFFSET + 12); // 支持RBF替换
-    public static final long CPFP_ENABLED      = 1L << (FLAG_OFFSET + 13); // 支持CPFP
+    public static final long MEMPOOL_LOCKED = 1L << (FLAG_OFFSET + 9);  // 内存池锁定（打包中）
+    public static final long PRIORITY_HIGH = 1L << (FLAG_OFFSET + 10); // 高优先级
+    public static final long PRIORITY_LOW = 1L << (FLAG_OFFSET + 11); // 低优先级
+    public static final long RBF_ENABLED = 1L << (FLAG_OFFSET + 12); // 支持RBF替换
+    public static final long CPFP_ENABLED = 1L << (FLAG_OFFSET + 13); // 支持CPFP
 
     // 确认相关标志
-    public static final long CONFIRMED_WEAK    = 1L << (FLAG_OFFSET + 14); // 弱确认（<6个确认）
-    public static final long CONFIRMED_SAFE    = 1L << (FLAG_OFFSET + 15); // 安全确认（6+确认）
-    public static final long DEEP_CONFIRMED    = 1L << (FLAG_OFFSET + 16); // 深度确认（100+确认）
+    public static final long CONFIRMED_WEAK = 1L << (FLAG_OFFSET + 14); // 弱确认（<6个确认）
+    public static final long CONFIRMED_SAFE = 1L << (FLAG_OFFSET + 15); // 安全确认（6+确认）
+    public static final long DEEP_CONFIRMED = 1L << (FLAG_OFFSET + 16); // 深度确认（100+确认）
 
     // 错误/警告标志
     public static final long DOUBLE_SPEND_FLAG = 1L << (FLAG_OFFSET + 17); // 双花嫌疑
-    public static final long INVALID_SIG       = 1L << (FLAG_OFFSET + 18); // 无效签名
-    public static final long INSUFFICIENT_FEE  = 1L << (FLAG_OFFSET + 19); // 手续费不足
-    public static final long NON_STANDARD      = 1L << (FLAG_OFFSET + 20); // 非标准交易
+    public static final long INVALID_SIG = 1L << (FLAG_OFFSET + 18); // 无效签名
+    public static final long INSUFFICIENT_FEE = 1L << (FLAG_OFFSET + 19); // 手续费不足
+    public static final long NON_STANDARD = 1L << (FLAG_OFFSET + 20); // 非标准交易
 
     // 时间相关标志
-    public static final long TIME_LOCKED       = 1L << (FLAG_OFFSET + 21); // 时间锁定
-    public static final long HEIGHT_LOCKED     = 1L << (FLAG_OFFSET + 22); // 高度锁定
+    public static final long TIME_LOCKED = 1L << (FLAG_OFFSET + 21); // 时间锁定
+    public static final long HEIGHT_LOCKED = 1L << (FLAG_OFFSET + 22); // 高度锁定
 
     // 特殊交易标志
-    public static final long MULTISIG_TX       = 1L << (FLAG_OFFSET + 23); // 多重签名交易
-    public static final long CONTRACT_TX        = 1L << (FLAG_OFFSET + 24); // 合约交易
-    public static final long WITNESS_TX        = 1L << (FLAG_OFFSET + 25); // 隔离见证交易
-
-
-
+    public static final long MULTISIG_TX = 1L << (FLAG_OFFSET + 23); // 多重签名交易
+    public static final long CONTRACT_TX = 1L << (FLAG_OFFSET + 24); // 合约交易
+    public static final long WITNESS_TX = 1L << (FLAG_OFFSET + 25); // 隔离见证交易
 
     // ======================== 常用状态组合 ========================
     // 交易池中已验证的普通交易
-    public static final long POOL_TX =
-            IN_POOL | VERIFIED | SIG_CHECKED | SCRIPT_CHECKED | INPUTS_VERIFIED | OUTPUTS_VERIFIED;
+    public static final long POOL_TX = IN_POOL | VERIFIED | SIG_CHECKED | SCRIPT_CHECKED | INPUTS_VERIFIED
+            | OUTPUTS_VERIFIED;
 
     // 交易池中高优先级交易
-    public static final long HIGH_PRIORITY_POOL_TX =
-            IN_POOL | PRIORITY_HIGH | HIGH_FEE | VERIFIED;
+    public static final long HIGH_PRIORITY_POOL_TX = IN_POOL | PRIORITY_HIGH | HIGH_FEE | VERIFIED;
 
     // 已确认的安全交易
-    public static final long CONFIRMED_SAFE_TX =
-            CONFIRMED | CONFIRMED_SAFE | VERIFIED | SIG_CHECKED | SCRIPT_CHECKED;
+    public static final long CONFIRMED_SAFE_TX = CONFIRMED | CONFIRMED_SAFE | VERIFIED | SIG_CHECKED | SCRIPT_CHECKED;
 
     // 打包中的交易
-    public static final long PACKING_TX =
-            PACKING | MEMPOOL_LOCKED | VERIFIED;
+    public static final long PACKING_TX = PACKING | MEMPOOL_LOCKED | VERIFIED;
 
     // 有双花嫌疑的交易
-    public static final long RISKY_TX =
-            IN_POOL | DOUBLE_SPEND_FLAG | INSUFFICIENT_FEE;
+    public static final long RISKY_TX = IN_POOL | DOUBLE_SPEND_FLAG | INSUFFICIENT_FEE;
 
     // Coinbase交易（已确认）
-    public static final long CONFIRMED_COINBASE =
-            COINBASE | CONFIRMED | CONFIRMED_SAFE | VERIFIED;
+    public static final long CONFIRMED_COINBASE = COINBASE | CONFIRMED | CONFIRMED_SAFE | VERIFIED;
 
     // ======================== 状态查询和设置方法 ========================
 
@@ -275,57 +268,125 @@ public class TransactionStatusResolver {
         List<String> parts = new ArrayList<>();
 
         // 生命周期状态
-        if (hasLifecycle(statusMask, PENDING)) parts.add("待处理");
-        if (hasLifecycle(statusMask, IN_POOL)) parts.add("交易池");
-        if (hasLifecycle(statusMask, PACKING)) parts.add("打包中");
-        if (hasLifecycle(statusMask, CONFIRMED)) parts.add("已确认");
-        if (hasLifecycle(statusMask, ORPHANED)) parts.add("被孤立");
-        if (hasLifecycle(statusMask, REJECTED)) parts.add("已拒绝");
-        if (hasLifecycle(statusMask, REPLACED)) parts.add("已替换");
-        if (hasLifecycle(statusMask, EXPIRED)) parts.add("已过期");
-        if (hasLifecycle(statusMask, FORK)) parts.add("非主链交易");
-
+        if (hasLifecycle(statusMask, PENDING)) {
+            parts.add("待处理");
+        }
+        if (hasLifecycle(statusMask, IN_POOL)) {
+            parts.add("交易池");
+        }
+        if (hasLifecycle(statusMask, PACKING)) {
+            parts.add("打包中");
+        }
+        if (hasLifecycle(statusMask, CONFIRMED)) {
+            parts.add("已确认");
+        }
+        if (hasLifecycle(statusMask, ORPHANED)) {
+            parts.add("被孤立");
+        }
+        if (hasLifecycle(statusMask, REJECTED)) {
+            parts.add("已拒绝");
+        }
+        if (hasLifecycle(statusMask, REPLACED)) {
+            parts.add("已替换");
+        }
+        if (hasLifecycle(statusMask, EXPIRED)) {
+            parts.add("已过期");
+        }
+        if (hasLifecycle(statusMask, FORK)) {
+            parts.add("非主链交易");
+        }
 
         // 交易属性
-        if (hasFlag(statusMask, COINBASE)) parts.add("Coinbase");
-        if (hasFlag(statusMask, HIGH_FEE)) parts.add("高手续费");
-        if (hasFlag(statusMask, DUST_TX)) parts.add("粉尘交易");
-        if (hasFlag(statusMask, LARGE_SIZE)) parts.add("大体积");
+        if (hasFlag(statusMask, COINBASE)) {
+            parts.add("Coinbase");
+        }
+        if (hasFlag(statusMask, HIGH_FEE)) {
+            parts.add("高手续费");
+        }
+        if (hasFlag(statusMask, DUST_TX)) {
+            parts.add("粉尘交易");
+        }
+        if (hasFlag(statusMask, LARGE_SIZE)) {
+            parts.add("大体积");
+        }
 
         // 验证标志
-        if (hasFlag(statusMask, VERIFIED)) parts.add("已验证");
-        if (hasFlag(statusMask, SIG_CHECKED)) parts.add("签名验证");
-        if (hasFlag(statusMask, SCRIPT_CHECKED)) parts.add("脚本验证");
-        if (hasFlag(statusMask, INPUTS_VERIFIED)) parts.add("输入验证");
-        if (hasFlag(statusMask, OUTPUTS_VERIFIED)) parts.add("输出验证");
+        if (hasFlag(statusMask, VERIFIED)) {
+            parts.add("已验证");
+        }
+        if (hasFlag(statusMask, SIG_CHECKED)) {
+            parts.add("签名验证");
+        }
+        if (hasFlag(statusMask, SCRIPT_CHECKED)) {
+            parts.add("脚本验证");
+        }
+        if (hasFlag(statusMask, INPUTS_VERIFIED)) {
+            parts.add("输入验证");
+        }
+        if (hasFlag(statusMask, OUTPUTS_VERIFIED)) {
+            parts.add("输出验证");
+        }
 
         // 内存池标志
-        if (hasFlag(statusMask, MEMPOOL_LOCKED)) parts.add("内存池锁定");
-        if (hasFlag(statusMask, PRIORITY_HIGH)) parts.add("高优先级");
-        if (hasFlag(statusMask, PRIORITY_LOW)) parts.add("低优先级");
-        if (hasFlag(statusMask, RBF_ENABLED)) parts.add("支持RBF");
-        if (hasFlag(statusMask, CPFP_ENABLED)) parts.add("支持CPFP");
+        if (hasFlag(statusMask, MEMPOOL_LOCKED)) {
+            parts.add("内存池锁定");
+        }
+        if (hasFlag(statusMask, PRIORITY_HIGH)) {
+            parts.add("高优先级");
+        }
+        if (hasFlag(statusMask, PRIORITY_LOW)) {
+            parts.add("低优先级");
+        }
+        if (hasFlag(statusMask, RBF_ENABLED)) {
+            parts.add("支持RBF");
+        }
+        if (hasFlag(statusMask, CPFP_ENABLED)) {
+            parts.add("支持CPFP");
+        }
 
         // 确认标志
-        if (hasFlag(statusMask, CONFIRMED_WEAK)) parts.add("弱确认");
-        if (hasFlag(statusMask, CONFIRMED_SAFE)) parts.add("安全确认");
-        if (hasFlag(statusMask, DEEP_CONFIRMED)) parts.add("深度确认");
+        if (hasFlag(statusMask, CONFIRMED_WEAK)) {
+            parts.add("弱确认");
+        }
+        if (hasFlag(statusMask, CONFIRMED_SAFE)) {
+            parts.add("安全确认");
+        }
+        if (hasFlag(statusMask, DEEP_CONFIRMED)) {
+            parts.add("深度确认");
+        }
 
         // 错误/警告标志
-        if (hasFlag(statusMask, DOUBLE_SPEND_FLAG)) parts.add("双花嫌疑");
-        if (hasFlag(statusMask, INVALID_SIG)) parts.add("无效签名");
-        if (hasFlag(statusMask, INSUFFICIENT_FEE)) parts.add("手续费不足");
-        if (hasFlag(statusMask, NON_STANDARD)) parts.add("非标准");
+        if (hasFlag(statusMask, DOUBLE_SPEND_FLAG)) {
+            parts.add("双花嫌疑");
+        }
+        if (hasFlag(statusMask, INVALID_SIG)) {
+            parts.add("无效签名");
+        }
+        if (hasFlag(statusMask, INSUFFICIENT_FEE)) {
+            parts.add("手续费不足");
+        }
+        if (hasFlag(statusMask, NON_STANDARD)) {
+            parts.add("非标准");
+        }
 
         // 时间/高度锁定
-        if (hasFlag(statusMask, TIME_LOCKED)) parts.add("时间锁定");
-        if (hasFlag(statusMask, HEIGHT_LOCKED)) parts.add("高度锁定");
+        if (hasFlag(statusMask, TIME_LOCKED)) {
+            parts.add("时间锁定");
+        }
+        if (hasFlag(statusMask, HEIGHT_LOCKED)) {
+            parts.add("高度锁定");
+        }
 
         // 特殊交易
-        if (hasFlag(statusMask, MULTISIG_TX)) parts.add("多重签名");
-        if (hasFlag(statusMask, CONTRACT_TX)) parts.add("合约交易");
-        if (hasFlag(statusMask, WITNESS_TX)) parts.add("隔离见证");
-
+        if (hasFlag(statusMask, MULTISIG_TX)) {
+            parts.add("多重签名");
+        }
+        if (hasFlag(statusMask, CONTRACT_TX)) {
+            parts.add("合约交易");
+        }
+        if (hasFlag(statusMask, WITNESS_TX)) {
+            parts.add("隔离见证");
+        }
 
         return String.join(" | ", parts);
     }

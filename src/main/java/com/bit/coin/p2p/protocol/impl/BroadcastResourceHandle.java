@@ -31,8 +31,7 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
             BlockChainServiceImpl blockChainService,
             RoutingTable routingTable,
             TxPool txPool,
-            SmartSyncTrigger smartSyncTrigger
-    ) {
+            SmartSyncTrigger smartSyncTrigger) {
         this.blockChainService = blockChainService;
         this.routingTable = routingTable;
         this.txPool = txPool;
@@ -58,7 +57,8 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
         };
 
         if (needResource && senderId != null) {
-            log.info("Request announced resource: type={}, hash={}", resource.getType(), bytesToHex(resource.getHash()));
+            log.info("Request announced resource: type={}, hash={}", resource.getType(),
+                    bytesToHex(resource.getHash()));
             staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Get_Resource_Req, data, 5000);
         }
     }
@@ -72,8 +72,7 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
                     bytesToHex(senderId),
                     bytesToHex(hash),
                     resource.getHeight(),
-                    resource.getChainWork()
-            );
+                    resource.getChainWork());
         }
 
         BlockHeader header = blockChainService.getBlockHeaderByHash(hash);

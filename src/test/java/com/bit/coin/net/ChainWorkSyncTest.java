@@ -7,6 +7,7 @@ import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.config.ParamsConfig;
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.rocksDb.RocksDb;
+import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.p2p.peer.Peer;
 import com.bit.coin.p2p.protocol.P2PMessage;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.ByteBuffer;
@@ -31,12 +33,18 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -53,7 +61,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ChainWorkSyncTest {
-    @TempDir Path directory;
+
+    @TempDir
+    Path directory;
+
     @Test
     void prefersShorterPeerWithMoreWork() {
         Peer taller = peer(1, 12, 90);
@@ -85,18 +96,16 @@ class ChainWorkSyncTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"2,true", "3,true", "3,false"})
+    @CsvSource({ "2,true", "3,true", "3,false" })
     void reorganizesToTheHigherWorkBranch(int localHeight, boolean automatic) throws Exception {
-        ParamsConfig.Params regtest = ParamsConfig.RegressionNetParams;
-        ParamsConfig.Params params = new ParamsConfig.Params(regtest.getName(), regtest.getNet(), regtest.getDefaultPort(),
-                regtest.getGenesisHash(), regtest.getPowLimit(), regtest.getPowLimitBits(), false, 10, 150,
-                Duration.ofSeconds(8), Duration.ofSeconds(4), 4, false, Duration.ZERO);
-        Block previousTip = BlockChainServiceImpl.mainTipBlock;
+        ParamsConfig.Params params = retargetParams();
         try (RocksDb database = new RocksDb()) {
             BlockChainServiceImpl chain = initChain(database, params);
             Block genesis = chain.getMainLatestBlock();
             List<Block> local = branch(genesis, params, 8, localHeight);
-            for (Block block : local.subList(1, local.size())) assertTrue(chain.verifyBlock(block));
+            for (Block block : local.subList(1, local.size())) {
+                assertTrue(chain.verifyBlock(block));
+            }
             List<Block> heavier = branch(genesis, params, 1, 2);
             Block target = heavier.getLast();
             assertTrue(target.getChainWork().compareTo(chain.getMainLatestBlock().getChainWork()) > 0);
@@ -110,7 +119,8 @@ class ChainWorkSyncTest {
             String overstatedId = bytesToHex(overstated.getId());
             Peer taller = peer(3, 12, 1);
             RoutingTable routingTable = mock(RoutingTable.class);
-            when(routingTable.getOnlineNodes()).thenReturn(automatic ? List.of(taller, overstated, remote) : List.of(taller, remote));
+            when(routingTable.getOnlineNodes())
+                    .thenReturn(automatic ? List.of(taller, overstated, remote) : List.of(taller, remote));
             NetServiceImpl net = spy(new NetServiceImpl());
             ReflectionTestUtils.setField(net, "routingTable", routingTable);
             ReflectionTestUtils.setField(net, "blockChainService", chain);
@@ -121,7 +131,7 @@ class ChainWorkSyncTest {
                 assertTrue(id.equals(remoteId) || id.equals(overstatedId), "Unexpected sync peer " + id);
                 List<Block> blocks = id.equals(remoteId) ? heavier : lighter;
                 return P2PMessage.newNormalMessage(id.equals(remoteId) ? remote.getId() : overstated.getId(),
-                        protocol, syncResponse(protocol, request, blocks)).serialize();
+                        protocol, syncResponse(protocol, request, blocks));
             }).when(net).sendSyncRequest(anyString(), any(), any(), anyInt());
 
             SmartSyncTrigger trigger = new SmartSyncTrigger(net, () -> 100_000L);
@@ -142,16 +152,27 @@ class ChainWorkSyncTest {
                 assertEquals(2, progress.targetHeight());
                 assertEquals(2, progress.verifiedBlocks());
                 assertArrayEquals(target.getHash(), chain.getMainLatestBlock().getHash());
+                assertArrayEquals(target.getHash(),
+                        database.get(TableEnum.CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+                assertArrayEquals(target.getHash(), database.get(TableEnum.HEIGHT_TO_HASH, target.getHeight()));
+                if (localHeight > target.getHeight()) {
+                    assertNull(database.get(TableEnum.HEIGHT_TO_HASH, localHeight));
+                }
+                chain.init();
+                var restored = chain.getMainTipSnapshot();
+                assertArrayEquals(target.getHash(), restored.hash());
+                assertEquals(target.getHeight(), restored.height());
+                assertEquals(target.getChainWork(), restored.chainWork());
                 if (automatic) {
-                    assertTrue(progress.recentErrors().stream().anyMatch(error -> error.contains("do not exceed local cumulative work")));
-                    verify(net, never()).sendSyncRequest(eq(overstatedId), eq(ProtocolEnum.P2P_Query_Block_By_Hash), any(), anyInt());
+                    assertTrue(progress.recentErrors().stream()
+                            .anyMatch(error -> error.contains("do not exceed local cumulative work")));
+                    verify(net, never()).sendSyncRequest(eq(overstatedId), eq(ProtocolEnum.P2P_Query_Block_By_Hash),
+                            any(), anyInt());
                 }
             } finally {
                 trigger.stop();
                 net.shutdown();
             }
-        } finally {
-            BlockChainServiceImpl.mainTipBlock = previousTip;
         }
     }
 
@@ -159,7 +180,6 @@ class ChainWorkSyncTest {
     @EnumSource(InvalidHeader.class)
     void retriesRejectedBatchFromLastAcceptedForkHeader(InvalidHeader invalid) throws Exception {
         ParamsConfig.Params params = ParamsConfig.RegressionNetParams;
-        Block previousTip = BlockChainServiceImpl.mainTipBlock;
         try (RocksDb database = new RocksDb()) {
             BlockChainServiceImpl chain = initChain(database, params);
             Block genesis = chain.getMainLatestBlock();
@@ -204,7 +224,7 @@ class ChainWorkSyncTest {
                     payload = syncResponse(protocol, request, fork);
                 }
                 return P2PMessage.newNormalMessage(id.equals(healthyId) ? healthy.getId() : faulty.getId(),
-                        protocol, payload).serialize();
+                        protocol, payload);
             }).when(net).sendSyncRequest(anyString(), any(), any(), anyInt());
 
             try {
@@ -224,12 +244,152 @@ class ChainWorkSyncTest {
             } finally {
                 net.shutdown();
             }
-        } finally {
-            BlockChainServiceImpl.mainTipBlock = previousTip;
         }
     }
 
-    private enum InvalidHeader { WRONG_TIP, WRONG_DIFFICULTY, MEDIAN_TIME, FUTURE_TIME }
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void limitsUnverifiedDownloadsUntilDelayedBlockArrives(boolean headersFirst) throws Exception {
+        int window = 128;
+        try (RocksDb database = new RocksDb()) {
+            ParamsConfig.Params params = ParamsConfig.RegressionNetParams;
+            BlockChainServiceImpl chain = initChain(database, params);
+            List<Block> blocks = branch(chain.getMainLatestBlock(), params, 1, window + 2);
+            Block tip = blocks.getLast();
+            Peer remote = peer(1, tip.getHeight(), tip.getChainWork().toBigInteger().longValueExact());
+            remote.setHashHex(bytesToHex(tip.getHash()));
+            NetServiceImpl net = syncService(chain, remote);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            doAnswer(call -> {
+                ProtocolEnum protocol = call.getArgument(1);
+                byte[] request = call.getArgument(2);
+                if ((protocol == ProtocolEnum.P2P_Query_Block_By_Hash
+                        && Arrays.equals(request, blocks.get(1).getHash()))
+                        || (protocol == ProtocolEnum.P2P_Query_Block_By_Height
+                                && ByteBuffer.wrap(request).getInt() == 1)) {
+                    assertTrue(releaseFirst.await(30, TimeUnit.SECONDS));
+                }
+                return P2PMessage.newNormalMessage(remote.getId(), protocol, syncResponse(protocol, request, blocks));
+            }).when(net).sendSyncRequest(anyString(), any(), any(), anyInt());
+
+            try {
+                Future<?> sync = startSync(net, headersFirst);
+                await().atMost(Duration.ofSeconds(20)).until(() -> {
+                    SyncProgress progress = net.getSyncProgress();
+                    return progress.downloadedBlocks() >= window - 1 && progress.inFlightBlocks() == 1;
+                });
+                SyncProgress waiting = net.getSyncProgress();
+                assertEquals(0, waiting.verifiedBlocks());
+                assertEquals(window - 1, waiting.downloadedBlocks());
+
+                releaseFirst.countDown();
+                sync.get(30, TimeUnit.SECONDS);
+                SyncProgress completed = net.getSyncProgress();
+                assertEquals("COMPLETED", completed.status(), completed.message());
+                assertEquals(tip.getHeight(), completed.verifiedBlocks());
+                assertArrayEquals(tip.getHash(), chain.getMainLatestBlock().getHash());
+            } finally {
+                releaseFirst.countDown();
+                net.shutdown();
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void nextPeerSuppliesBlockWhenFirstPeerStopsResponding(boolean headersFirst) throws Exception {
+        try (RocksDb database = new RocksDb()) {
+            ParamsConfig.Params params = ParamsConfig.RegressionNetParams;
+            BlockChainServiceImpl chain = initChain(database, params);
+            List<Block> blocks = branch(chain.getMainLatestBlock(), params, 1, 1);
+            Block tip = blocks.getLast();
+            Peer first = peer(1, 1, tip.getChainWork().toBigInteger().longValueExact());
+            first.setHashHex(bytesToHex(tip.getHash()));
+            Peer second = peer(2, 1, tip.getChainWork().toBigInteger().longValueExact());
+            second.setChainTip(first.chainTip());
+            NetServiceImpl net = syncService(chain, first, second);
+            ProtocolEnum bodyRequest = headersFirst
+                    ? ProtocolEnum.P2P_Query_Block_By_Hash
+                    : ProtocolEnum.P2P_Query_Block_By_Height;
+            List<String> attempted = new ArrayList<>();
+            doAnswer(call -> {
+                String id = call.getArgument(0);
+                ProtocolEnum protocol = call.getArgument(1);
+                if (protocol == bodyRequest) {
+                    attempted.add(id);
+                    if (attempted.size() == 1) {
+                        return null;
+                    }
+                }
+                Peer sender = id.equals(bytesToHex(first.getId())) ? first : second;
+                return P2PMessage.newNormalMessage(sender.getId(), protocol,
+                        syncResponse(protocol, call.getArgument(2), blocks));
+            }).when(net).sendSyncRequest(anyString(), any(), any(), anyInt());
+
+            try {
+                startSync(net, headersFirst).get(10, TimeUnit.SECONDS);
+                SyncProgress progress = net.getSyncProgress();
+                assertEquals("COMPLETED", progress.status(), progress.message());
+                assertEquals(2, attempted.size());
+                assertNotEquals(attempted.getFirst(), attempted.getLast());
+                assertEquals(1, progress.verifiedBlocks());
+                assertEquals(1, progress.peers().stream().filter(p -> p.peerId().equals(attempted.getFirst()))
+                        .findFirst().orElseThrow().failedRequests());
+                assertArrayEquals(tip.getHash(), chain.getMainLatestBlock().getHash());
+            } finally {
+                net.shutdown();
+            }
+        }
+    }
+
+    @Test
+    void chainTipSnapshotIsStableAndDefensivelyCopied() {
+        try (RocksDb database = new RocksDb()) {
+            BlockChainServiceImpl chain = initChain(database, ParamsConfig.RegressionNetParams);
+            var previous = chain.getMainTipSnapshot();
+            byte[] exposedHash = previous.hash();
+            exposedHash[0] ^= 1;
+            Block exposedBlock = chain.getMainLatestBlock();
+            exposedBlock.setHeight(99);
+            exposedBlock.getHash()[0] ^= 1;
+
+            assertEquals(0, chain.getMainTipSnapshot().height());
+            assertArrayEquals(chain.getMainLatestBlock().getHash(), chain.getMainTipSnapshot().hash());
+
+            Block candidate = branch(chain.getMainLatestBlock(), ParamsConfig.RegressionNetParams, 1, 1).getLast();
+            byte[] expectedHash = candidate.getHash().clone();
+            assertTrue(chain.verifyBlock(candidate));
+            candidate.setHeight(99);
+            candidate.getHash()[0] ^= 1;
+            assertEquals(1, chain.getMainTipSnapshot().height());
+            assertArrayEquals(expectedHash, chain.getMainTipSnapshot().hash());
+            assertEquals(0, previous.height());
+            assertArrayEquals(BlockChainServiceImpl.createGenesisBlock(ParamsConfig.RegressionNetParams).getHash(),
+                    previous.hash());
+        }
+    }
+
+    private static NetServiceImpl syncService(BlockChainServiceImpl chain, Peer... peers) {
+        RoutingTable routing = mock(RoutingTable.class);
+        when(routing.getOnlineNodes()).thenReturn(List.of(peers));
+        NetServiceImpl net = spy(new NetServiceImpl());
+        ReflectionTestUtils.setField(net, "routingTable", routing);
+        ReflectionTestUtils.setField(net, "blockChainService", chain);
+        return net;
+    }
+
+    private static Future<?> startSync(NetServiceImpl net, boolean headersFirst) {
+        if (headersFirst) {
+            net.startSyncBlockHeadersFirst();
+        } else {
+            net.startSyncBlock();
+        }
+        return (Future<?>) ReflectionTestUtils.getField(net, "currentSyncTask");
+    }
+
+    private enum InvalidHeader {
+        WRONG_TIP, WRONG_DIFFICULTY, MEDIAN_TIME, FUTURE_TIME
+    }
 
     private static byte[] rejectedBatch(List<Block> fork, InvalidHeader invalid) {
         int height = invalid == InvalidHeader.WRONG_TIP ? fork.getLast().getHeight() : 3;
@@ -244,14 +404,97 @@ class ChainWorkSyncTest {
             case MEDIAN_TIME -> header.setTime(fork.get(1).getBlockHeader().getTime());
             case FUTURE_TIME -> header.setTime(System.currentTimeMillis() / 1000 + 86400);
         }
-        while (!header.verifyProofOfWork(false)) header.setNonce(header.getNonce() + 1);
+        while (!header.verifyProofOfWork(false)) {
+            header.setNonce(header.getNonce() + 1);
+        }
         entries.add(new BlockHeadersPayload.Entry(height, header));
         return BlockHeadersPayload.serializeResponse(entries);
     }
 
+    @Test
+    void restartKeepsEqualWorkTipAndWaitingBlocksReenterForkChoiceWhenTheirParentArrives() {
+        var params = ParamsConfig.RegressionNetParams;
+        try (var database = new RocksDb()) {
+            BlockChainServiceImpl chain = initChain(database, params);
+            Block genesis = chain.getMainLatestBlock();
+            Block incumbent = branch(genesis, params, 8, 1).getLast();
+            List<Block> fork = branch(genesis, params, 1, 3);
+            assertTrue(chain.verifyBlock(incumbent));
+            fork.get(1).setChainWork(UInt256.fromLong(1_000_000));
+            assertTrue(chain.verifyBlock(fork.get(1)));
+            assertArrayEquals(incumbent.getHash(), chain.getMainTipSnapshot().hash());
+            chain.init();
+            assertArrayEquals(incumbent.getHash(), chain.getMainTipSnapshot().hash());
+
+            assertFalse(chain.verifyBlock(fork.get(3)));
+            assertFalse(chain.hasFullBlock(fork.get(3).getHash()));
+            assertArrayEquals(incumbent.getHash(), chain.getMainTipSnapshot().hash());
+            assertTrue(chain.verifyBlock(fork.get(2)));
+            assertArrayEquals(fork.get(3).getHash(), chain.getMainTipSnapshot().hash());
+            assertEquals(fork.get(3).getChainWork(), chain.getMainTipSnapshot().chainWork());
+            assertTrue(chain.getOrphanBlocks().isEmpty());
+        }
+    }
+
+    @Test
+    void startupActivatesStoredHeavierForkThenAcceptsItsHeaderOnlyChild() {
+        var params = retargetParams();
+        try (var database = new RocksDb(); var forkDatabase = new RocksDb()) {
+            BlockChainServiceImpl chain = initChain(database, params);
+            BlockChainServiceImpl fork = initChain(forkDatabase, params, directory.resolve("fork"));
+            Block genesis = chain.getMainLatestBlock();
+            List<Block> local = branch(genesis, params, 8, 3);
+            for (Block block : local.subList(1, local.size())) {
+                assertTrue(chain.verifyBlock(block));
+            }
+            List<Block> heavier = branch(genesis, params, 1, 3);
+            for (Block block : heavier.subList(1, 3)) {
+                assertTrue(fork.verifyBlock(block));
+                // 模拟旧库已验证并保存分支，而 UTXO 和高度索引仍属于较轻链。
+                for (TableEnum table : List.of(TableEnum.TBLOCK_HEADER, TableEnum.TBLOCK_BODY, TableEnum.BLOCK_UNDO,
+                        TableEnum.HASH_TO_HEIGHT, TableEnum.HASH_TO_CHAIN_WORK)) {
+                    database.insert(table, block.getHash(), forkDatabase.get(table, block.getHash()));
+                }
+            }
+            Block winner = heavier.get(2);
+            Block headerOnly = heavier.get(3);
+            assertTrue(fork.addBlockHeaderToStore(headerOnly.getBlockHeader(), 3, headerOnly.getChainWork()));
+            for (TableEnum table : List.of(TableEnum.TBLOCK_HEADER, TableEnum.HASH_TO_HEIGHT, TableEnum.HASH_TO_CHAIN_WORK)) {
+                database.insert(table, headerOnly.getHash(), forkDatabase.get(table, headerOnly.getHash()));
+            }
+            assertArrayEquals(local.getLast().getHash(), chain.getMainTipSnapshot().hash());
+            database.close();
+            chain = initChain(database, params);
+
+            assertArrayEquals(winner.getHash(), chain.getMainLatestBlock().getHash());
+            assertEquals(2, chain.getMainTipSnapshot().height());
+            assertEquals(winner.getChainWork(), chain.getMainTipSnapshot().chainWork());
+            assertArrayEquals(winner.getHash(), database.get(TableEnum.CHAIN, BlockChainServiceImpl.MAIN_CHAIN_TIP_HASH_KEY));
+            assertNull(database.get(TableEnum.HEIGHT_TO_HASH, 3));
+            assertNull(database.get(TableEnum.TUTXO, local.getLast().getUTXOs().getFirst().getKey()));
+            assertNotNull(database.get(TableEnum.TUTXO, winner.getUTXOs().getFirst().getKey()));
+            assertNull(database.get(TableEnum.TBLOCK_BODY, headerOnly.getHash()));
+
+            assertTrue(chain.verifyBlock(headerOnly));
+            assertArrayEquals(headerOnly.getHash(), chain.getMainTipSnapshot().hash());
+            assertArrayEquals(headerOnly.getHash(), database.get(TableEnum.HEIGHT_TO_HASH, 3));
+        }
+    }
+
+    private static ParamsConfig.Params retargetParams() {
+        ParamsConfig.Params regtest = ParamsConfig.RegressionNetParams;
+        return new ParamsConfig.Params(regtest.getName(), regtest.getNet(), regtest.getDefaultPort(),
+                regtest.getGenesisHash(), regtest.getPowLimit(), regtest.getPowLimitBits(), false, 10, 150,
+                Duration.ofSeconds(8), Duration.ofSeconds(4), 4, false, Duration.ZERO);
+    }
+
     private BlockChainServiceImpl initChain(RocksDb database, ParamsConfig.Params params) {
+        return initChain(database, params, directory.resolve("chain"));
+    }
+
+    private BlockChainServiceImpl initChain(RocksDb database, ParamsConfig.Params params, Path path) {
         SystemConfig config = spy(new SystemConfig());
-        config.setPath(directory.resolve("chain").toString());
+        config.setPath(path.toString());
         doReturn(params).when(config).getParams();
         assertTrue(database.createDatabase(config));
         BlockChainServiceImpl chain = new BlockChainServiceImpl();
@@ -274,11 +517,14 @@ class ChainWorkSyncTest {
                     .filter(block -> Arrays.equals(block.getHash(), hash)).findFirst().orElseThrow());
             Block block = new Block();
             block.setHeight(i);
-            block.setTransactions(List.of(BlockChainServiceImpl.createCoinBaseTransaction("1".repeat(32), i, 0, params)));
+            block.setTransactions(
+                    List.of(BlockChainServiceImpl.createCoinBaseTransaction("1".repeat(32), i, 0, params)));
             block.setTxCount(1);
             BlockHeader header = new BlockHeader(1, parent.getHash(),
                     BlockChainServiceImpl.calculateMerkleRoot(block.getTransactions()), time, bits, 0);
-            while (!header.verifyProofOfWork(false)) header.setNonce(header.getNonce() + 1);
+            while (!header.verifyProofOfWork(false)) {
+                header.setNonce(header.getNonce() + 1);
+            }
             block.setBlockHeader(header);
             block.setChainWork(UInt256.fromBigInteger(parent.getChainWork().toBigInteger().add(header.getWork())));
             blocks.add(block);
@@ -294,7 +540,8 @@ class ChainWorkSyncTest {
             case P2P_Query_Block_Headers -> {
                 BlockHeadersPayload.Request range = BlockHeadersPayload.deserializeRequest(request);
                 yield BlockHeadersPayload.serializeResponse(blocks.subList(range.startHeight(), range.stopHeight() + 1)
-                        .stream().map(block -> new BlockHeadersPayload.Entry(block.getHeight(), block.getBlockHeader())).toList());
+                        .stream().map(block -> new BlockHeadersPayload.Entry(block.getHeight(), block.getBlockHeader()))
+                        .toList());
             }
             case P2P_Query_Block_By_Hash -> blocks.stream().filter(block -> Arrays.equals(block.getHash(), request))
                     .findFirst().orElseThrow().serialize();

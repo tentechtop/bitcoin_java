@@ -19,7 +19,7 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "index", "value","script","coinbase","height"})  // 按指定顺序输出
+@JsonPropertyOrder({ "txId", "index", "value", "script", "coinbase", "height" })  // 按指定顺序输出
 public class UTXO {
     //..............................核心字段..................................
 
@@ -58,12 +58,11 @@ public class UTXO {
     @JsonIgnore
     private WeakReference<Script> scriptPubKeyWk;
 
-
     @JsonIgnore
     public WeakReference<Script> getScriptPubKeyWk() {
         if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
             try {
-                log.debug("打印公钥{} 长度{}",bytesToHex(script),script.length);
+                log.debug("打印公钥{} 长度{}", bytesToHex(script), script.length);
                 Script deserialized = Script.deserialize(script);
                 scriptPubKeyWk = new WeakReference<>(deserialized);
             } catch (IOException e) {
@@ -73,11 +72,10 @@ public class UTXO {
         return scriptPubKeyWk;
     }
 
-
     public String getScriptPubKeyString() {
         WeakReference<Script> scriptPubKeyWk1 = getScriptPubKeyWk();
         Script script = scriptPubKeyWk1.get();
-        if (script==null){
+        if (script == null) {
             return "";
         }
         return script.toString();
@@ -91,17 +89,15 @@ public class UTXO {
 
     private String statusStr;
 
-    public String getStatusStr(){
+    public String getStatusStr() {
         return UTXOStatusResolver.toString(status);
     }
-
 
     // 常量定义
     public static final int TX_ID_LENGTH = 32;         // 交易ID长度
     public static final int SCRIPT_LENGTH = 20;        // 锁定脚本长度
     public static final int SERIALIZED_LENGTH = 69;    // 核心字段序列化总长度: 32+4+8+1+4+20=69字节
     public static final int WITH_STATUS_LENGTH = 73;   // 包含状态字段长度: 69+4=73字节
-
 
     /**
      * 验证核心字段长度
@@ -138,8 +134,8 @@ public class UTXO {
             }
             dos.close();
             return baos.toByteArray();
-        }catch (Exception e){
-            throw new IllegalArgumentException("序列化失败",e);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("序列化失败", e);
         }
     }
 
@@ -166,7 +162,10 @@ public class UTXO {
         dis.readFully(heightBytes);
         utxo.setHeight(com.bit.coin.utils.SerializeUtils.littleEndianToInt(heightBytes));
         long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
-        if (scriptPubKeyLength < 1 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES || scriptPubKeyLength > dis.available()) throw new IOException("Invalid UTXO script length");
+        if (scriptPubKeyLength < 1 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES
+                || scriptPubKeyLength > dis.available()) {
+            throw new IOException("Invalid UTXO script length");
+        }
         if (scriptPubKeyLength > 0) {
             byte[] scriptSig = new byte[(int) scriptPubKeyLength];
             dis.readFully(scriptSig);
@@ -183,15 +182,17 @@ public class UTXO {
      * @return UTXO对象
      * @throws IOException 如果发生I/O错误
      */
-    public static UTXO deserialize(byte[] data)  {
+    public static UTXO deserialize(byte[] data) {
         try {
             ByteArrayInputStream bais = new ByteArrayInputStream(data);
             DataInputStream dis = new DataInputStream(bais);
             UTXO utxo = deserialize(dis);
-            if (dis.available() != 0) throw new IOException("Trailing UTXO data");
+            if (dis.available() != 0) {
+                throw new IOException("Trailing UTXO data");
+            }
             dis.close();
             return utxo;
-        }catch (Exception e){
+        } catch (Exception e) {
             throw new IllegalStateException("Corrupt UTXO record", e);
         }
     }
@@ -240,11 +241,11 @@ public class UTXO {
         return utxo;
     }
 
-
     //获取KEY [交易ID][索引]
     @JsonIgnore
     public byte[] getKey() {
-        return com.bit.coin.utils.SerializeUtils.concat(txId, com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
+        return com.bit.coin.utils.SerializeUtils.concat(txId,
+                com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
     }
 
     @JsonIgnore
@@ -254,22 +255,20 @@ public class UTXO {
 
     @JsonIgnore
     public static byte[] getKey(byte[] txId1, int index) {
-        return com.bit.coin.utils.SerializeUtils.concat(txId1, com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
+        return com.bit.coin.utils.SerializeUtils.concat(txId1,
+                com.bit.coin.utils.SerializeUtils.intToLittleEndian(index));
     }
 
     @JsonIgnore
     public static String getKeyStr(byte[] txId1, int index) {
-        return bytesToHex(getKey(txId1,index));
+        return bytesToHex(getKey(txId1, index));
     }
-
-
 
     //获取地址索引 [地址][交易ID][索引]
     @JsonIgnore
     public byte[] getAddressKey() {
-        return com.bit.coin.utils.SerializeUtils.concat(script,getKey());
+        return com.bit.coin.utils.SerializeUtils.concat(script, getKey());
     }
-
 
     //克隆
     public UTXO clone() {

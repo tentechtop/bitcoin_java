@@ -22,7 +22,7 @@ import java.util.Arrays;
 public class MockApi {
 
     @GetMapping("/sendMock")
-    public Transaction sendMock()  {
+    public Transaction sendMock() {
         NetworkParameters params = MainNetParams.get();
 
         // 1. 创建密钥对
@@ -32,7 +32,6 @@ public class MockApi {
         // 2. 创建P2PKH锁定脚本
         Address address = LegacyAddress.fromKey(params, key);
         Script lockingScript = ScriptBuilder.createOutputScript(address);
-
 
         System.out.println("\n=== 锁定脚本 (scriptPubKey) ===");
         System.out.println("地址: " + address);
@@ -72,8 +71,7 @@ public class MockApi {
                 0,
                 lockingScript,
                 Transaction.SigHash.ALL,
-                false
-        );
+                false);
 
         System.out.println("\n签名哈希: " + sigHash.toString());
 
@@ -82,11 +80,10 @@ public class MockApi {
         TransactionSignature txSig = new TransactionSignature(
                 ecdsaSig,
                 Transaction.SigHash.ALL,
-                false
-        );
+                false);
 
         byte[] bytes = txSig.encodeToBitcoin();
-        System.out.println("数组长度{}"+bytes.length);
+        System.out.println("数组长度{}" + bytes.length);
         byte[] pubKey = key.getPubKey();
 
         // 7. 创建解锁脚本 (包含签名和公钥)
@@ -106,7 +103,7 @@ public class MockApi {
         spendingTx.replaceInput(0, input);
 
         Sha256Hash txId = spendingTx.getTxId();
-        System.out.println("交易ID"+txId);
+        System.out.println("交易ID" + txId);
 
         // 9. 测试脚本执行
         System.out.println("\n=== 脚本执行测试 ===");

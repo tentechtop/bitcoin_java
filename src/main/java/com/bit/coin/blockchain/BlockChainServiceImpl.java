@@ -9,7 +9,6 @@ import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
 import com.bit.coin.estimate.FeeEstimate;
 
-
 import com.bit.coin.p2p.kad.RoutingTable;
 import com.bit.coin.structure.block.Block;
 import com.bit.coin.structure.block.BlockBody;
@@ -42,19 +41,19 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-
-import static com.bit.coin.database.rocksDb.RocksDb.bytesToInt;
 import static com.bit.coin.database.rocksDb.TableEnum.*;
 import static com.bit.coin.structure.block.BlockHeader.convertTargetToBits;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.CONFIRMED_UNSPENT;
 import static com.bit.coin.structure.tx.UTXOStatusResolver.setLifecycleStatus;
 import static com.bit.coin.utils.SerializeUtils.*;
 
-
-
+/**
+ * 协调区块头和区块体的接收、链状态存储、内存缓存及交易池。
+ * {@link BlockchainManager} 负责选链和发布链尖；本服务在提交成功后协调缓存、交易池和广播。
+ */
 @Slf4j
 @Service
-public class BlockChainServiceImpl implements BlockChainService{
+public class BlockChainServiceImpl implements BlockChainService {
 
     @Autowired
     private SystemConfig config;
@@ -65,19 +64,15 @@ public class BlockChainServiceImpl implements BlockChainService{
     @Autowired
     private TxPool txPool;
 
-
-
     @Autowired
     private RoutingTable routingTable;
 
-
-    public static volatile Block mainTipBlock = null;
+    private volatile BlockchainManager blockchainManager;
 
     //主链顶端高度 key
     public static final byte[] MAIN_CHAIN_TIP_HEIGHT_KEY = "MAIN_CHAIN_TIP_HEIGHT_KEY".getBytes(StandardCharsets.UTF_8);
     //主链顶端Hash
     public static final byte[] MAIN_CHAIN_TIP_HASH_KEY = "MAIN_CHAIN_TIP_HASH_KEY".getBytes(StandardCharsets.UTF_8);
-
 
     //咖啡因交易缓存 缓存20000笔交易 查询时先查询缓存 缓存中没有再查询交易
     private final Cache<String, Transaction> TransactionCache = Caffeine.newBuilder()
@@ -87,54 +82,54 @@ public class BlockChainServiceImpl implements BlockChainService{
             .recordStats()
             .build();
 
-
-
     private volatile boolean stateHealthy;
-    private final AtomicLong acceptedBlocks = new AtomicLong(), rejectedBlocks = new AtomicLong(), reorganizations = new AtomicLong();
-    public long acceptedBlocks() { return acceptedBlocks.get(); }
-    public long rejectedBlocks() { return rejectedBlocks.get(); }
-    public long reorganizations() { return reorganizations.get(); }
+    private final AtomicLong acceptedBlocks = new AtomicLong(), rejectedBlocks = new AtomicLong(),
+            reorganizations = new AtomicLong();
+
+    public long acceptedBlocks() {
+        return acceptedBlocks.get();
+    }
+
+    public long rejectedBlocks() {
+        return rejectedBlocks.get();
+    }
+
+    public long reorganizations() {
+        return reorganizations.get();
+    }
+
     public long medianBeforeHeight(int sourceHeight) {
         Block ancestor = getHeaderContext(dataBase.get(HEIGHT_TO_HASH, Math.max(0, sourceHeight - 1)));
-        if (ancestor == null) throw new IllegalStateException("Missing relative-lock ancestry");
+        if (ancestor == null) {
+            throw new IllegalStateException("Missing relative-lock ancestry");
+        }
         return ConsensusRules.medianTime(ancestor, this::getHeaderContext);
     }
 
     @Autowired
     private UTXOCache utxoCache;
 
-    public String getNetworkName() { return config.getParams().getName(); }
+    public String getNetworkName() {
+        return config.getParams().getName();
+    }
 
-    public boolean isStateHealthy() { return stateHealthy; }
+    public boolean isStateHealthy() {
+        return stateHealthy;
+    }
+
+    public ChainTipSnapshot getMainTipSnapshot() {
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getMainTipSnapshot();
+    }
 
     @PostConstruct
     public synchronized void init() {
-        mainTipBlock = null;
-        Block genesis = createGenesisBlock(config.getParams());
-        byte[] existing = dataBase.get(HEIGHT_TO_HASH, 0);
-        if (existing == null) {
-            new ChainStateStore(dataBase, this::getBlockByHash).initialize(genesis, config.getParams());
-            mainTipBlock = genesis;
-        } else {
-            byte[] revision = dataBase.get(CHAIN, ChainStateStore.REVISION_KEY);
-            if (revision == null || revision.length != 4 || bytesToInt(revision) != ConsensusRules.REVISION) {
-                throw new IllegalStateException("Database uses an incompatible consensus revision. Preserve it and rebuild into a new data directory; see docs/OPERATIONS.md");
-            }
-            if (!Arrays.equals(existing, genesis.getHash())) throw new IllegalStateException("Database genesis mismatch");
-            byte[] hash = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HASH_KEY);
-            byte[] height = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-            Block tip = hash == null ? null : getBlockByHash(hash);
-            if (tip == null || height == null || height.length != 4 || tip.getHeight() != bytesToInt(height)
-                    || !Arrays.equals(dataBase.get(HEIGHT_TO_HASH, tip.getHeight()), hash)) {
-                throw new IllegalStateException("Inconsistent chain tip; restore or reindex before starting");
-            }
-            UtxoTransition.deserialize(dataBase.get(BLOCK_UNDO, hash));
-            mainTipBlock = tip;
-        }
+        stateHealthy = false;
+        blockchainManager = BlockchainManager.open(new ChainStateStore(dataBase, this::getBlockByHash), config.getParams());
         stateHealthy = true;
     }
 
-    //孤块缓存: previousHash -> 等待处理的区块列表
+    // 按孤块自身哈希暂存，待父块到达后重新验证。
     private final Cache<String, Block> orphanBlocks = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .initialCapacity(100)
@@ -145,14 +140,12 @@ public class BlockChainServiceImpl implements BlockChainService{
             .build();
 
     public boolean hasBlockBody(byte[] hash) {
-        return hash != null && hash.length == 32 && dataBase.get(TBLOCK_BODY, hash) != null;
+        return hasFullBlock(hash);
     }
 
     public UInt256 getChainWorkByHash(byte[] hash) {
-        if (hash == null || hash.length != 32) {
-            return UInt256.ZERO;
-        }
-        return UInt256.fromBytes(dataBase.get(HASH_TO_CHAIN_WORK, hash));
+        Block context = getHeaderContext(hash);
+        return context == null ? UInt256.ZERO : context.getChainWork();
     }
 
     public BlockHeader getBlockHeaderByHeight(int height) {
@@ -166,69 +159,70 @@ public class BlockChainServiceImpl implements BlockChainService{
         return getBlockHeaderByHash(hash);
     }
 
-    /** Resolve header-only ancestors without trusting a remote height or cumulative-work claim. */
+    /** 追溯仅有区块头的祖先区块时，使用本地记录的高度和累计工作量。 */
     public Block getHeaderContext(byte[] hash) {
-        BlockHeader header = getBlockHeaderByHash(hash);
-        if (header == null) return null;
-        byte[] height = dataBase.get(HASH_TO_HEIGHT, hash);
-        byte[] work = dataBase.get(HASH_TO_CHAIN_WORK, hash);
-        if (height == null || height.length != 4 || work == null || work.length != 32)
-            throw new IllegalStateException("Missing header context");
-        Block context = new Block();
-        context.setHash(hash); context.setBlockHeader(header);
-        context.setHeight(java.nio.ByteBuffer.wrap(height).getInt());
-        context.setChainWork(UInt256.fromBytes(work));
-        return context;
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getHeaderContext(hash);
     }
 
+    /** 校验父头、难度和累计工作量后保存区块头，供同步时先行验证头链。 */
     public synchronized boolean addBlockHeaderToStore(BlockHeader header, int height, UInt256 claimedWork) {
-        if (!stateHealthy || header == null || height < 1 || claimedWork == null) return false;
+        if (!stateHealthy || header == null || height < 1 || claimedWork == null) {
+            return false;
+        }
         try {
+            header = BlockHeader.deserialize(header.serialize());
             Block parent = getHeaderContext(header.getPreviousHash());
             if (parent == null || height != Math.addExact(parent.getHeight(), 1)
-                    || header.getBits() != ConsensusRules.expectedBits(parent, header.getTime(), config.getParams(), this::getHeaderContext)
+                    || header.getBits() != ConsensusRules.expectedBits(parent, header.getTime(), config.getParams(),
+                            this::getHeaderContext)
                     || header.getTime() <= ConsensusRules.medianTime(parent, this::getHeaderContext)
                     || header.getTime() > System.currentTimeMillis() / 1000 + 7200
-                    || !header.verifyProofOfWork(false)) return false;
-            BigInteger totalWork = parent.getChainWork().toBigInteger().add(header.getWork());
-            if (totalWork.bitLength() > 256) return false;
-            UInt256 work = UInt256.fromBigInteger(totalWork);
-            if (!work.equals(claimedWork)) return false;
-            byte[] hash = header.calculateHash();
-            if (dataBase.get(TBLOCK_HEADER, hash) != null) return true;
-            List<RocksDb.DbOperation> operations = List.of(
-                    new RocksDb.DbOperation(TBLOCK_HEADER, hash, header.serialize(), RocksDb.DbOperation.OpType.INSERT),
-                    new RocksDb.DbOperation(HASH_TO_HEIGHT, hash, RocksDb.intToBytes(height), RocksDb.DbOperation.OpType.INSERT),
-                    new RocksDb.DbOperation(HASH_TO_CHAIN_WORK, hash, work.toBytes(), RocksDb.DbOperation.OpType.INSERT));
-            if (!dataBase.dataTransaction(operations)) {
-                stateHealthy = false;
-                throw new IllegalStateException("Header commit failed");
+                    || !header.verifyProofOfWork(false)) {
+                return false;
             }
-            return true;
-        } catch (IllegalArgumentException invalid) { return false; }
+            return blockchainManager.acceptHeader(header, height, claimedWork);
+        } catch (IllegalStateException storageFailure) {
+            stateHealthy = false;
+            throw storageFailure;
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
     }
 
     /**
-     * 执行链重组（Reorganization）
-     * 核心优化：所有数据库操作合并到同一个原子事务中执行，保证链重组的原子性
+     * 接收并验证完整区块，再根据累计工作量决定是否切换主链。
+     * 固化输入快照后委托链状态存储准备并原子提交数据库变更；提交成功后再协调缓存、交易池和广播。
+     * 提交后的内存协调失败会将节点标记为不健康，避免把已落库的区块误认为回滚。
      */
     public synchronized boolean verifyBlock(Block block) {
-        if (!stateHealthy || block == null || block.getBlockHeader() == null) return false;
+        if (!stateHealthy || block == null || block.getBlockHeader() == null) {
+            return false;
+        }
         ChainStateStore.Accepted accepted;
         try {
             if (block.getTransactions() == null || block.getTransactions().isEmpty()
                     || block.getTransactions().size() > ConsensusRules.MAX_BLOCK_TRANSACTIONS
-                    || block.serialize().length > ConsensusRules.MAX_BLOCK_BYTES) return false;
-            // Freeze the caller's mutable object and reject noncanonical wire encodings before committing.
+                    || block.serialize().length > ConsensusRules.MAX_BLOCK_BYTES) {
+                return false;
+            }
+            // 提交前对调用方传入的可变对象取快照，并拒绝不符合规范的传输编码。
             block = Block.deserialize(block.serialize());
-            if (!block.getBlockHeader().verifyProofOfWork(false)) return false;
-            if (hasFullBlock(block.getHash())) return true;
+            if (!block.getBlockHeader().verifyProofOfWork(false)) {
+                return false;
+            }
+            if (hasFullBlock(block.getHash())) {
+                return true;
+            }
             if (isMissingParentBlock(block)) {
-                if (ConsensusRules.target(block.getBlockHeader().getBits()).compareTo(ConsensusRules.target((int) config.getParams().getPowLimitBits())) > 0) return false;
+                if (ConsensusRules.target(block.getBlockHeader().getBits())
+                        .compareTo(ConsensusRules.target((int) config.getParams().getPowLimitBits())) > 0) {
+                    return false;
+                }
                 addOrphanBlock(block);
                 return false;
             }
-            accepted = new ChainStateStore(dataBase, this::getBlockByHash).accept(block, mainTipBlock, config.getParams());
+            accepted = blockchainManager.accept(block);
         } catch (ChainStateLimitException resourceLimit) {
             rejectedBlocks.incrementAndGet();
             log.debug("Rejected block exceeding local processing limits: {}", resourceLimit.getMessage());
@@ -244,11 +238,12 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
         acceptedBlocks.incrementAndGet();
         if (accepted.mainChanged()) {
-            if (!accepted.disconnected().isEmpty()) reorganizations.incrementAndGet();
-            mainTipBlock = block;
+            if (!accepted.disconnected().isEmpty()) {
+                reorganizations.incrementAndGet();
+            }
             TransactionCache.invalidateAll();
             utxoCache.invalidateAll();
-            // Database commit is complete. Cache/mempool failures must never be described as a rolled-back commit.
+            // 数据库已提交，后续缓存或交易池更新失败时，不能误报为提交已回滚。
             try {
                 if (!accepted.disconnected().isEmpty()) {
                     int forkHeight = accepted.disconnected().stream().mapToInt(Block::getHeight).min().orElse(1) - 1;
@@ -256,12 +251,18 @@ public class BlockChainServiceImpl implements BlockChainService{
                 } else {
                     FeeEstimate.advanceHeight(block.getHeight());
                 }
-                for (Block confirmed : accepted.connected()) removeConfirmedTxsFromPool(confirmed);
+                for (Block confirmed : accepted.connected()) {
+                    removeConfirmedTxsFromPool(confirmed);
+                }
                 txPool.revalidate();
                 List<Block> disconnected = new ArrayList<>(accepted.disconnected());
                 Collections.reverse(disconnected);
-                for (Block old : disconnected) for (Transaction tx : old.getTransactions()) {
-                    if (!tx.isCoinbase()) txPool.addTx(tx);
+                for (Block old : disconnected) {
+                    for (Transaction tx : old.getTransactions()) {
+                        if (!tx.isCoinbase()) {
+                            txPool.addTx(tx);
+                        }
+                    }
                 }
             } catch (Exception memoryFailure) {
                 stateHealthy = false;
@@ -288,13 +289,10 @@ public class BlockChainServiceImpl implements BlockChainService{
                 .toList();
     }
 
-
-    // Block lookup helpers used by receive/sync paths.
+    // 接收和同步区块时使用的区块查询方法。
     public boolean hasFullBlock(byte[] hash) {
-        return hash != null
-                && hash.length == 32
-                && getBlockHeaderByHash(hash) != null
-                && hasBlockBody(hash);
+        BlockchainManager manager = blockchainManager;
+        return manager != null && manager.hasFullBlock(hash);
     }
 
     public boolean isMissingParentBlock(Block block) {
@@ -323,6 +321,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     private static class Pair<F, S> {
+
         private final F first;
         private final S second;
 
@@ -348,7 +347,7 @@ public class BlockChainServiceImpl implements BlockChainService{
      */
     private Block findCommonAncestor(Block newChainTip) {
         // 1. 确定查找范围：两条链的最大可能共同高度（取两者中的较小值）
-        int mainChainHeight = mainTipBlock.getHeight();
+        int mainChainHeight = getMainTipSnapshot().height();
         int newChainHeight = newChainTip.getHeight();
         int maxPossibleHeight = Math.min(mainChainHeight, newChainHeight);
 
@@ -411,7 +410,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     private byte[] getBlockHashByHeight(int height) {
-        return dataBase.get(HEIGHT_TO_HASH,height);
+        return dataBase.get(HEIGHT_TO_HASH, height);
     }
 
     private byte[] getHashByHeightFromChain(Block chainTip, long targetHeight) {
@@ -453,28 +452,36 @@ public class BlockChainServiceImpl implements BlockChainService{
         return RocksDb.bytesToInt(dataBase.get(HASH_TO_HEIGHT, hash));
     }
 
-
     private boolean processingOrphans;
+
     private void addOrphanBlock(Block block) {
         orphanBlocks.put(bytesToHex(block.getHash()), block);
     }
+
     private void processOrphanBlocks() {
-        if (processingOrphans) return;
+        // 父块到达后反复扫描：处理一个孤块可能又解锁其子块，直到本轮不再有进展。
+        if (processingOrphans) {
+            return;
+        }
         processingOrphans = true;
         try {
             boolean progressed;
             do {
                 progressed = false;
                 for (Block orphan : List.copyOf(orphanBlocks.asMap().values())) {
-                    if (!hasFullBlock(orphan.getBlockHeader().getPreviousHash())) continue;
+                    if (!hasFullBlock(orphan.getBlockHeader().getPreviousHash())) {
+                        continue;
+                    }
                     orphanBlocks.invalidate(bytesToHex(orphan.getHash()));
-                    if (verifyBlock(orphan)) progressed = true;
+                    if (verifyBlock(orphan)) {
+                        progressed = true;
+                    }
                 }
             } while (progressed);
-        } finally { processingOrphans = false; }
+        } finally {
+            processingOrphans = false;
+        }
     }
-
-
 
     /**
      * 从交易池删除已上链的交易
@@ -498,17 +505,10 @@ public class BlockChainServiceImpl implements BlockChainService{
         txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]), block.getHeight());
     }
 
-
-
-
-
     public Block getMainLatestBlock() {
-        return mainTipBlock;
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getMainLatestBlock();
     }
-
-
-
-
 
     public static Block createGenesisBlock() {
         return createGenesisBlock(ParamsConfig.MainNetParams);
@@ -516,8 +516,9 @@ public class BlockChainServiceImpl implements BlockChainService{
 
     public static Block createGenesisBlock(ParamsConfig.Params params) {
         Transaction coinbase = createGenesisCoinbaseTransaction();
-        coinbase.getInputs().getFirst().setScriptSig(("bitcoin_java/consensus-2/" + params.getName()).getBytes(StandardCharsets.UTF_8));
-        coinbase.getOutputs().getFirst().setValue(0); // No premine to a development wallet.
+        coinbase.getInputs().getFirst()
+                .setScriptSig(("bitcoin_java/consensus-2/" + params.getName()).getBytes(StandardCharsets.UTF_8));
+        coinbase.getOutputs().getFirst().setValue(0); // 不向开发钱包分配预挖奖励。
         coinbase.getOutputs().getFirst().setScriptPubKey(new byte[20]);
         coinbase.setTxId(coinbase.calculateTxId());
         Block genesis = new Block();
@@ -526,8 +527,15 @@ public class BlockChainServiceImpl implements BlockChainService{
         genesis.setTxCount(1);
         BlockHeader header = new BlockHeader(1, new byte[32], calculateMerkleRoot(genesis.getTransactions()),
                 1754287472L, (int) params.getPowLimitBits(), 0);
-        header.setNonce(switch (params.getName()) { case "mainnet" -> 6655; case "testnet3" -> 83708; case "regtest" -> 1; default -> throw new IllegalArgumentException("Unknown network"); });
-        if (!header.verifyProofOfWork(false) || !Arrays.equals(header.calculateHash(), params.getGenesisHash())) throw new IllegalStateException("Genesis vector mismatch");
+        header.setNonce(switch (params.getName()) {
+            case "mainnet" -> 6655;
+            case "testnet3" -> 83708;
+            case "regtest" -> 1;
+            default -> throw new IllegalArgumentException("Unknown network");
+        });
+        if (!header.verifyProofOfWork(false) || !Arrays.equals(header.calculateHash(), params.getGenesisHash())) {
+            throw new IllegalStateException("Genesis vector mismatch");
+        }
         genesis.setBlockHeader(header);
         genesis.setHash(header.calculateHash());
         genesis.setChainWork(UInt256.fromBigInteger(header.getWork()));
@@ -538,7 +546,8 @@ public class BlockChainServiceImpl implements BlockChainService{
         return createCoinBaseTransaction(minerAddress, blockHeight, fee, ParamsConfig.MainNetParams);
     }
 
-    public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee, ParamsConfig.Params params) {
+    public static Transaction createCoinBaseTransaction(String minerAddress, long blockHeight, long fee,
+            ParamsConfig.Params params) {
         // 获取当前时间毫秒数
         long currentTimeMillis = System.nanoTime();
         byte[] timeBytes = longToLittleEndian(currentTimeMillis);
@@ -569,8 +578,10 @@ public class BlockChainServiceImpl implements BlockChainService{
         TxOutput output = new TxOutput();
         //根据高度计算奖励
         //TODO
-        if (!TransactionValidator.moneyRange(fee)) throw new IllegalArgumentException("Invalid fee");
-        output.setValue(Math.addExact(ConsensusRules.subsidy(Math.toIntExact(blockHeight), params), fee)); // 50 BTC in satoshi
+        if (!TransactionValidator.moneyRange(fee)) {
+            throw new IllegalArgumentException("Invalid fee");
+        }
+        output.setValue(Math.addExact(ConsensusRules.subsidy(Math.toIntExact(blockHeight), params), fee)); // 初始补贴为 50 BTC，以聪计。
         output.setScriptPubKey(Sha.applyRIPEMD160(Sha.applySHA256(Base58.decode(minerAddress))));
         List<TxOutput> outputs = new ArrayList<>();
         outputs.add(output);
@@ -580,7 +591,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         coinbaseTx.setTxId(txId);
         return coinbaseTx;
     }
-
 
     public static byte[] calculateMerkleRoot(List<Transaction> transactions) {
         if (transactions == null || transactions.isEmpty()) {
@@ -631,14 +641,13 @@ public class BlockChainServiceImpl implements BlockChainService{
         return buildMerkleTree(nextLevel);
     }
 
-
-
     private static Transaction createGenesisCoinbaseTransaction() {
         Transaction coinbaseTx = new Transaction();
         TxInput input = new TxInput();
         input.setTxId(new byte[32]); // 全零交易ID
         input.setIndex(0); // 特殊值表示CoinBase交易
-        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);//69字节
+        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"
+                .getBytes(StandardCharsets.UTF_8);//69字节
         input.setScriptSig(bytes);
         List<TxInput> inputs = new ArrayList<>();
         inputs.add(input);
@@ -646,7 +655,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         coinbaseTx.setInputs(inputs);
         // 创建输出（初始奖励50 BTC = 50*1e8聪）
         TxOutput output = new TxOutput();
-        output.setValue(50L * 100000000); // 50 BTC in satoshi
+        output.setValue(50L * 100000000); // 将 50 BTC 换算为聪。
         String address = "J5JGY238f6TGBuscTBs5AQjDu6Jpau1mUaFYq89ty3GR";
         output.setScriptPubKey(Sha.applyRIPEMD160(Sha.applySHA256(Base58.decode(address))));
         List<TxOutput> outputs = new ArrayList<>();
@@ -658,11 +667,11 @@ public class BlockChainServiceImpl implements BlockChainService{
         return coinbaseTx;
     }
 
-
     //获取交易手续费
     public long calculateTransactionFee(Transaction transaction) {
         return transaction.getFee();
     }
+
     public long calculateTransactionFee(List<Transaction> transactions) {
         if (transactions == null || transactions.isEmpty()) {
             return 0L; // 处理空列表或null值的情况
@@ -675,20 +684,15 @@ public class BlockChainServiceImpl implements BlockChainService{
         return totalFee;
     }
 
-
-
-
-
-
     public Block getBlockByHash(byte[] hash) {
         //获取区块头 区块体
         if (hash == null || hash.length != 32) {
             return null;
         }
 
-        byte[] header_bytes = dataBase.get(TBLOCK_HEADER,hash);
-        byte[] body_bytes = dataBase.get(TBLOCK_BODY,hash);
-        if (header_bytes!=null && body_bytes!=null){
+        byte[] header_bytes = dataBase.get(TBLOCK_HEADER, hash);
+        byte[] body_bytes = dataBase.get(TBLOCK_BODY, hash);
+        if (header_bytes != null && body_bytes != null) {
             byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
             UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
             BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
@@ -696,7 +700,7 @@ public class BlockChainServiceImpl implements BlockChainService{
             Block block = Block.buildBlock(blockHeader, blockBody);
             block.setChainWork(uInt256);
             return block;
-        }else {
+        } else {
             return null;
         }
     }
@@ -711,11 +715,11 @@ public class BlockChainServiceImpl implements BlockChainService{
     public Transaction getTxByHash(byte[] txId) {
         //先查询是否在交易池中
         Transaction tx = txPool.getTx(txId);
-        if (tx!=null){
+        if (tx != null) {
             return tx;
         }
         Transaction ifPresent = TransactionCache.getIfPresent(bytesToHex(txId));
-        if (ifPresent!=null){
+        if (ifPresent != null) {
             log.info("存在缓存中");
             return ifPresent;
         }
@@ -741,17 +745,16 @@ public class BlockChainServiceImpl implements BlockChainService{
         long status = 0;
         //交易所在的区块是否主连区块
         boolean isMainBlock = isMainBlock(blockHash);
-        log.info("当前交易是否主链交易{}",isMainBlock);
-        if (isMainBlock){
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
-        }else {
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
+        log.info("当前交易是否主链交易{}", isMainBlock);
+        if (isMainBlock) {
+            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
+        } else {
+            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.FORK);
         }
         transaction.setStatus(status);
-        TransactionCache.put(bytesToHex(txId),transaction);
+        TransactionCache.put(bytesToHex(txId), transaction);
         return transaction;
     }
-
 
     public Transaction getTxAndQueryInputByHash(byte[] txId) {
         //先查询是否在交易池中
@@ -786,8 +789,8 @@ public class BlockChainServiceImpl implements BlockChainService{
         Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
         //带出输入对应的输出
         List<TxInput> inputs = transaction.getInputs();
-        for (TxInput txInput:inputs){
-            if (!txInput.isCoinbase() && deserialize.getHeight()!=0){
+        for (TxInput txInput : inputs) {
+            if (!txInput.isCoinbase() && deserialize.getHeight() != 0) {
                 Transaction txByHash = getTxByHash(txInput.getTxId());
                 TxOutput txOutput = txByHash.getOutputs().get(txInput.getIndex());
                 txInput.setOutput(txOutput);
@@ -797,11 +800,11 @@ public class BlockChainServiceImpl implements BlockChainService{
         long status = 0;
         //交易所在的区块是否主连区块
         boolean isMainBlock = isMainBlock(blockHash);
-        log.info("当前交易是否主链交易{}",isMainBlock);
-        if (isMainBlock){
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.CONFIRMED);
-        }else {
-            status = TransactionStatusResolver.setLifecycleStatus(status,TransactionStatusResolver.FORK);
+        log.info("当前交易是否主链交易{}", isMainBlock);
+        if (isMainBlock) {
+            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
+        } else {
+            status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.FORK);
         }
         transaction.setStatus(status);
         transaction.setTime(blockHeader.getTime());
@@ -810,38 +813,35 @@ public class BlockChainServiceImpl implements BlockChainService{
         return transaction;
     }
 
-
-
     //获取一笔交易所有参与交易待花费的UTXO
-    public Map<String,UTXO> getUTXOsByTx(Transaction transaction) {
+    public Map<String, UTXO> getUTXOsByTx(Transaction transaction) {
         List<TxInput> inputs = transaction.getInputs();
-        Map<String,UTXO> utxos = new HashMap<>();
-        for (TxInput txInput:inputs){
+        Map<String, UTXO> utxos = new HashMap<>();
+        for (TxInput txInput : inputs) {
             byte[] txId = txInput.getTxId();
             int index = txInput.getIndex();
             //交易ID是全零且index=0 则是一个铸币输入
             if (Arrays.equals(txId, new byte[32]) && index == 0) {
                 log.info("这是一个铸币输入");
-            }else {
+            } else {
                 byte[] key = UTXO.getKey(txId, index);
                 byte[] bytes = dataBase.get(TableEnum.TUTXO, key);
                 assert bytes != null;
                 UTXO deserialize = UTXO.deserialize(bytes);
-                utxos.put(bytesToHex(key),deserialize);
+                utxos.put(bytesToHex(key), deserialize);
             }
         }
         return utxos;
     }
 
-
     public BlockHeader getBlockHeaderByHash(byte[] hash) {
-        byte[] bytes = dataBase.get(TBLOCK_HEADER,hash);
-        if (bytes!=null){
+        byte[] bytes = dataBase.get(TBLOCK_HEADER, hash);
+        if (bytes != null) {
             //获取前80字节
             byte[] headerBytes = Arrays.copyOfRange(bytes, 0, 80);
             //序列化
             return BlockHeader.deserialize(headerBytes);
-        }else {
+        } else {
             return null;
         }
     }
@@ -853,7 +853,7 @@ public class BlockChainServiceImpl implements BlockChainService{
 
     public Block getBlockByHeight(int height) {
         byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);
-        if (blockHash==null){
+        if (blockHash == null) {
             return null;
         }
         return getBlockByHash(blockHash);
@@ -869,37 +869,33 @@ public class BlockChainServiceImpl implements BlockChainService{
     }
 
     //分页获取这个地址下的交易
-    public List<Transaction> getTxListByAddres(String address,int pageNum,int pageSize) {
-        if (pageNum != 1) throw new IllegalArgumentException("Use cursor pagination for address history");
+    public List<Transaction> getTxListByAddres(String address, int pageNum, int pageSize) {
+        if (pageNum != 1) {
+            throw new IllegalArgumentException("Use cursor pagination for address history");
+        }
         return getTransactionsByPage(address, pageSize, null).getData();
     }
 
-
-
-
     public int calculateNextBlockDifficulty() {
-        long time = Math.max(System.currentTimeMillis() / 1000, ConsensusRules.medianTime(mainTipBlock, this::getHeaderContext) + 1);
-        return ConsensusRules.expectedBits(mainTipBlock, time, config.getParams(), this::getHeaderContext);
+        Block tip = getMainLatestBlock();
+        long time = Math.max(System.currentTimeMillis() / 1000,
+                ConsensusRules.medianTime(tip, this::getHeaderContext) + 1);
+        return ConsensusRules.expectedBits(tip, time, config.getParams(), this::getHeaderContext);
     }
 
     private int getCurrentChainHeight() {
-        byte[] bytes = dataBase.get(CHAIN, MAIN_CHAIN_TIP_HEIGHT_KEY);
-        assert bytes!=null;
-        return bytesToInt(bytes);
+        return getMainTipSnapshot().height();
     }
 
-
-
-
     public static void main(String[] args) {
-        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks".getBytes(StandardCharsets.UTF_8);
-        log.info("长度{}",bytes.length);
+        byte[] bytes = "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"
+                .getBytes(StandardCharsets.UTF_8);
+        log.info("长度{}", bytes.length);
 
         Transaction coinbaseTx = createGenesisCoinbaseTransaction();
         List<Transaction> transactions = new ArrayList<>();
         transactions.add(coinbaseTx);
         byte[] merkleRoot = calculateMerkleRoot(transactions);
-
 
         // 创世区块的已知信息
         int version = 1;
@@ -918,7 +914,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         System.out.println("目标bits: " + bits);
 
         long startTime = System.currentTimeMillis();
-
 
         // 挖矿循环
         for (nonce = 0; nonce < maxNonce; nonce++) {
@@ -971,7 +966,6 @@ public class BlockChainServiceImpl implements BlockChainService{
             System.out.println("挖矿失败，未找到有效的nonce");
         }
 
-
     }
 
     public UTXO getUtxo(String key) {
@@ -1004,9 +998,13 @@ public class BlockChainServiceImpl implements BlockChainService{
             endHeight = temp;
         }
 
-        if (startHeight > getCurrentChainHeight()) startHeight = getCurrentChainHeight();
+        if (startHeight > getCurrentChainHeight()) {
+            startHeight = getCurrentChainHeight();
+        }
         int count = (int) Math.min(100L, (long) startHeight - endHeight + 1);
-        if (count <= 0) return List.of();
+        if (count <= 0) {
+            return List.of();
+        }
         endHeight = Math.max(endHeight, startHeight - count + 1);
 
         // 限制最多100个
@@ -1021,14 +1019,15 @@ public class BlockChainServiceImpl implements BlockChainService{
             Block block = getBlockByHeight(height);
             if (block != null) {
                 responseBytes += block.getTransactions().stream().mapToLong(TransactionValidator::memoryWeight).sum();
-                if (responseBytes > 16L * 1024 * 1024) throw new IllegalArgumentException("Response budget exceeded; reduce block range");
+                if (responseBytes > 16L * 1024 * 1024) {
+                    throw new IllegalArgumentException("Response budget exceeded; reduce block range");
+                }
                 blocks.add(block);
             }
         }
 
         return blocks;
     }
-
 
     /**
      * 分页查询交易
@@ -1037,21 +1036,33 @@ public class BlockChainServiceImpl implements BlockChainService{
      * @return 分页结果
      */
     public List<Transaction> getTransactionsByPage(int pageNum, int pageSize) {
-        if (pageNum < 1 || pageNum > 100 || pageSize < 1 || pageSize > 100) throw new IllegalArgumentException("Page bounds exceeded");
+        if (pageNum < 1 || pageNum > 100 || pageSize < 1 || pageSize > 100) {
+            throw new IllegalArgumentException("Page bounds exceeded");
+        }
         int skip = (pageNum - 1) * pageSize;
         List<Transaction> result = new ArrayList<>(pageSize);
         long bytes = 0;
         for (int height = getCurrentChainHeight(); height >= 0 && result.size() < pageSize; height--) {
             Block block = getBlockByHeight(height);
-            if (block == null) throw new IllegalStateException("Missing main-chain block");
+            if (block == null) {
+                throw new IllegalStateException("Missing main-chain block");
+            }
             for (Transaction tx : block.getTransactions()) {
-                if (skip-- > 0) continue;
-                tx.setHeight(height); tx.setHash(block.getHash()); tx.setTime(block.getBlockHeader().getTime());
+                if (skip-- > 0) {
+                    continue;
+                }
+                tx.setHeight(height);
+                tx.setHash(block.getHash());
+                tx.setTime(block.getBlockHeader().getTime());
                 tx.setStatus(TransactionStatusResolver.CONFIRMED);
                 bytes += TransactionValidator.memoryWeight(tx);
-                if (bytes > 16L * 1024 * 1024) throw new IllegalArgumentException("Response budget exceeded; reduce page size");
+                if (bytes > 16L * 1024 * 1024) {
+                    throw new IllegalArgumentException("Response budget exceeded; reduce page size");
+                }
                 result.add(tx);
-                if (result.size() >= pageSize) break;
+                if (result.size() >= pageSize) {
+                    break;
+                }
             }
         }
         return result;
@@ -1059,52 +1070,74 @@ public class BlockChainServiceImpl implements BlockChainService{
 
     @Override
     public PageResult<Transaction> getTransactionsByPage(String address, int pageSize, String lastKey) {
-        if (pageSize < 1 || pageSize > 20) throw new IllegalArgumentException("Page size must be 1..20");
+        if (pageSize < 1 || pageSize > 20) {
+            throw new IllegalArgumentException("Page size must be 1..20");
+        }
         byte[] prefix = addressPrefix(address);
         byte[] cursor = lastKey == null || lastKey.isBlank() ? null : hexToBytes(lastKey);
-        if (cursor != null && (cursor.length != 52 || !Arrays.equals(prefix, Arrays.copyOf(cursor, 20))))
+        if (cursor != null && (cursor.length != 52 || !Arrays.equals(prefix, Arrays.copyOf(cursor, 20)))) {
             throw new IllegalArgumentException("Invalid address cursor");
+        }
         PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, prefix, pageSize, cursor);
         List<Transaction> transactions = new ArrayList<>();
         for (Object value : page.getData()) {
             byte[] key = (byte[]) value;
-            if (key.length != 52) throw new IllegalStateException("Corrupt address index");
+            if (key.length != 52) {
+                throw new IllegalStateException("Corrupt address index");
+            }
             Transaction tx = getTxAndQueryInputByHash(Arrays.copyOfRange(key, 20, 52));
-            if (tx == null) throw new IllegalStateException("Missing indexed transaction");
+            if (tx == null) {
+                throw new IllegalStateException("Missing indexed transaction");
+            }
             transactions.add(tx);
         }
         return new PageResult<>(transactions, page.getLastKey(), page.isLastPage());
     }
 
     public static byte[] addressPrefix(String address) {
-        if (address == null || address.length() > 44) throw new IllegalArgumentException("Invalid address");
+        if (address == null || address.length() > 44) {
+            throw new IllegalArgumentException("Invalid address");
+        }
         byte[] key = Base58.decode(address);
-        if (key.length != 32) throw new IllegalArgumentException("Address must encode a 32-byte public key");
+        if (key.length != 32) {
+            throw new IllegalArgumentException("Address must encode a 32-byte public key");
+        }
         return Sha.applyRIPEMD160(Sha.applySHA256(key));
     }
 
+    /** 按地址分页读取主链 UTXO，传入上一页的链顶哈希可检测翻页期间的链顶变化。 */
     public synchronized Map<String, Object> utxoPage(String address, int limit, String cursor, String expectedTip) {
-        if (limit < 1 || limit > 100) throw new IllegalArgumentException("Page size must be 1..100");
-        String tip = bytesToHex(mainTipBlock.getHash());
-        if (expectedTip != null && !expectedTip.equals(tip)) throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT, "Chain changed; restart pagination");
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("Page size must be 1..100");
+        }
+        ChainTipSnapshot tipSnapshot = getMainTipSnapshot();
+        String tip = bytesToHex(tipSnapshot.hash());
+        if (expectedTip != null && !expectedTip.equals(tip)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT, "Chain changed; restart pagination");
+        }
         byte[] prefix = addressPrefix(address);
         byte[] last = cursor == null || cursor.isBlank() ? null : hexToBytes(cursor);
-        if (last != null && (last.length != 56 || !Arrays.equals(prefix, Arrays.copyOf(last, 20)))) throw new IllegalArgumentException("Invalid UTXO cursor");
+        if (last != null && (last.length != 56 || !Arrays.equals(prefix, Arrays.copyOf(last, 20)))) {
+            throw new IllegalArgumentException("Invalid UTXO cursor");
+        }
         PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_UTXO, prefix, limit, last);
         List<UTXO> result = new ArrayList<>();
         for (Object item : page.getData()) {
             byte[] key = (byte[]) item;
-            if (key.length != 56) throw new IllegalStateException("Corrupt UTXO index");
+            if (key.length != 56) {
+                throw new IllegalStateException("Corrupt UTXO index");
+            }
             byte[] raw = dataBase.get(TUTXO, Arrays.copyOfRange(key, 20, 56));
-            if (raw == null) throw new IllegalStateException("Missing indexed UTXO");
+            if (raw == null) {
+                throw new IllegalStateException("Missing indexed UTXO");
+            }
             result.add(UTXO.deserialize(raw));
         }
-        return Map.of("tip", tip, "height", mainTipBlock.getHeight(), "utxos", result,
-                "nextCursor", page.getLastKey() == null ? "" : bytesToHex(page.getLastKey()), "lastPage", page.isLastPage());
+        return Map.of("tip", tip, "height", tipSnapshot.height(), "utxos", result,
+                "nextCursor", page.getLastKey() == null ? "" : bytesToHex(page.getLastKey()), "lastPage",
+                page.isLastPage());
     }
-
-
 
     //区块是否主链
     @Override
@@ -1245,8 +1278,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         return Arrays.equals(blockHash, hash);
     }
 
-
-
     /**
      * 生成区块链同步路标（基于Landmark类，帮助对方节点快速定位共同祖先）
      * @param peerMaxHeight 对方节点的最大区块高度
@@ -1336,20 +1367,19 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
     }
 
-
     /**
      * 通过本地和远程的路标列表，找到双方的最新共同祖先区块的Landmark
      * 核心逻辑：优先匹配高度最高的共同区块（降序遍历），无匹配则返回创世区块
      * @param remote 远程节点发送的路标列表
      * @return 共同祖先的Landmark（优先最高高度，无匹配则返回创世区块）
      */
-    public  Landmark findCommonAncestorByLandmark(List<Landmark> remote) {
+    public Landmark findCommonAncestorByLandmark(List<Landmark> remote) {
         int maxHeight = remote.stream().mapToInt(Landmark::getHeight).max().getAsInt();
-        log.info("该路标最大高度{}",maxHeight);
+        log.info("该路标最大高度{}", maxHeight);
         List<Landmark> local = generateSyncLandmarks(maxHeight);
 
         //如果远程的maxHeight 大于本地直接返回创世 因为无法比较
-        if (maxHeight > mainTipBlock.getHeight()) {
+        if (maxHeight > getMainTipSnapshot().height()) {
             return createGenesisLandmark();
         }
 
@@ -1367,7 +1397,9 @@ public class BlockChainServiceImpl implements BlockChainService{
         Map<String, Landmark> remoteByHash = new HashMap<>();
         for (Landmark r : remote) {
             String rh = bytesToHex(r.getHash());
-            if (r.getHeight() == 0) continue;       // 忽略创世（作为兜底返回）
+            if (r.getHeight() == 0) {
+                continue;       // 忽略创世（作为兜底返回）
+            }
             Landmark exist = remoteByHash.get(rh);
             if (exist == null || r.getHeight() > exist.getHeight()) {
                 remoteByHash.put(rh, r);
@@ -1377,7 +1409,9 @@ public class BlockChainServiceImpl implements BlockChainService{
         List<Landmark> localValid = new ArrayList<>();
         for (Landmark l : local) {
             String lh = bytesToHex(l.getHash());
-            if (l.getHeight() == 0) continue;
+            if (l.getHeight() == 0) {
+                continue;
+            }
             localValid.add(l);
         }
         if (localValid.isEmpty() || remoteByHash.isEmpty()) {
@@ -1403,9 +1437,6 @@ public class BlockChainServiceImpl implements BlockChainService{
         log.warn("全量对比所有有效路标后，未找到非创世区块的共同祖先，返回创世区块");
         return createGenesisLandmark();
     }
-
-
-
 
     /**
      * 辅助方法：创建创世区块（高度0）的默认Landmark

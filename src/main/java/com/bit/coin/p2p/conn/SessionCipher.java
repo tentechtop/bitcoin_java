@@ -4,6 +4,7 @@ import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -11,12 +12,13 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.BitSet;
 
-/** Authenticates every data/control datagram, with direction-specific HKDF keys and a replay window. */
+/** 收发方向各用独立的 HKDF 派生密钥，逐包认证数据报文和控制报文，并通过滑动窗口防止重放。 */
 public final class SessionCipher implements AutoCloseable {
-    public static final int MAGIC = 0x424a5632;
-    public static final int PREFIX_BYTES = 13;
-    public static final int OVERHEAD_BYTES = PREFIX_BYTES + 8 + 16;
-    private static final int WINDOW = 4096;
+
+    public static final int MAGIC = 0x424a5632;  // 报文起始标记，按大端序编码为 ASCII 字符 BJV2
+    public static final int PREFIX_BYTES = 13;  // 魔数 4 字节、报文类型 1 字节、连接 ID 8 字节
+    public static final int OVERHEAD_BYTES = PREFIX_BYTES + 8 + 16;  // 加密报文在公共前缀外另带 8 字节序号和 16 字节认证标签
+    private static final int WINDOW = 4096;  // 防重放窗口按包序号计，窗口内允许未接收过的乱序包
     private final long connectionId;
     private final byte[] sendKey, receiveKey;
     private long nextSequence, highestSequence = -1;
@@ -24,7 +26,7 @@ public final class SessionCipher implements AutoCloseable {
     private boolean closed;
 
     public SessionCipher(byte[] secret, byte[] requestTranscript, byte[] responseTranscript,
-                         long connectionId, boolean outbound) {
+            long connectionId, boolean outbound) {
         try {
             this.connectionId = connectionId;
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -36,11 +38,15 @@ public final class SessionCipher implements AutoCloseable {
             sendKey = outbound ? clientKey : serverKey;
             receiveKey = outbound ? serverKey : clientKey;
             Arrays.fill(prk, (byte) 0);
-        } catch (GeneralSecurityException e) { throw new IllegalStateException(e); }
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     public synchronized byte[] encrypt(byte[] frame) throws GeneralSecurityException {
-        if (closed || nextSequence == Long.MAX_VALUE) throw new GeneralSecurityException("Session exhausted");
+        if (closed || nextSequence == Long.MAX_VALUE) {
+            throw new GeneralSecurityException("Session exhausted");
+        }
         long sequence = nextSequence++;
         byte[] header = ByteBuffer.allocate(PREFIX_BYTES + 8).putInt(MAGIC).put((byte) 1)
                 .putLong(connectionId).putLong(sequence).array();
@@ -50,21 +56,30 @@ public final class SessionCipher implements AutoCloseable {
     }
 
     public synchronized byte[] decrypt(byte[] datagram) throws GeneralSecurityException {
-        if (closed || datagram.length < OVERHEAD_BYTES) throw new GeneralSecurityException("Invalid envelope");
+        if (closed || datagram.length < OVERHEAD_BYTES) {
+            throw new GeneralSecurityException("Invalid envelope");
+        }
         ByteBuffer b = ByteBuffer.wrap(datagram);
-        if (b.getInt() != MAGIC || b.get() != 1 || b.getLong() != connectionId)
+        if (b.getInt() != MAGIC || b.get() != 1 || b.getLong() != connectionId) {
             throw new GeneralSecurityException("Wrong session");
+        }
         long sequence = b.getLong();
         if (sequence < 0 || (sequence <= highestSequence && (highestSequence - sequence >= WINDOW
-                || received.get((int) (highestSequence - sequence))))) throw new GeneralSecurityException("Replay");
+                || received.get((int) (highestSequence - sequence))))) {
+            throw new GeneralSecurityException("Replay");
+        }
         byte[] plaintext = cipher(Cipher.DECRYPT_MODE, receiveKey, sequence,
                 Arrays.copyOf(datagram, PREFIX_BYTES + 8)).doFinal(datagram, PREFIX_BYTES + 8, b.remaining());
-        // Only authenticated packets may advance the replay window.
+        // 只有通过认证的包才能推进防重放窗口。
         if (sequence > highestSequence) {
             long shift = sequence - highestSequence;
             BitSet updated = new BitSet(WINDOW);
-            if (shift < WINDOW) for (int bit = received.nextSetBit(0); bit >= 0 && bit + shift < WINDOW; bit = received.nextSetBit(bit + 1))
-                updated.set((int) (bit + shift));
+            if (shift < WINDOW) {
+                for (int bit = received.nextSetBit(0); bit >= 0
+                        && bit + shift < WINDOW; bit = received.nextSetBit(bit + 1)) {
+                    updated.set((int) (bit + shift));
+                }
+            }
             received = updated;
             highestSequence = sequence;
         }
@@ -72,8 +87,10 @@ public final class SessionCipher implements AutoCloseable {
         return plaintext;
     }
 
+    /** 为握手帧添加连接前缀，供会话密钥建立前分发。 */
     public static byte[] handshake(long connectionId, byte[] frame) {
-        return ByteBuffer.allocate(PREFIX_BYTES + frame.length).putInt(MAGIC).put((byte) 0).putLong(connectionId).put(frame).array();
+        return ByteBuffer.allocate(PREFIX_BYTES + frame.length).putInt(MAGIC).put((byte) 0).putLong(connectionId)
+                .put(frame).array();
     }
 
     private static Cipher cipher(int mode, byte[] key, long sequence, byte[] aad) throws GeneralSecurityException {
@@ -83,12 +100,23 @@ public final class SessionCipher implements AutoCloseable {
         cipher.updateAAD(aad);
         return cipher;
     }
+
     private static byte[] hmac(byte[] key, byte[] data) throws GeneralSecurityException {
-        Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(key, "HmacSHA256")); return mac.doFinal(data);
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        return mac.doFinal(data);
     }
+
     private static byte[] expand(byte[] prk, String label) throws GeneralSecurityException {
         byte[] info = label.getBytes(StandardCharsets.US_ASCII);
         return hmac(prk, ByteBuffer.allocate(info.length + 1).put(info).put((byte) 1).array());
     }
-    @Override public synchronized void close() { closed = true; Arrays.fill(sendKey, (byte) 0); Arrays.fill(receiveKey, (byte) 0); received.clear(); }
+
+    @Override
+    public synchronized void close() {
+        closed = true;
+        Arrays.fill(sendKey, (byte) 0);
+        Arrays.fill(receiveKey, (byte) 0);
+        received.clear();
+    }
 }

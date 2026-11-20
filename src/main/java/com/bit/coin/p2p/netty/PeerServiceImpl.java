@@ -56,8 +56,6 @@ public class PeerServiceImpl {
     @Autowired
     private Text2Handler2 textHandler2;
 
-
-
     @Autowired
     private HandshakeSuccessHandle handshakeSuccessHandle;
     @Autowired
@@ -83,35 +81,37 @@ public class PeerServiceImpl {
     @Autowired
     private P2PNodeStatusHandle p2PNodeStatusHandle;
 
-
-
     @PostConstruct
     public void init() throws IOException, CertificateException, InterruptedException {
-        if (!systemConfig.isNetworkingEnabled()) return;
+        if (!systemConfig.isNetworkingEnabled()) {
+            return;
+        }
         configureNetwork(systemConfig.getParams().getNet());
         startQuicServer();
-        protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1,  textHandler);
-        protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2,  textHandler2);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.TEXT_V1, textHandler);
+        protocolRegistry.registerResultHandler(ProtocolEnum.TEXT_V2, textHandler2);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Probe, request -> {
-            if (request.getData().length > 1_048_576) throw new IllegalArgumentException("Probe exceeds 1 MiB");
+            if (request.getData().length > 1_048_576) {
+                throw new IllegalArgumentException("Probe exceeds 1 MiB");
+            }
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(request.getData());
             return com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage(
-                    com.bit.coin.config.SystemConfig.SelfPeer.getId(), ProtocolEnum.P2P_Probe, request.getRequestId(), digest).serialize();
+                    com.bit.coin.config.SystemConfig.SelfPeer.getId(), ProtocolEnum.P2P_Probe, request.getRequestId(),
+                    digest).serialize();
         });
 
         protocolRegistry.registerVoidHandler(ProtocolEnum.Handshake_Success_V1, handshakeSuccessHandle);
         protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Find_Node_Req, p2PFindNodeReqHandle);
-        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Broadcast_Simple_Resource,  broadcastResourceHandle);
-        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Get_Resource_Req,  p2PGetResourceReqHandle);
-        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Block,  p2PReceiveBlockHandle);
-        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Transaction,  p2PReceiveTxHandle);
-        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash,  p2PQueryBlockByHashHandle);
-        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height,  p2PQueryBlockByHeightHandle);
-        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Common_Ancestor,  p2PQueryCommonAncestorHandle);
-        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_Headers,  p2PQueryBlockHeadersHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Broadcast_Simple_Resource, broadcastResourceHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Get_Resource_Req, p2PGetResourceReqHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Block, p2PReceiveBlockHandle);
+        protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Receive_Transaction, p2PReceiveTxHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Hash, p2PQueryBlockByHashHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_By_Height, p2PQueryBlockByHeightHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Common_Ancestor, p2PQueryCommonAncestorHandle);
+        protocolRegistry.registerResultHandler(ProtocolEnum.P2P_Query_Block_Headers, p2PQueryBlockHeadersHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Peer_Hints, p2PPeerHintsHandle);
         protocolRegistry.registerVoidHandler(ProtocolEnum.P2P_Node_Status, p2PNodeStatusHandle);
-
 
     }
 
@@ -148,6 +148,7 @@ public class PeerServiceImpl {
                     ))
                     // ========== 通道处理器 ==========
                     .handler(new ChannelInitializer<NioDatagramChannel>() {
+
                         @Override
                         protected void initChannel(NioDatagramChannel ch) throws Exception {
                             ChannelPipeline pipeline = ch.pipeline();
@@ -219,26 +220,32 @@ public class PeerServiceImpl {
 
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
     public void connectBootstrapNodes() {
-        if (!systemConfig.isNetworkingEnabled()) return;
+        if (!systemConfig.isNetworkingEnabled()) {
+            return;
+        }
         try {
             List<String> bootstrap = systemConfig.getBootstrap();
-            if (bootstrap == null) return;
-            for (String bootstrapNode : bootstrap){
-                if (bootstrapNode == null || bootstrapNode.isBlank()) continue;
+            if (bootstrap == null) {
+                return;
+            }
+            for (String bootstrapNode : bootstrap) {
+                if (bootstrapNode == null || bootstrapNode.isBlank()) {
+                    continue;
+                }
                 QuicConnection quicConnection = connectRemoteByAddr(bootstrapNode);
-                if (quicConnection!=null){
+                if (quicConnection != null) {
                     log.info("连接成功");
                 }
             }
             //连接完成后对引导节点进行节点查询
-        }catch (Exception e){
-            log.error("连接引导节点失败{}",e.getMessage());
+        } catch (Exception e) {
+            log.error("连接引导节点失败{}", e.getMessage());
         }
     }
 
     public List<Peer> getAllNodes() {
         List<Peer> all = routingTable.getAll();
-        Set<String> onlinePeerIds = getOnlinePeerIds();//在onlinePeerIds中的all online字段改成true 不在改成false
+        Set<String> onlinePeerIds = getOnlinePeerIds();// 遍历 all，将 ID 在 onlinePeerIds 中的节点的 online 字段设为 true，其余设为 false
         all.forEach(peer -> peer.setOnline(onlinePeerIds.contains(bytesToHex(peer.getId()))));
         return all;
     }

@@ -12,7 +12,7 @@ services:
     mem_limit: 3g
     cpus: 2.0
     pids_limit: 256
-    # RocksDB extracts its JNI library here; executable mappings must be allowed.
+    # RocksDB 会将 JNI 库解压到 /tmp，因此该挂载点必须允许可执行内存映射。
     tmpfs: ["/tmp:rw,nosuid,size=128m"]
     environment:
       NODE_ADMIN_TOKEN: ${NODE_ADMIN_TOKEN:?Set a random admin token of at least 32 characters}

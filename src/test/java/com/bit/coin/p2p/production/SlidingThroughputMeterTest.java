@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SlidingThroughputMeterTest {
+
     @Test
     void reportsRealSlidingWindowThroughput() {
         AtomicLong now = new AtomicLong(0);

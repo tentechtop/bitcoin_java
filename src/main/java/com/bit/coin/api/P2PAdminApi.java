@@ -19,6 +19,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/p2p")
 public class P2PAdminApi {
+
     private final ProductionP2PService p2pService;
 
     public P2PAdminApi(ProductionP2PService p2pService) {
@@ -52,15 +53,15 @@ public class P2PAdminApi {
 
     @PostMapping("/blacklist/peer/add")
     public P2PBlacklistEntry blacklistPeer(@RequestParam String peerId,
-                                           @RequestParam(required = false) String reason,
-                                           @RequestParam(required = false) Long ttlSeconds) {
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) Long ttlSeconds) {
         return p2pService.blacklistPeer(peerId, reason, ttl(ttlSeconds));
     }
 
     @PostMapping("/blacklist/ip/add")
     public P2PBlacklistEntry blacklistIp(@RequestParam String ip,
-                                         @RequestParam(required = false) String reason,
-                                         @RequestParam(required = false) Long ttlSeconds) {
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) Long ttlSeconds) {
         return p2pService.blacklistIp(ip, reason, ttl(ttlSeconds));
     }
 

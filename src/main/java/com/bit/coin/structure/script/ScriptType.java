@@ -5,6 +5,7 @@ package com.bit.coin.structure.script;
  * 支持比特币主流脚本类型
  */
 public enum ScriptType {
+
     P2PKH(0x00, "Pay to Public Key Hash", 20),           // 20字节
     P2SH(0x01, "Pay to Script Hash", 20),                // 20字节
     P2WPKH(0x02, "Witness v0 Key Hash", 20),             // 20字节

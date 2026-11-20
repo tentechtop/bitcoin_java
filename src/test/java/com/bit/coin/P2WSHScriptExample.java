@@ -72,8 +72,7 @@ public class P2WSHScriptExample {
                 witnessScript,
                 utxoOutput.getValue(),
                 Transaction.SigHash.ALL,
-                false
-        );
+                false);
 
         System.out.println("\n签名哈希: " + sigHash.toString());
 
@@ -88,7 +87,7 @@ public class P2WSHScriptExample {
 
         // 8. 创建见证数据（Witness）[3](@ref)
         // P2WSH的见证数据格式: <dummy> <signature1> <signature2> <witnessScript>
-        // 注意：由于CHECKMULTISIG的bug，需要添加一个dummy元素
+        // CHECKMULTISIG 会多弹出一个栈元素，因此需要添加一个占位元素（dummy）
         TransactionWitness witness = TransactionWitness.of(java.util.List.of(new byte[0],
                 signatures.get(0).encodeToBitcoin(), signatures.get(1).encodeToBitcoin(), witnessScript.getProgram()));
         input = input.withWitness(witness);
@@ -117,9 +116,9 @@ public class P2WSHScriptExample {
      * 手动验证P2WSH交易
      */
     private boolean verifyP2WSH(TransactionInput input,
-                                TransactionOutput utxoOutput,
-                                Script lockingScript,
-                                Script expectedWitnessScript) {
+            TransactionOutput utxoOutput,
+            Script lockingScript,
+            Script expectedWitnessScript) {
         try {
             // 验证锁定脚本是P2WSH格式
             if (!ScriptPattern.isP2WSH(lockingScript)) {
@@ -185,7 +184,8 @@ public class P2WSHScriptExample {
         System.out.println("P2WSH脚本长度: " + p2wshLockingScript.getProgram().length + " 字节");
         System.out.println("P2WSH比P2SH节省约 " +
                 ((p2shLockingScript.getProgram().length - p2wshLockingScript.getProgram().length) * 100 /
-                        p2shLockingScript.getProgram().length) + "% 的空间");
+                        p2shLockingScript.getProgram().length)
+                + "% 的空间");
 
         // 见证数据体积优势 [1](@ref)
         System.out.println("P2WSH见证数据享受1/4权重折扣，手续费更低");

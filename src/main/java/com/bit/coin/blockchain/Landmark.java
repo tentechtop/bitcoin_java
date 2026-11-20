@@ -13,6 +13,7 @@ import java.util.List;
 
 @Data
 public class Landmark {
+
     @JsonSerialize(using = HexByteArraySerializer.class)
     @JsonDeserialize(using = HexByteArrayDeserializer.class)  // 添加这行
     private byte[] hash;//32
@@ -128,8 +129,7 @@ public class Landmark {
         if (remainingBytes != expectedRemaining) {
             throw new IllegalArgumentException(
                     String.format("Landmark列表字节数不匹配：期望剩余%d字节，实际剩余%d字节",
-                            expectedRemaining, remainingBytes)
-            );
+                            expectedRemaining, remainingBytes));
         }
 
         // 5. 循环解析每个Landmark
@@ -143,6 +143,5 @@ public class Landmark {
 
         return result;
     }
-
 
 }

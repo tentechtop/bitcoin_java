@@ -1,6 +1,6 @@
 package com.bit.coin.exception;
 
-public class JsonParseException extends RuntimeException{
+public class JsonParseException extends RuntimeException {
 
     private final int errorCode;
     private final String errorMsg;

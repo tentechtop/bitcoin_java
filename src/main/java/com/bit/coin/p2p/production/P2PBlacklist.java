@@ -12,6 +12,7 @@ import java.util.function.LongSupplier;
 
 @Component
 public class P2PBlacklist {
+
     private final ConcurrentHashMap<String, P2PBlacklistEntry> peerEntries = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, P2PBlacklistEntry> ipEntries = new ConcurrentHashMap<>();
     private final LongSupplier nowMillis;

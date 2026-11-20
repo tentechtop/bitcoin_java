@@ -10,12 +10,12 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
-
 /**
  * UUID V7 生成工具（标准化实现，适配去中心化场景）
  * 核心：48位毫秒级时间戳 + 74位加密随机数（RFC 9562 标准）
  */
 public class UUIDv7Generator {
+
     // 单例生成器（线程安全，全局复用）
     private static final TimeBasedEpochGenerator UUID_V7_GENERATOR;
 
@@ -30,8 +30,6 @@ public class UUIDv7Generator {
     public static String generate() {
         return UUID_V7_GENERATOR.generate().toString();
     }
-
-
 
     /**
      * 生成UUID V7的16进制字节数组（字节数组长度固定为16字节，大端序/Big-Endian，符合RFC 4122标准）
@@ -58,14 +56,12 @@ public class UUIDv7Generator {
         return uuidBytes;
     }
 
-
-
     /**
      * 生成UUID V7的原始128位值（long[2]数组，高64位+低64位）
      */
     public static long[] generateAsLongArray() {
         UUID uuid = UUID_V7_GENERATOR.generate();
-        return new long[]{uuid.getMostSignificantBits(), uuid.getLeastSignificantBits()};
+        return new long[] { uuid.getMostSignificantBits(), uuid.getLeastSignificantBits() };
     }
 
     /**
@@ -92,13 +88,13 @@ public class UUIDv7Generator {
         System.out.println("生成UUID V7-1：" + uuid7Str1);
         System.out.println("生成UUID V7-2：" + uuid7Str2);
         //长度
-        System.out.println("uuid7Str1长度:"+uuid7Str1.length());
+        System.out.println("uuid7Str1长度:" + uuid7Str1.length());
 
         long[] longs = UUIDv7Generator.generateAsLongArray();
 
         byte[] bytes = UUIDv7Generator.generateBytesId();
-        System.out.println("uuid7Str1长度:"+bytes.length);//16字节长度
-        System.out.println("uuid7Str1长度:"+bytesToHex(bytes));
+        System.out.println("uuid7Str1长度:" + bytes.length);//16字节长度
+        System.out.println("uuid7Str1长度:" + bytesToHex(bytes));
 
         System.out.println("UUID V7版本号：" + uuid7.version() + "（预期：7）");
         System.out.println("提取的时间戳（ms）：" + UUIDv7Generator.extractTimestamp(uuid7));

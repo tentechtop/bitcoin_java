@@ -19,6 +19,7 @@ import static org.bouncycastle.util.Pack.intToLittleEndian;
 
 @Data
 public class BlockHeader {
+
     /**
      * 区块版本号（4字节）
      */
@@ -53,7 +54,6 @@ public class BlockHeader {
      */
     private int nonce;//6
 
-
     // 1. 私有化无参构造，禁止外部调用
     private BlockHeader() {}
 
@@ -61,8 +61,10 @@ public class BlockHeader {
     public BlockHeader(int version, byte[] previousHash, byte[] merkleRoot, long time, int bits, int nonce) {
         this.version = version;
         // 校验并处理前一区块哈希：确保是32字节（不符合则替换为32字节空数组）
-        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32 || time < 0 || time > 0xFFFFFFFFL)
+        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32
+                || time < 0 || time > 0xFFFFFFFFL) {
             throw new IllegalArgumentException("Invalid block header fields");
+        }
         this.previousHash = previousHash.clone();
         // 校验并处理默克尔根哈希：确保是32字节（不符合则替换为32字节空数组）
         this.merkleRoot = merkleRoot.clone();
@@ -70,7 +72,6 @@ public class BlockHeader {
         this.bits = bits;
         this.nonce = nonce;
     }
-
 
     /**
      * 从bits字段解析出目标难度值
@@ -89,20 +90,24 @@ public class BlockHeader {
      * 所有数值字段采用小端字节序（Little-Endian）
      */
     public byte[] serialize() {
-        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32 || time < 0 || time > 0xFFFFFFFFL)
+        if (previousHash == null || previousHash.length != 32 || merkleRoot == null || merkleRoot.length != 32
+                || time < 0 || time > 0xFFFFFFFFL) {
             throw new IllegalArgumentException("Invalid block header fields");
+        }
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream(80)) {
             // 1. 版本号：4字节、小端
             bos.write(intToLittleEndian(this.version));
 
             // 2. 前一区块哈希：32字节（为空则补32字节空数组）
             byte[] prevHash = (this.previousHash != null && this.previousHash.length == 32)
-                    ? this.previousHash : new byte[32];
+                    ? this.previousHash
+                    : new byte[32];
             bos.write(prevHash);
 
             // 3. 默克尔根哈希：32字节（为空则补32字节空数组）
             byte[] merkleHash = (this.merkleRoot != null && this.merkleRoot.length == 32)
-                    ? this.merkleRoot : new byte[32];
+                    ? this.merkleRoot
+                    : new byte[32];
             bos.write(merkleHash);
 
             // 4. 时间戳：4字节、小端（截取long的低4字节转为int）
@@ -180,17 +185,16 @@ public class BlockHeader {
      */
     public static byte[] reverseBytes(byte[] bytes) {
         byte[] buf = new byte[bytes.length];
-        for (int i = 0; i < bytes.length; i++)
+        for (int i = 0; i < bytes.length; i++) {
             buf[i] = bytes[bytes.length - 1 - i];
+        }
         return buf;
     }
 
-    public static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);
-    //难度目标 0000ffffffff0000000000000000000000000000000000000000000000000000
+    public static BigInteger LARGEST_HASH = BigInteger.ONE.shiftLeft(256);  // 2 的 256 次方，作为每块工作量公式的分子
+    // 计算难度倍数时用作分子的基准目标值。
     public static final String INIT_DIFFICULTY_TARGET_HEX = "0000ffffffff0000000000000000000000000000000000000000000000000000";
     private static final BigInteger DIFFICULTY_1_TARGET = new BigInteger(INIT_DIFFICULTY_TARGET_HEX, 16);
-
-
 
     /**
      * work = 2^256 / (target + 1)
@@ -199,33 +203,21 @@ public class BlockHeader {
     public BigInteger getWork() {
         BigInteger currentTarget = getTargetFromBits();
 
-        // 防御性判断：target不能为0（理论上不可能）
         if (currentTarget.signum() == 0) {
             return BigInteger.ZERO;
         }
 
-        // 核心公式：work = 2^256 / (target + 1)
         BigInteger denominator = currentTarget.add(BigInteger.ONE);
-        // 使用BigInteger的除法（向零取整，符合比特币核心实现）
         return LARGEST_HASH.divide(denominator);
     }
 
-
-    /**
-     * 难度倍数
-     * @return
-     */
+    /** 返回基准目标与当前目标的整数比值，目标为零时返回 Long.MAX_VALUE。 */
     @JsonIgnore
     public BigInteger getDifficulty() {
-        // 当前区块的目标难度
         BigInteger currentTarget = getTargetFromBits();
         if (currentTarget.signum() == 0) {
-            // 目标难度为0的情况（理论上不可能，但做防御）
-            // 返回一个极大值，表示工作量无穷大
             return BigInteger.valueOf(Long.MAX_VALUE);
         }
-        // 工作量 = 初始难度目标 / 当前区块目标难度
-        // 使用 BigInteger 的 divide 方法，它会执行整数除法（向零取整）
         return DIFFICULTY_1_TARGET.divide(currentTarget);
     }
 
@@ -298,8 +290,12 @@ public class BlockHeader {
      * 目标值 = 系数 * 256^(指数-3)
      */
     public static int convertTargetToBits(BigInteger target) {
-        if (target.signum() < 0 || target.bitLength() > 256) throw new IllegalArgumentException("Invalid target");
-        if (target.signum() == 0) return 0;
+        if (target.signum() < 0 || target.bitLength() > 256) {
+            throw new IllegalArgumentException("Invalid target");
+        }
+        if (target.signum() == 0) {
+            return 0;
+        }
         int size = (target.bitLength() + 7) / 8;
         int compact = size <= 3 ? target.intValue() << (8 * (3 - size)) : target.shiftRight(8 * (size - 3)).intValue();
         if ((compact & 0x00800000) != 0) {
@@ -330,12 +326,13 @@ public class BlockHeader {
         // 注意：这里需要将初始难度目标转换为bits格式
         //int bits = convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16));
 
-        int bits = convertTargetToBits(new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16).divide(BigInteger.valueOf(1)));
-
+        int bits = convertTargetToBits(
+                new BigInteger(BlockHeader.INIT_DIFFICULTY_TARGET_HEX, 16).divide(BigInteger.valueOf(1)));
 
         System.out.println("初始难度目标: " + BlockHeader.INIT_DIFFICULTY_TARGET_HEX);
         System.out.println("对应的bits: 0x" + Integer.toHexString(bits));
-        System.out.println("从bits解析回目标: 0x" + new BlockHeader(version, previousHash, merkleRoot, time, bits, 0).getTargetString());
+        System.out.println(
+                "从bits解析回目标: 0x" + new BlockHeader(version, previousHash, merkleRoot, time, bits, 0).getTargetString());
 
         // 2. 创建区块头（初始nonce为0）
         BlockHeader blockHeader = new BlockHeader(version, previousHash, merkleRoot, time, bits, 0);
@@ -453,12 +450,11 @@ public class BlockHeader {
         blockHeaderCopy.setVersion(this.getVersion());
         blockHeaderCopy.setPreviousHash(this.getPreviousHash());
         blockHeaderCopy.setMerkleRoot(this.getMerkleRoot());
-        blockHeaderCopy.setTime(this.getTime() );
+        blockHeaderCopy.setTime(this.getTime());
         blockHeaderCopy.setBits(this.getBits());
         blockHeaderCopy.setNonce(this.getNonce());
         return blockHeaderCopy;
     }
-
 
     @JsonIgnore
     public byte[] getHash() {

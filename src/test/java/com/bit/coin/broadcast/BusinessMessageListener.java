@@ -4,6 +4,7 @@ package com.bit.coin.broadcast;
  * 业务监听器：只处理订单类型的消息
  */
 public class BusinessMessageListener implements MessageListener {
+
     private static final String LISTENER_ID = "BUSINESS_LISTENER";
 
     @Override

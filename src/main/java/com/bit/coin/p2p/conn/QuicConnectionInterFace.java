@@ -6,6 +6,5 @@ public interface QuicConnectionInterFace {
 
     byte[] sendData(String peerId, ProtocolEnum protocol, byte[] sendMsg, int time);
 
-
     void sendData(byte[] data);
 }

@@ -1,4 +1,4 @@
-# Build the JAR with the Linux CI verification job before building this image.
+# 构建此镜像前，先通过 Linux CI 验证任务构建 JAR 包。
 FROM eclipse-temurin:21-jre-noble@sha256:96975602e131485862eb8cd32927face8a06d7591a5e865944b634a701d9df72
 RUN groupadd --gid 10001 node && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin node \
     && mkdir -p /opt/node /var/lib/bitcoin-java /var/log/bitcoin-java \

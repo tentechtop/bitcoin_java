@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 @Slf4j
 @Data
 public class QuicData {
+
     private long connectionId;//连接ID
     private long dataId;//数据ID
     private int total;//数据帧总数
@@ -15,8 +16,7 @@ public class QuicData {
     private QuicFrame[] frameArray;//帧数据按照序列号存入
     private InetSocketAddress remoteAddress;
 
-
-    public int getSize(){
+    public int getSize() {
         //通过分析frameArray 给出大小
         if (frameArray == null) {
             return 0;
@@ -29,8 +29,6 @@ public class QuicData {
         }
         return size;
     }
-
-
 
     public byte[] getCombinedFullData() {
         // 校验帧数组是否存在

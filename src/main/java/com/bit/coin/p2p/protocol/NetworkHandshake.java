@@ -1,6 +1,5 @@
 package com.bit.coin.p2p.protocol;
 
-
 import com.bit.coin.proto.Structure;
 import com.bit.coin.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -12,6 +11,7 @@ import java.net.InetSocketAddress;
 
 @Data
 public class NetworkHandshake {
+
     /**
      * 网络魔法值：固定字节数组（如Solana主网为0x5eyy...）
      * 作用：区分测试网/主网/私有链，防止节点接入错误网络
@@ -28,7 +28,6 @@ public class NetworkHandshake {
      * 软件版本
      */
 
-
     //节点ID 32字节公钥
     private byte[] nodeId;
 
@@ -41,13 +40,11 @@ public class NetworkHandshake {
      */
     private String nodeVersion;
 
-
     //协商加密信息 SecretKey 承载协商公钥  //不在网络中传输
     private byte[] sharedSecret;
 
     //签名
     private byte[] signature;
-
 
     // 衍生字段（无需序列化，通过address+port动态构建）
     private InetSocketAddress inetSocketAddress;
@@ -61,10 +58,6 @@ public class NetworkHandshake {
     //顶端累计工作总量
     @JsonIgnore
     private UInt256 chainWork = UInt256.fromLong(0L);
-
-
-
-
 
     // ========================== 序列化/反序列化核心方法 ==========================
 

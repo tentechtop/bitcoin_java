@@ -18,7 +18,7 @@ import java.lang.ref.WeakReference;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
-@JsonPropertyOrder({"value", "scriptPubKey"})  // 按指定顺序输出
+@JsonPropertyOrder({ "value", "scriptPubKey" })  // 按指定顺序输出
 @Data
 public class TxOutput {
 
@@ -37,17 +37,15 @@ public class TxOutput {
     @JsonIgnore
     private WeakReference<Script> scriptPubKeyWk;
 
-
     // 常量定义
     public static final int SCRIPT_PUBKEY_LENGTH = 20; // 锁定脚本长度
     public static final int SERIALIZED_LENGTH = 28;    // 序列化总长度: 8+20=28字节
-
 
     @JsonIgnore
     public WeakReference<Script> getScriptPubKeyWk() {
         if (scriptPubKeyWk == null || scriptPubKeyWk.get() == null) {
             try {
-                log.debug("打印公钥{} 长度{}",bytesToHex(scriptPubKey),scriptPubKey.length);
+                log.debug("打印公钥{} 长度{}", bytesToHex(scriptPubKey), scriptPubKey.length);
                 Script script = Script.deserialize(scriptPubKey);
                 scriptPubKeyWk = new WeakReference<>(script);
             } catch (IOException e) {
@@ -57,16 +55,14 @@ public class TxOutput {
         return scriptPubKeyWk;
     }
 
-
     public String getScriptPubKeyString() {
         WeakReference<Script> scriptPubKeyWk1 = getScriptPubKeyWk();
         Script script = scriptPubKeyWk1.get();
-        if (script==null){
+        if (script == null) {
             return "";
         }
         return script.toString();
     }
-
 
     /**
      * 验证字段长度
@@ -108,7 +104,10 @@ public class TxOutput {
         output.setValue(com.bit.coin.utils.SerializeUtils.littleEndianToLong(valueBytes));
 
         long scriptPubKeyLength = com.bit.coin.utils.SerializeUtils.readVarInt(dis);
-        if (scriptPubKeyLength < 0 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES || scriptPubKeyLength > dis.available()) throw new IOException("Invalid script length");
+        if (scriptPubKeyLength < 0 || scriptPubKeyLength > TransactionValidator.MAX_SCRIPT_BYTES
+                || scriptPubKeyLength > dis.available()) {
+            throw new IOException("Invalid script length");
+        }
         if (scriptPubKeyLength > 0) {
             byte[] scriptSig = new byte[(int) scriptPubKeyLength];
             dis.readFully(scriptSig);
@@ -132,6 +131,5 @@ public class TxOutput {
         dis.close();
         return output;
     }
-
 
 }

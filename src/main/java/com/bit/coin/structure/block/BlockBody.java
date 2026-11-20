@@ -21,12 +21,11 @@ public class BlockBody {
 
     private List<Transaction> transactions;
 
-
     /**
      * 序列化 Block 对象为字节数组
      */
-    public byte[] serialize()  {
-        try{
+    public byte[] serialize() {
+        try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
             dos.writeInt(height);
@@ -49,17 +48,18 @@ public class BlockBody {
             dos.close();
             baos.close();
             return result;
-        }catch (Exception e){
-            throw new  IllegalArgumentException("区块序列化失败",e);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("区块序列化失败", e);
         }
     }
 
     /**
      * 从字节数组反序列化为 Block 对象
      */
-    public static BlockBody deserialize(byte[] data)  {
+    public static BlockBody deserialize(byte[] data) {
         try {
-            if (data == null || data.length == 0 || data.length > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_BYTES) {
+            if (data == null || data.length == 0
+                    || data.length > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_BYTES) {
                 throw new IllegalArgumentException("Invalid block size");
             }
 
@@ -74,13 +74,22 @@ public class BlockBody {
 
                 // 反序列化 Transaction 列表
                 int txCount = dis.readInt();
-                if (txCount < 1 || txCount > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_TRANSACTIONS || txCount > dis.available() / 40) throw new IOException("Invalid transaction count");
-                if (txCount != blockBody.getTxCount()) throw new IOException("Mismatched transaction count");
+                if (txCount < 1 || txCount > com.bit.coin.blockchain.ConsensusRules.MAX_BLOCK_TRANSACTIONS
+                        || txCount > dis.available() / 40) {
+                    throw new IOException("Invalid transaction count");
+                }
+                if (txCount != blockBody.getTxCount()) {
+                    throw new IOException("Mismatched transaction count");
+                }
                 if (txCount > 0) {
                     List<Transaction> txList = new ArrayList<>(txCount);
                     for (int i = 0; i < txCount; i++) {
                         int txLength = dis.readInt();
-                        if (txLength < 40 || txLength > com.bit.coin.structure.tx.TransactionValidator.MAX_TRANSACTION_BYTES || txLength > dis.available()) throw new IOException("Invalid transaction size");
+                        if (txLength < 40
+                                || txLength > com.bit.coin.structure.tx.TransactionValidator.MAX_TRANSACTION_BYTES
+                                || txLength > dis.available()) {
+                            throw new IOException("Invalid transaction size");
+                        }
                         byte[] txBytes = new byte[txLength];
                         dis.readFully(txBytes);
                         Transaction tx = Transaction.deserialize(txBytes);
@@ -91,17 +100,17 @@ public class BlockBody {
                     blockBody.setTransactions(new ArrayList<>());
                 }
 
-                if (dis.available() != 0) throw new IOException("Trailing block data");
+                if (dis.available() != 0) {
+                    throw new IOException("Trailing block data");
+                }
             } finally {
                 dis.close();
                 bais.close();
             }
             return blockBody;
-        }catch (Exception e){
+        } catch (Exception e) {
             throw new IllegalArgumentException("区块反序列化失败");
         }
     }
-
-
 
 }

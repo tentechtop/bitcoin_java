@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 class RoutingTableSmartDiscoveryTest {
+
     @Test
     void peerHintsGoToCandidatePoolBeforeRoutingTable() {
         RoutingTable routingTable = routingTable(20);

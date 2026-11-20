@@ -16,6 +16,4 @@ public record SyncPeerState(
         int verifiedBlocks,
         int failedRequests,
         String lastError,
-        long lastUpdatedAtMillis
-) {
-}
+        long lastUpdatedAtMillis) {}

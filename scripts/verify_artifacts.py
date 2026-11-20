@@ -21,6 +21,7 @@ def verify(task):
     relative = group.replace(".", "/") + "/" + artifact + "/" + version + "/" + artifact + "-" + version + classifier + ".jar"
     local = pathlib.Path(repository) / relative
     data = local.read_bytes()
+    # 仅当中央仓库缺少 SHA-256 摘要时才尝试 SHA-1，摘要不匹配直接失败。
     for algorithm in ("sha256", "sha1"):
         try:
             with urllib.request.urlopen("https://repo.maven.apache.org/maven2/" + relative + "." + algorithm, timeout=30) as response:

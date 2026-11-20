@@ -11,5 +11,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface RpcServiceAlias {
+
     String value(); // 服务别名（如"TransactionService"）
 }

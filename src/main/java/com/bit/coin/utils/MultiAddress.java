@@ -20,9 +20,11 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
  */
 @Data
 public class MultiAddress {
+
     // 静态常量定义
     private static final String SEGMENT_SEPARATOR = "/";
-    private static final Pattern IP4_PATTERN = Pattern.compile("^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$");
+    private static final Pattern IP4_PATTERN = Pattern
+            .compile("^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$");
     private static final Pattern IP6_PATTERN = Pattern.compile("^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$");
 
     // 传输协议枚举（内置）
@@ -39,7 +41,6 @@ public class MultiAddress {
     private String rawAddress;   // 原始地址字符串
     private byte[] peerIdBytes;
     private String peerIdHex;
-
 
     // ======================== 构造方法 ========================
     /**
@@ -203,7 +204,7 @@ public class MultiAddress {
                 this.peerId);
     }
 
-    // ======================== Getter & Setter ========================
+    // ======================== 属性读写方法 ========================
     public String getIpType() {
         return ipType;
     }
@@ -281,8 +282,7 @@ public class MultiAddress {
                 "10.0.0.1",
                 Protocol.QUIC,
                 9090,
-                "B3ouHNKzVqwd6U15KTM2patf5ChJdYhwi3oPVqvr6tPf"
-        );
+                "B3ouHNKzVqwd6U15KTM2patf5ChJdYhwi3oPVqvr6tPf");
         System.out.println("\n手动构建地址：" + addr3);
         System.out.println("构建后的原始地址：" + addr3.toRawAddress());
     }

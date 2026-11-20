@@ -1,6 +1,7 @@
 package com.bit.coin.broadcast;
 
 public class LogMessageListener implements MessageListener {
+
     // 监听器唯一ID
     private static final String LISTENER_ID = "LOG_LISTENER";
 

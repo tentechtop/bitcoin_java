@@ -285,7 +285,32 @@
                 padding: 20px;
             }
         }
+
+        body { background: #f3f6fa; padding: 0; color: #17212b; }
+        .container { width: min(1400px, calc(100% - 32px)); padding: 24px 0 36px; }
+        .header { background: #fff; color: #17212b; border: 1px solid #d9e2ec; border-radius: 12px; box-shadow: 0 8px 24px rgba(23, 33, 43, .06); text-align: left; }
+        .header h1 { color: #17212b; text-shadow: none; }
+        .header p { color: #607080; }
+        .api-section { border: 1px solid #d9e2ec; border-radius: 12px; box-shadow: 0 5px 18px rgba(23, 33, 43, .04); }
+        .section-title { color: #17212b; border-bottom: 1px solid #d9e2ec; }
+        .section-title::before { color: #1769aa; }
+        .api-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+        .api-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; }
+        .api-card:hover { transform: translateY(-2px); border-color: #9abbd5; box-shadow: 0 8px 18px rgba(23, 33, 43, .08); }
+        .api-method.get { background: #e6f4ed; color: #236547; }
+        .api-method.post { background: #fff1df; color: #8b4e12; }
+        .api-path { overflow-wrap: anywhere; color: #1769aa; }
+        .input-group input, .input-group textarea { border: 1px solid #cbd6e2; border-radius: 6px; }
+        .btn { background: #1769aa; border-radius: 7px; }
+        .btn:hover { background: #125889; transform: translateY(-1px); }
+        .tabs { gap: 8px; }
+        .tab { background: #e7edf4; color: #34485a; border-radius: 8px; }
+        .tab:hover, .tab.active { background: #1769aa; color: #fff; }
+        .status-bar { top: 12px; right: 12px; max-width: min(420px, calc(100vw - 24px)); }
+        .result-area { background: #17212b; }
+        @media (max-width: 768px) { .container { width: calc(100% - 20px); padding-top: 16px; } .header { padding: 22px; } }
     </style>
+    <link rel="stylesheet" href="/node-theme.css">
 <script src="/node-api.js"></script>
 </head>
 <body>
@@ -297,7 +322,7 @@
             <p>区块链浏览器 - 完整的链数据查询与管理平台</p>
         </div>
 
-        <div class="tabs">
+        <div class="tabs" role="tablist" aria-label="查询分类">
             <button class="tab active" onclick="showSection('blocks')">区块查询</button>
             <button class="tab" onclick="showSection('transactions')">交易查询</button>
             <button class="tab" onclick="showSection('address')">地址查询</button>
@@ -553,7 +578,7 @@
                 <div class="api-grid">
                     <div class="api-card">
                         <div class="api-name">开始挖矿</div>
-                        <div class="api-method get">GET</div>
+                        <div class="api-method post">POST</div>
                         <div class="api-path">/chain/startMining</div>
                         <button class="btn" onclick="callApi('startMining', null, this)">开始挖矿</button>
                         <div class="result-area"></div>
@@ -561,7 +586,7 @@
 
                     <div class="api-card">
                         <div class="api-name">挖掘一个区块</div>
-                        <div class="api-method get">GET</div>
+                        <div class="api-method post">POST</div>
                         <div class="api-path">/chain/mingOneBlock</div>
                         <button class="btn" onclick="callApi('mingOneBlock', null, this)">挖掘单个区块</button>
                         <div class="result-area"></div>
@@ -569,7 +594,7 @@
 
                     <div class="api-card">
                         <div class="api-name">挖掘指定数量区块</div>
-                        <div class="api-method get">GET</div>
+                        <div class="api-method post">POST</div>
                         <div class="api-path">/chain/mingOneBlockByCount</div>
                         <div class="input-group">
                             <label>区块数量</label>
@@ -613,7 +638,7 @@
 
                     <div class="api-card">
                         <div class="api-name">广播区块</div>
-                        <div class="api-method get">GET</div>
+                        <div class="api-method post">POST</div>
                         <div class="api-path">/chain/broadcastResource</div>
                         <div class="input-group">
                             <label>区块Hash</label>
@@ -633,7 +658,7 @@
                 <div class="api-grid">
                     <div class="api-card">
                         <div class="api-name">开始同步区块</div>
-                        <div class="api-method get">GET</div>
+                        <div class="api-method post">POST</div>
                         <div class="api-path">/chain/startSync</div>
                         <button class="btn" onclick="callApi('startSync', null, this)">开始同步</button>
                         <div class="result-area"></div>
@@ -682,10 +707,51 @@
 
         function showSection(sectionId) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.getElementById(sectionId).classList.add('active');
-            event.target.classList.add('active');
+            document.querySelectorAll('.tab').forEach(tab => {
+                const active = tab.dataset.section === sectionId;
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-selected', String(active));
+            });
+            document.getElementById(sectionId)?.classList.add('active');
         }
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            const sectionId = tab.getAttribute('onclick').match(/showSection\('([^']+)'\)/)?.[1];
+            tab.removeAttribute('onclick');
+            tab.dataset.section = sectionId;
+            tab.id = `tab-${sectionId}`;
+            tab.setAttribute('role', 'tab');
+            tab.setAttribute('aria-selected', String(tab.classList.contains('active')));
+            tab.setAttribute('aria-controls', sectionId);
+            tab.addEventListener('click', () => showSection(sectionId));
+        });
+        document.querySelectorAll('.section').forEach(section => {
+            section.setAttribute('role', 'tabpanel');
+            section.setAttribute('aria-labelledby', [...document.querySelectorAll('.tab')].find(tab => tab.dataset.section === section.id)?.id || '');
+        });
+        document.querySelectorAll('.api-card').forEach(card => {
+            const button = card.querySelector('.btn');
+            const result = card.querySelector('.result-area');
+            if (!button) return;
+            card.querySelectorAll('.input-group label').forEach(label => {
+                const input = label.nextElementSibling;
+                if (input?.id) label.htmlFor = input.id;
+            });
+            if (result) result.setAttribute('aria-live', 'polite');
+            const groups = [...card.querySelectorAll('.input-group')];
+            if (groups.length) {
+                const form = document.createElement('form');
+                form.addEventListener('submit', event => event.preventDefault());
+                groups.forEach(group => {
+                    const input = group.querySelector('input, textarea');
+                    if (input) input.required = true;
+                    form.append(group);
+                });
+                button.before(form);
+                form.append(button);
+                button.type = 'submit';
+            }
+        });
 
         let statusTimeout;
         function showStatus(message, type) {
@@ -710,8 +776,29 @@
         }
 
         async function callApi(apiName, params, btn) {
-            const resultArea = btn.nextElementSibling;
+            const resultArea = btn.closest('.api-card').querySelector('.result-area');
             const originalText = btn.innerHTML;
+
+            if (params && Object.values(params).some(value => value === '')) {
+                showApiError(resultArea, '请填写所有查询条件');
+                return;
+            }
+            if (apiName === 'getBlocksByPage' && (Number(params.start) < 0 || Number(params.end) < Number(params.start) || Number(params.end) - Number(params.start) > 100)) {
+                showApiError(resultArea, '区块范围必须从小到大，且不超过 100 个');
+                return;
+            }
+            if (apiName === 'getTransactionsByPage' && (Number(params.pageNum) < 1 || Number(params.pageSize) < 1)) {
+                showApiError(resultArea, '页码和每页数量必须大于 0');
+                return;
+            }
+            if (['getBlockByHeight', 'getRoadMark'].includes(apiName) && Number(params.height) < 0) {
+                showApiError(resultArea, '区块高度不能小于 0');
+                return;
+            }
+            if (apiName === 'mingOneBlockByCount' && (!Number.isInteger(Number(params.count)) || Number(params.count) < 1 || Number(params.count) > 100)) {
+                showApiError(resultArea, '挖矿数量必须是 1 到 100 之间的整数');
+                return;
+            }
 
             try {
                 btn.innerHTML = '<span class="loading"></span>请求中...';
@@ -750,8 +837,16 @@
         }
 
         async function callApiPost(apiName, body, btn) {
-            const resultArea = btn.nextElementSibling;
+            const resultArea = btn.closest('.api-card').querySelector('.result-area');
             const originalText = btn.innerHTML;
+            let parsedBody;
+            try {
+                parsedBody = JSON.parse(body);
+                if (!Array.isArray(parsedBody)) throw new Error('路标列表必须是 JSON 数组');
+            } catch (error) {
+                showApiError(resultArea, error.message || '请输入有效的 JSON');
+                return;
+            }
 
             try {
                 btn.innerHTML = '<span class="loading"></span>请求中...';
@@ -763,7 +858,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: body
+                    body: JSON.stringify(parsedBody)
                 });
 
                 const result = await formatResult(response);
@@ -784,6 +879,12 @@
                 btn.innerHTML = originalText;
                 btn.disabled = false;
             }
+        }
+
+        function showApiError(resultArea, message) {
+            resultArea.classList.add('show');
+            resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: `输入错误：${message}`}));
+            showStatus(message, 'error');
         }
     </script>
 </body>

@@ -13,16 +13,16 @@ public class BroadcastResource {
 
     public static final int TYPE_BLOCK = 0;
     public static final int TYPE_TRANSACTION = 1;
-    public static final int UNKNOWN_HEIGHT = -1;
+    public static final int UNKNOWN_HEIGHT = -1;  // 对端未提供区块高度时的占位值
 
     private static final int METADATA_VERSION = 1;
     private static final int MAX_HASH_LENGTH = 128;
-    private static final int METADATA_REMAINING_BYTES = 4 + 32 + 8 + 4;
+    private static final int METADATA_REMAINING_BYTES = 4 + 32 + 8 + 4;  // 元数据版本号之后的高度、累计工作量、时间戳和标志所占字节
 
     private byte[] hash;
     private int type;
 
-    // Optional metadata. Older peers only send hash + type; keep defaults compatible.
+    // 元数据可选，默认值须兼容只发送 hash 和 type 的旧版节点。
     private int height = UNKNOWN_HEIGHT;
     private UInt256 chainWork = UInt256.ZERO;
     private long timestampMillis;
@@ -30,7 +30,7 @@ public class BroadcastResource {
 
     public byte[] toBytes() {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             DataOutputStream dos = new DataOutputStream(baos)) {
+                DataOutputStream dos = new DataOutputStream(baos)) {
 
             if (hash == null) {
                 dos.writeInt(0);
@@ -41,7 +41,7 @@ public class BroadcastResource {
 
             dos.writeInt(type);
 
-            // Metadata is appended after the original payload, so older readers can ignore it.
+            // 将元数据追加到原有载荷末尾，以便旧版节点在读取时忽略它。
             dos.writeInt(METADATA_VERSION);
             dos.writeInt(height);
             dos.write(chainWork == null ? UInt256.ZERO.toBytes() : chainWork.toBytes());
@@ -54,13 +54,14 @@ public class BroadcastResource {
         }
     }
 
+    /** 先读取哈希和类型，仅在扩展字段版本匹配且长度足够时解析链状态。 */
     public static BroadcastResource fromBytes(byte[] bytes) {
         if (bytes == null || bytes.length < 8) {
             return null;
         }
 
         try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
-             DataInputStream dis = new DataInputStream(bais)) {
+                DataInputStream dis = new DataInputStream(bais)) {
 
             BroadcastResource resource = new BroadcastResource();
 

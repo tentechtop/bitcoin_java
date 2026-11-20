@@ -32,7 +32,7 @@ build/
 ### VS Code ###
 .vscode/
 
-# Runtime state and local credentials
+# 运行时状态和本地凭据
 /data/
 /logs/
 .env

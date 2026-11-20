@@ -34,7 +34,7 @@ public class TransferDTO {
     private List<TxOutputDTO> outputs = new ArrayList<>();
 
     //转化为Transaction
-    public Transaction toTransaction(){
+    public Transaction toTransaction() {
         Transaction transaction = new Transaction();
         transaction.setVersion(version);
         transaction.setLockTime(lockTime);

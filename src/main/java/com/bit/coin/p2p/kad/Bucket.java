@@ -10,11 +10,11 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
-
 //节点ID是 32字节Hex
 @Slf4j
 @Data
 public class Bucket {
+
     // 桶ID
     private int id;
 
@@ -81,7 +81,7 @@ public class Bucket {
                 if (exist != peer) {
                     exist.setChainTip(peer.chainTip());
                 }
-            }else {
+            } else {
                 nodeMap.put(peerId, peer);
             }
             this.lastSeen = System.currentTimeMillis();
@@ -103,7 +103,7 @@ public class Bucket {
 
     public Peer getNode(String id) {
         Peer peer = nodeMap.get(id);
-        if (peer != null){
+        if (peer != null) {
             return peer;
         }
         return null;
@@ -112,16 +112,15 @@ public class Bucket {
     /**
      * 移除节点（线程安全）
      */
-    public void remove(Peer peer){
+    public void remove(Peer peer) {
         this.remove(peer.getId());
     }
-
 
     public void remove(byte[] peerId) {
         // 先将byte[]转为Hex字符串，再删除
         String peerIdHex = bytesToHex(peerId);
         nodeIds.remove(peerIdHex); // 正确：删除String类型的ID
-        nodeMap.remove(peerIdHex); // 正确：删除String类型的key
+        nodeMap.remove(peerIdHex); // 正确：删除 String 类型的键
         this.lastSeen = System.currentTimeMillis();
     }
 
@@ -158,12 +157,11 @@ public class Bucket {
                 exist.setChainTip(peer.chainTip());
             }
 
-        }else {
+        } else {
             nodeMap.put(peerId, peer);
         }
         this.lastSeen = System.currentTimeMillis();
     }
-
 
     /**
      * 获取所有节点ID（用于遍历，返回不可修改的视图避免并发问题）
@@ -189,7 +187,6 @@ public class Bucket {
         nodesList.addAll(nodeMap.values());
         return nodesList;
     }
-
 
     //更新节点最后访问时间
     public void updateLastSeen(String peerId) {

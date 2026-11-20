@@ -1,6 +1,5 @@
 package com.bit.coin.p2p.peer;
 
-
 import com.bit.coin.utils.HexByteArraySerializer;
 import com.bit.coin.utils.MultiAddress;
 import com.bit.coin.utils.UInt256;
@@ -25,6 +24,7 @@ import java.util.Date;
 @Setter
 @Builder
 public class Peer {
+
     // ==================== 核心标识（唯一确定节点身份） ====================
     /**
      * 节点公钥（32字节，hex字符串）
@@ -39,7 +39,6 @@ public class Peer {
     @com.fasterxml.jackson.annotation.JsonIgnore
     @lombok.ToString.Exclude
     private byte[] privateKey;
-
 
     // ==================== 网络信息（用于P2P连接） ====================
     /**
@@ -59,16 +58,16 @@ public class Peer {
      * 例："/ip4/192.168.1.100/tcp/8000/p2p/7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2"
      */
     private String multiaddr;
-    //get
+
+    // 获取节点多地址
     public String getMultiaddr() {
         //如果地址端口和节点ID不为空
         if (address != null && port != 0) {
-            return MultiAddress.build("ip4", address, MultiAddress.Protocol.QUIC, port, Base58.encode(id)).toRawAddress();
+            return MultiAddress.build("ip4", address, MultiAddress.Protocol.QUIC, port, Base58.encode(id))
+                    .toRawAddress();
         }
         return null;
     }
-
-
 
     /**
      * 节点支持的通信协议版本
@@ -94,7 +93,6 @@ public class Peer {
      */
     private long latestSlot;
 
-
     // ==================== 能力与属性（描述节点功能） ====================
     /**
      * 节点是否为验证者（参与共识）
@@ -118,13 +116,12 @@ public class Peer {
      * 最后访问时间
      */
     private long lastSeen;
+
     //
-    public String getLastSeenStr(){
+    public String getLastSeenStr() {
         //yyyy-mm-ss hh-mm-ss
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(lastSeen));
     }
-
-
 
     //节点最新区块hash
     private String hashHex;
@@ -133,6 +130,7 @@ public class Peer {
     //顶端累计工作总量
     @JsonIgnore
     private UInt256 chainWork = UInt256.fromLong(0L);
+
     public BigInteger getChainWorkDecimal() {
         return chainTip().chainWork().toBigInteger();
     }
@@ -155,26 +153,18 @@ public class Peer {
 
     public record ChainTip(String hashHex, int height, UInt256 chainWork) {}
 
-
-
-
-
     // 衍生字段（无需序列化，通过address+port动态构建）
     private InetSocketAddress inetSocketAddress;
 
-    public void setInetSocketAddress(InetSocketAddress inetSocketAddress){
+    public void setInetSocketAddress(InetSocketAddress inetSocketAddress) {
         this.inetSocketAddress = inetSocketAddress;
-        if (inetSocketAddress != null){
+        if (inetSocketAddress != null) {
             this.address = inetSocketAddress.getAddress().getHostAddress();
-            log.info("网络地址{}",this.address);
+            log.info("网络地址{}", this.address);
             this.port = inetSocketAddress.getPort();
-            log.info("网络端口{}",this.port);
+            log.info("网络端口{}", this.port);
         }
     }
-
-
-
-
 
     // ==================== 序列化/反序列化 ====================
     // -------------------------- 序列化/反序列化核心实现 --------------------------
@@ -182,9 +172,13 @@ public class Peer {
      * 序列化当前Peer对象为字节数组
      * 采用BigEndian字节序，保证跨平台兼容性
      */
-    public byte[] serialize() { return serialize(false); }
+    public byte[] serialize() {
+        return serialize(false);
+    }
 
-    public byte[] serializeLocal() { return serialize(true); }
+    public byte[] serializeLocal() {
+        return serialize(true);
+    }
 
     private byte[] serialize(boolean includePrivateKey) {
         try {
@@ -238,8 +232,8 @@ public class Peer {
             byte[] result = new byte[buffer.remaining()];
             buffer.get(result);
             return result;
-        }catch (Exception e){
-            log.error("序列化Peer对象失败",e);
+        } catch (Exception e) {
+            log.error("序列化Peer对象失败", e);
             return null;
         }
     }
@@ -247,7 +241,7 @@ public class Peer {
     /**
      * 从字节数组反序列化为Peer对象
      */
-    public static Peer deserialize(byte[] data){
+    public static Peer deserialize(byte[] data) {
         try {
             if (data == null || data.length == 0 || data.length > 4096) {
                 throw new IllegalArgumentException("反序列化数据不能为空");
@@ -294,9 +288,11 @@ public class Peer {
             }
 
             if (peer.getId() == null || peer.getId().length != 32 || peer.getPort() < 1 || peer.getPort() > 65535
-                    || peer.getHeight() < 0 || buffer.hasRemaining()) throw new IllegalArgumentException("Invalid peer record");
+                    || peer.getHeight() < 0 || buffer.hasRemaining()) {
+                throw new IllegalArgumentException("Invalid peer record");
+            }
             return peer;
-        }catch (Exception e){
+        } catch (Exception e) {
             log.debug("Invalid peer record: {}", e.getClass().getSimpleName());
             return null;
         }
@@ -374,7 +370,9 @@ public class Peer {
         if (length == -1) {
             return null;
         }
-        if (length < 0 || length > 32 || length > buffer.remaining()) throw new IllegalArgumentException("Invalid peer key length");
+        if (length < 0 || length > 32 || length > buffer.remaining()) {
+            throw new IllegalArgumentException("Invalid peer key length");
+        }
         byte[] array = new byte[length];
         buffer.get(array);
         return array;
@@ -388,7 +386,9 @@ public class Peer {
         if (length == -1) {
             return null;
         }
-        if (length < 0 || length > 256 || length > buffer.remaining()) throw new IllegalArgumentException("Invalid peer string length");
+        if (length < 0 || length > 256 || length > buffer.remaining()) {
+            throw new IllegalArgumentException("Invalid peer string length");
+        }
         byte[] strBytes = new byte[length];
         buffer.get(strBytes);
         return new String(strBytes, StandardCharsets.UTF_8);

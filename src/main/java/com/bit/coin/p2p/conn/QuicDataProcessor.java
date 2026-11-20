@@ -4,7 +4,6 @@ import com.bit.coin.p2p.protocol.P2PMessage;
 import com.bit.coin.p2p.protocol.ProtocolEnum;
 import com.bit.coin.p2p.protocol.ProtocolHandler;
 import com.bit.coin.p2p.protocol.ProtocolRegistry;
-import com.google.protobuf.InvalidProtocolBufferException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.*;
 
 import static com.bit.coin.p2p.conn.QuicConnectionManager.getConnection;
@@ -26,7 +24,8 @@ public class QuicDataProcessor {
 
     @Autowired
     private ProtocolRegistry protocolRegistry;
-    @Autowired private com.bit.coin.config.SystemConfig systemConfig;
+    @Autowired
+    private com.bit.coin.config.SystemConfig systemConfig;
 
     // 消费线程池
     private ExecutorService consumerExecutor;
@@ -38,13 +37,14 @@ public class QuicDataProcessor {
     private static final int QUEUE_CAPACITY = 100;  // 线程池任务队列容量
     private static final String THREAD_PREFIX = "quic-consumer-"; // 线程名前缀
 
-
     /**
      * 初始化：启动消费线程池
      */
     @PostConstruct
     public void initConsumer() {
-        if (!systemConfig.isNetworkingEnabled()) return;
+        if (!systemConfig.isNetworkingEnabled()) {
+            return;
+        }
         // 构建线程池（有界队列+拒绝策略，避免OOM/消息丢失）
         consumerExecutor = new ThreadPoolExecutor(
                 CORE_POOL_SIZE,
@@ -66,26 +66,19 @@ public class QuicDataProcessor {
         log.info("Quic批量消费线程池初始化完成");
     }
 
-    /**
-     * 核心逻辑：阻塞等待消息 → 批量提取全部 → 批量处理
-     * 优势：无消息时阻塞（CPU≈0），有消息时批量处理（提升效率）
-     */
+    /** 阻塞等候首条消息，再非阻塞取最多 16 条，一起分发。 */
     private void batchConsume() {
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. 阻塞等待至少1条消息（无消息时挂起，不浪费CPU）
                 QuicMsg firstMsg = QuicConstants.takeMsg();
                 log.debug("获取到首条消息，开始批量提取剩余消息");
 
-                // 2. 批量提取队列中所有剩余消息（原子操作，非阻塞）
                 List<QuicMsg> remainingMsgs = QuicConstants.drainAllMsg();
 
-                // 3. 合并首条+剩余消息，形成完整批量列表
                 List<QuicMsg> batchMsgs = new ArrayList<>(remainingMsgs.size() + 1);
                 batchMsgs.add(firstMsg);
                 batchMsgs.addAll(remainingMsgs);
 
-                // 4. 批量处理消息
                 processBatch(batchMsgs);
                 log.debug("本次批量处理完成，共处理{}条消息", batchMsgs.size());
 
@@ -101,12 +94,8 @@ public class QuicDataProcessor {
         }
     }
 
-    /**
-     * 批量处理消息（核心业务逻辑，根据实际需求修改）
-     * @param batchMsgs 批量消息列表（至少1条）
-     */
+    /** 按出队顺序分发，单条消息失败时继续处理余下消息。 */
     private void processBatch(List<QuicMsg> batchMsgs) {
-        // 示例：遍历处理每条消息（可替换为批量入库、批量转发等）
         for (int i = 0; i < batchMsgs.size(); i++) {
             QuicMsg msg = batchMsgs.get(i);
             try {
@@ -114,71 +103,62 @@ public class QuicDataProcessor {
                 processSingleMsg(msg, i + 1);
             } catch (Exception e) {
                 // 单条消息失败不影响整体，仅记录日志
-                log.error("处理第{}条消息失败（长度：{}字节）", i + 1, msg.getData().length, e);
+                log.error("处理第{}条消息失败（长度：{}字节）", i + 1, msg.wireLength(), e);
             }
         }
     }
 
-    /**
-     * 处理单条消息的具体业务逻辑（替换为你的真实业务）
-     * @param msg 单条Quic消息
-     * @param index 批量中的序号（便于排查问题）
-     */
-    public static boolean completeResponse(QuicMsg msg) throws java.io.IOException {
-        P2PMessage response = P2PMessage.deserialize(msg.getData());
-        if (response == null || !response.isResponse()) return false;
-        QuicConnection connection = getConnection(msg.getConnectionId());
+    /** 响应直接交给等待请求的线程。 */
+    public static boolean completeResponse(QuicMsg msg) {
+        P2PMessage response = msg.message();
+        if (!response.isResponse()) {
+            return false;
+        }
+        // 请求 ID 还需同时匹配连接和发送方，避免其他连接上的同 ID 响应完成本地 future。
+        QuicConnection connection = getConnection(msg.connectionId());
         String id = bytesToHex(response.getRequestId());
         Long expected = QuicConstants.MSG_EXPECTED_CONNECTIONS.getIfPresent(id);
         if (connection == null || !connection.getPeerId().equals(bytesToHex(response.getSenderId()))
-                || expected == null || expected != msg.getConnectionId()) return true;
-        CompletableFuture<QuicMsg> future = MSG_RESPONSE_FUTURECACHE.asMap().remove(id);
-        if (future != null) future.complete(msg);
+                || expected == null || expected != msg.connectionId()) {
+            return true;
+        }
+        CompletableFuture<P2PMessage> future = MSG_RESPONSE_FUTURECACHE.asMap().remove(id);
+        if (future != null) {
+            future.complete(response);
+        }
         return true;
     }
 
-    private void processSingleMsg(QuicMsg msg, int index) {
+    void processSingleMsg(QuicMsg msg, int index) {
         try {
-            log.debug("处理数据时间{}", System.currentTimeMillis());
-
-            // 示例逻辑：打印消息长度（实际场景：解析Protobuf/JSON、写入DB、调用RPC等）
-            log.debug("处理第{}条消息，字节长度：{} ", index, msg.getData().length);
-            P2PMessage deserialize = P2PMessage.deserialize(msg.getData());
-            if (deserialize != null){
-                QuicConnection authenticated = getConnection(msg.getConnectionId());
-                if (!msg.isTrustedLocal() && (authenticated == null
-                        || !authenticated.getPeerId().equals(bytesToHex(deserialize.getSenderId()))
-                        || deserialize.getType() == ProtocolEnum.Handshake_Success_V1.getCode())) return;
-                if (deserialize.isRequest()) {
-                    Map<ProtocolEnum, ProtocolHandler> handlerMap = protocolRegistry.getHandlerMap();
-                    ProtocolHandler protocolHandler = handlerMap.get(ProtocolEnum.fromCode(deserialize.getType()));
-                    if (protocolHandler != null){
-                        byte[] handle = protocolHandler.handle(deserialize);
-                        if (handle != null){
-                            QuicConnection connection = getConnection(msg.getConnectionId());
-                            if (connection!=null){
-                                connection.sendData(handle);
-                            }
-                        }else {
-                            log.debug("处理后为空");
-                        }
-                    }else {
-                        log.info("未注册的协议：{}", deserialize.getType());
-                    }
-                }else if (deserialize.isResponse()) {
-                    log.debug("处理响应时间{}", System.currentTimeMillis());
-                    log.debug("收到响应 时间: {}", System.currentTimeMillis());
-                    completeResponse(msg);
-                }else {
-                    log.info("收到普通消息: {}", deserialize);
-                }
-            }else {
-                log.info("解析失败丢弃");
+            P2PMessage message = msg.message();
+            QuicConnection connection = getConnection(msg.connectionId());
+            if (!msg.trustedLocal() && (connection == null
+                    || !connection.getPeerId().equals(bytesToHex(message.getSenderId()))
+                    || message.getType() == ProtocolEnum.Handshake_Success_V1.getCode())) {
+                return;
             }
-        }catch (InvalidProtocolBufferException e){
-            log.error("解析失败");
-        }catch (Exception e){
-            log.error("处理第{}条消息失败（长度：{}字节）", index, msg.getData().length, e);
+            if (message.isRequest()) {
+                ProtocolHandler handler = protocolRegistry.getHandlerMap()
+                        .get(ProtocolEnum.fromCode(message.getType()));
+                if (handler == null) {
+                    log.info("未注册的协议：{}", message.getType());
+                    return;
+                }
+                byte[] reply = handler.handle(message);
+                if (reply != null) {
+                    QuicConnection active = getConnection(msg.connectionId());
+                    if (active != null) {
+                        active.sendData(reply);
+                    }
+                }
+            } else if (message.isResponse()) {
+                completeResponse(msg);
+            } else {
+                log.debug("收到普通消息，类型={}，长度={}", message.getType(), msg.wireLength());
+            }
+        } catch (Exception e) {
+            log.error("处理第{}条消息失败（长度：{}字节）", index, msg.wireLength(), e);
         }
     }
 
@@ -187,7 +167,9 @@ public class QuicDataProcessor {
      */
     @PreDestroy
     public void destroyConsumer() {
-        if (consumerExecutor == null) return;
+        if (consumerExecutor == null) {
+            return;
+        }
 
         log.info("开始关闭Quic消费线程池");
         consumerExecutor.shutdownNow(); // 停止接收新任务

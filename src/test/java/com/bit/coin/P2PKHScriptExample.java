@@ -23,16 +23,12 @@ public class P2PKHScriptExample {
         System.out.println("私钥(WIF): " + key.getPrivateKeyAsWiF(params));
         System.out.println("公钥(HEX): " + java.util.HexFormat.of().formatHex(key.getPubKey()));
 
-
-
         System.out.println("私钥(WIF)长度: " + key.getPrivKey());
         System.out.println("公钥(HEX)长度: " + key.getPubKey().length);
-
 
         // 2. 创建P2PKH锁定脚本
         Address address = LegacyAddress.fromKey(params, key);
         Script lockingScript = ScriptBuilder.createOutputScript(address);
-
 
         System.out.println("\n=== 锁定脚本 (scriptPubKey) ===");
         System.out.println("地址: " + address);
@@ -72,8 +68,7 @@ public class P2PKHScriptExample {
                 0,
                 lockingScript,
                 Transaction.SigHash.ALL,
-                false
-        );
+                false);
 
         System.out.println("\n签名哈希: " + sigHash.toString());
 
@@ -82,11 +77,10 @@ public class P2PKHScriptExample {
         TransactionSignature txSig = new TransactionSignature(
                 ecdsaSig,
                 Transaction.SigHash.ALL,
-                false
-        );
+                false);
 
         byte[] bytes = txSig.encodeToBitcoin();
-        System.out.println("数组长度{}"+bytes.length);
+        System.out.println("数组长度{}" + bytes.length);
         byte[] pubKey = key.getPubKey();
 
         // 7. 创建解锁脚本 (包含签名和公钥)
@@ -106,7 +100,7 @@ public class P2PKHScriptExample {
         spendingTx.replaceInput(0, input);
 
         Sha256Hash txId = spendingTx.getTxId();
-        System.out.println("交易ID"+txId);
+        System.out.println("交易ID" + txId);
 
         // 9. 测试脚本执行
         System.out.println("\n=== 脚本执行测试 ===");
@@ -132,9 +126,6 @@ public class P2PKHScriptExample {
             e.printStackTrace();
         }
 
-
-
     }
-
 
 }

@@ -91,7 +91,7 @@ __device__ void sha256(uint8_t *data, int len, uint8_t *hash) {
                 block[copyLen] = 0x80;
             }
 
-            // 填充长度（bits）
+            // 填充长度（单位为比特）
             if (64 - copyLen >= 9) {  // 确保有空间存放8字节长度
                 uint64_t bitsLen = (uint64_t)len * 8;
                 for (int i = 0; i < 8; i++) {
@@ -190,6 +190,7 @@ extern "C" __global__ void findValidNonceGPU(
 
     // 计算当前线程负责的nonce范围
     uint32_t nonceRange = endNonce - startNonce + 1;
+    // 这里计算每个线程负责的连续 nonce 数，最后一段截到 endNonce。
     uint32_t threadsPerNonce = (nonceRange + totalThreads - 1) / totalThreads;  // 向上取整
     uint32_t threadStart = startNonce + globalId * threadsPerNonce;
     uint32_t threadEnd = threadStart + threadsPerNonce - 1;
@@ -230,7 +231,7 @@ extern "C" __global__ void findValidNonceGPU(
         sha256(headerCopy, 80, hash1);  // 第一次哈希
         sha256(hash1, 32, hash2);       // 第二次哈希
         // 新增：反转哈希字节序，与CPU端保持一致
-        reverseBytes(hash2, 32);  // 关键修改：反转32字节哈希
+        reverseBytes(hash2, 32);  // 将双 SHA-256 的摘要反转为与目标值相同的比较顺序。
 
         // 检查哈希是否有效
         if (isHashValid(hash2, target)) {

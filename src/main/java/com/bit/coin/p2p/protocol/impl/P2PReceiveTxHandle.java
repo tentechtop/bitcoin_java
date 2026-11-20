@@ -12,13 +12,12 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 
-
 import static com.bit.coin.p2p.conn.QuicConstants.EXIST_RESOURCE_CACHE;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Component
-public class P2PReceiveTxHandle implements ProtocolHandler.VoidProtocolHandler{
+public class P2PReceiveTxHandle implements ProtocolHandler.VoidProtocolHandler {
 
     @Autowired
     private TxPool txPool;
@@ -31,13 +30,13 @@ public class P2PReceiveTxHandle implements ProtocolHandler.VoidProtocolHandler{
         byte[] data = requestParams.getData();
         byte[] senderId = requestParams.getSenderId();
         Transaction deserialize = Transaction.deserialize(data);
-        if (deserialize!=null){
+        if (deserialize != null) {
             log.info("收到 交易信息{}", deserialize.toString());
             //是否已经存在
             Integer ifPresent = EXIST_RESOURCE_CACHE.getIfPresent(bytesToHex(deserialize.getTxId()));
-            if (ifPresent==null){
+            if (ifPresent == null) {
                 Transaction txByHash = blockChainService.getTxByHash(deserialize.getTxId());
-                if (txByHash==null){
+                if (txByHash == null) {
                     txPool.addTx(deserialize);
                 }
             }

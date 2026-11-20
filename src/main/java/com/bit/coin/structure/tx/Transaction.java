@@ -34,8 +34,9 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
 @Data
-@JsonPropertyOrder({"txId", "version", "lockTime","inputs","outputs","time","timeStr","height"})  // 按指定顺序输出
+@JsonPropertyOrder({ "txId", "version", "lockTime", "inputs", "outputs", "time", "timeStr", "height" })  // 按指定顺序输出
 public class Transaction {
+
     /**
      * 交易特征
      */
@@ -51,7 +52,7 @@ public class Transaction {
      * 锁定时间
      */
     private long lockTime;
-    
+
     /**
      * 交易输入
      */
@@ -62,19 +63,16 @@ public class Transaction {
      */
     private List<TxOutput> outputs = new ArrayList<>();
 
-
     //当交易版本大于100时 TxInput和TxOutput 是用的脚本
     //交易版本是0和1时 是固定为P2PKH
     //当交易版本大于10000时 支持执行虚拟机
-
-
 
     //..............................扩展字段不参与序列化.........................
     /**
      * 参与交易待花费的UTXO
      */
     @JsonIgnore
-    private Map<String,UTXO> utxoMap;
+    private Map<String, UTXO> utxoMap;
 
     /**
      * 手续费
@@ -91,6 +89,7 @@ public class Transaction {
     private Long time;
 
     private String timeStr;
+
     public String getTimeStr() {
         // 校验：时间戳非空 且 为有效正整数
         if (time != null && time > 0) {
@@ -100,7 +99,6 @@ public class Transaction {
         // 无时间时返回空字符串
         return "";
     }
-
 
     /**
      * 区块高度
@@ -112,7 +110,6 @@ public class Transaction {
      */
     @JsonSerialize(using = HexByteArraySerializer.class)
     private byte[] hash;
-
 
     /**
      * 加入交易池时间
@@ -126,9 +123,6 @@ public class Transaction {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private Long broadcastTime;
 
-
-
-
     /**
      * 状态
      */
@@ -136,140 +130,59 @@ public class Transaction {
 
     private String statusStr;
 
-    public String getStatusStr(){
+    public String getStatusStr() {
         return TransactionStatusResolver.toString(status);
     }
 
-
-
-
-    //验证交易合法性
-    //TODO 将固定的改成脚本验证即可
     public boolean validate() {
         return TransactionValidator.validate(this);
     }
 
-
     public static final int TX_ID_LENGTH = 32;      // 交易ID长度
 
-    // SIGHASH类型
-    public static final byte SIGHASH_ALL = 0x01;//锁定输入和输出 不允许篡改
-    public static final byte SIGHASH_NONE = 0x02;//锁定所有输入 不锁定输出 空支票
-    public static final byte SIGHASH_SINGLE = 0x03; //所有输入 定向支付 只签名对应的输出 第 1 个输入的签名只锁定第 1 个输出。如果输入比输出多，多余的输入对应的输出视为 “空”。这用于需要将多个输入的资金分别发送到不同地址的场景。
-    public static final byte SIGHASH_ANYONECANPAY = (byte) 0x80; // 只保留当前输入 输入锁定  控制其他输入是否可修改
-    //组合体
-    public static final byte SIGHASH_ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY;    // 0x01 | 0x10
-    public static final byte SIGHASH_NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY;   // 0x02 | 0x10
-    public static final byte SIGHASH_SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY;; // 0x03 | 0x10
-
-    //SIGHASH_ALL (0x01) - 标准支付
-    // 含义：
-    // 输入：锁定所有输入（不能添加/删除/修改任何输入）
-    // 输出：锁定所有输出（不能添加/删除/修改任何输出）
-    // 应用场景：
-    // - 普通转账
-    // - 大多数钱包默认使用
-    // - 最安全，防止任何篡改
-
-    //SIGHASH_NONE (0x02) - 空支票
-    // 允许修改输出的"空支票"
-    // 含义：
-    // 输入：锁定所有输入
-    // 输出：不锁定任何输出（可以任意修改、添加、删除输出）
-    // 应用场景：
-    // - 委托他人决定资金去向
-    // - 复杂多方协商的第一阶段
-    // - 高级合约场景
-
-    //SIGHASH_SINGLE (0x03) - 定向支付
-    // 每个输入对应一个输出
-    // 第i个输入只锁定第i个输出
-    // 含义：
-    // 输入：锁定所有输入
-    // 输出：只锁定与签名输入相同索引的输出
-    // 特殊情况：如果输入索引 >= 输出数量，则不锁定任何输出
-    // 应用场景：
-    // - 合并多个输入，分别支付给不同人
-    // - CoinJoin隐私交易
-    // - 复杂的资金分配
-
-
-    //CoinJoin隐私交易 多个用户合并输入，但只关心自己的部分
-    // Alice和Bob各自只签名自己的输入
-    // 但锁定所有输出（确保资金去向正确）
-    // 任何人都可以添加更多输入（ANYONECANPAY）
-    //众筹/捐款
-    // 捐款人：
-    // 1. 不关心其他输入（ANYONECANPAY：允许添加更多捐款人）
-    // 2. 但关心输出必须转到项目地址（ALL：锁定所有输出）
-
-    //SIGHASH_ALL|ANYONECANPAY (0x81) - 联合支付
-    // 任何人都可以添加输入，但输出固定
-    //signature = sign(tx, SIGHASH_ALL | SIGHASH_ANYONECANPAY);
-    // 含义：
-    //输入：只锁定当前输入（其他人可以添加/修改其他输入）
-    //输出：锁定所有输出
-    //应用场景：
-    //众筹捐款
-    //多人联合支付
-    //支付通道的协作开通
-
-
-    //SIGHASH_NONE|ANYONECANPAY (0x82) - 灵活联合 最灵活的模式
-    //含义：
-    //输入：只锁定当前输入
-    //输出：不锁定任何输出
-
-
-
-
+    // 低五位选择签名覆盖的输出范围，高位 ANYONECANPAY 决定是否只签当前输入。
+    public static final byte SIGHASH_ALL = 0x01;  // 签名覆盖全部输出
+    public static final byte SIGHASH_NONE = 0x02;  // 签名不覆盖任何输出
+    public static final byte SIGHASH_SINGLE = 0x03;  // 只签当前输入同索引的输出，缺少该输出时拒绝签名
+    public static final byte SIGHASH_ANYONECANPAY = (byte) 0x80;  // 仅将当前输入纳入签名数据，可与上述三种模式组合
+    public static final byte SIGHASH_ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY;
+    public static final byte SIGHASH_NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY;
+    public static final byte SIGHASH_SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY;;
 
     // 序列化相关常量
     public static final int VERSION_SIZE = 4;       // 版本号长度
     public static final int LOCK_TIME_SIZE = 4;     // 锁定时间长度
     public static final int TX_ID_SIZE = 32;        // 交易ID长度
 
-
-    public byte[] getTxId(){
-        if (txId==null){
-            txId=calculateTxId();
+    public byte[] getTxId() {
+        if (txId == null) {
+            txId = calculateTxId();
         }
         return txId;
     }
 
-
-    public byte[] calculateTxId()  {
+    /** 对不含 txId 的交易编码做一次 SHA-256，得到交易标识。 */
+    public byte[] calculateTxId() {
         byte[] serialize = this.serializeWithOutTxId();
         return Sha.applySHA256(serialize);
     }
 
-
-    //使用私钥给一笔交易签名(交易所有输入数据的解锁脚本都为空)
+    // 使用同一密钥按 SIGHASH_ALL 签署各个输入，来源锁定脚本从 utxoMap 读取。
     public void sign(byte[] privateKey, byte[] publicKey) {
-        //创建临时交易用于签名
-        for (int i = 0; i < inputs.size(); i++){
+        for (int i = 0; i < inputs.size(); i++) {
             TxInput input = inputs.get(i);
             byte[] txId1 = input.getTxId();
             int index = input.getIndex();
             UTXO utxo = utxoMap.get(bytesToHex(UTXO.getKey(txId1, index)));
             byte[] scriptPubKey = utxo.getScript();
-            byte[] signature = Ed25519Signer.fastSign(privateKey, Sha.applySHA256(prepareDataForSigning(i, scriptPubKey, SIGHASH_ALL)));
+            byte[] signature = Ed25519Signer.fastSign(privateKey,
+                    Sha.applySHA256(prepareDataForSigning(i, scriptPubKey, SIGHASH_ALL)));
             //将签名和公钥组合为解锁脚本
-            input.setSignatureAndPublicKey(signature,SIGHASH_ALL, publicKey);
+            input.setSignatureAndPublicKey(signature, SIGHASH_ALL, publicKey);
         }
     }
 
-
-    /**
-     * 准备签名数据（支持所有 SIGHASH 类型）。
-     * 此方法会根据给定的 sighashType 创建一个交易副本，并对其进行修改，
-     * 以生成最终用于哈希计算的字节数组。
-     *
-     * @param inputIndex   当前正在签名的输入的索引。
-     * @param scriptPubKey 与当前输入关联的前一个输出的锁定脚本。
-     * @param sighashType  签名哈希类型 (e.g., SIGHASH_ALL, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)。
-     * @return 用于 SHA256(SHA256(data)) 哈希计算的字节数组。
-     */
+    /** 按 SIGHASH 范围构造当前输入的待签名字节，末尾附类型；调用方取一次 SHA-256 后签名。 */
     public byte[] prepareDataForSigning(int inputIndex, byte[] scriptPubKey, byte sighashType) {
         if (!TransactionValidator.validSignatureType(sighashType) || inputIndex < 0 || inputIndex >= inputs.size()) {
             throw new IllegalArgumentException("Invalid signature type or input index");
@@ -283,7 +196,9 @@ public class Transaction {
         copy.setVersion(version);
         copy.setLockTime(lockTime);
         for (int i = 0; i < inputs.size(); i++) {
-            if (anyoneCanPay && i != inputIndex) continue;
+            if (anyoneCanPay && i != inputIndex) {
+                continue;
+            }
             TxInput original = inputs.get(i);
             TxInput input = new TxInput();
             input.setTxId(original.getTxId());
@@ -314,8 +229,8 @@ public class Transaction {
         }
     }
 
-    public byte[] serializeWithOutTxId()  {
-        try{
+    public byte[] serializeWithOutTxId() {
+        try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             DataOutputStream dos = new DataOutputStream(baos);
             com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, version);
@@ -330,8 +245,8 @@ public class Transaction {
             com.bit.coin.utils.SerializeUtils.writeLittleEndianInt(dos, (int) lockTime);
             dos.close();
             return baos.toByteArray();
-        }catch (Exception e){
-            throw new IllegalArgumentException("序列化失败:",e);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("序列化失败:", e);
         }
     }
 
@@ -347,7 +262,9 @@ public class Transaction {
         }
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(data))) {
             Transaction tx = deserializeWithOutTxId(in);
-            if (in.available() != 0) throw new IOException("Trailing transaction data");
+            if (in.available() != 0) {
+                throw new IOException("Trailing transaction data");
+            }
             return tx;
         }
     }
@@ -373,7 +290,7 @@ public class Transaction {
      * @return Transaction对象
      * @throws IOException 如果发生I/O错误
      */
-    public static Transaction deserialize(byte[] data)  {
+    public static Transaction deserialize(byte[] data) {
         try {
             // 1. 检查数据长度是否足够
             if (data == null || data.length < TX_ID_SIZE || data.length > TransactionValidator.MAX_TRANSACTION_BYTES) {
@@ -390,8 +307,8 @@ public class Transaction {
             // 4. 设置txId并返回
             tx.setTxId(txId);
             return tx;
-        }catch (Exception e){
-            throw new IllegalArgumentException("交易序列化失败",e);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("交易序列化失败", e);
         }
     }
 
@@ -419,7 +336,6 @@ public class Transaction {
         return tx;
     }
 
-
     /**
      * 从 DataInputStream 反序列化交易数据（不包含txId）。
      * @param dis 数据输入流
@@ -434,7 +350,9 @@ public class Transaction {
 
         // 读取输入数量
         int inputCount = SerializeUtils.readVarInt(dis);
-        if (inputCount < 1 || inputCount > TransactionValidator.MAX_INPUTS) throw new IOException("Invalid input count");
+        if (inputCount < 1 || inputCount > TransactionValidator.MAX_INPUTS) {
+            throw new IOException("Invalid input count");
+        }
         for (int i = 0; i < inputCount; i++) {
             TxInput input = TxInput.deserialize(dis);
             tx.getInputs().add(input);
@@ -442,7 +360,9 @@ public class Transaction {
 
         // 读取输出数量
         int outputCount = SerializeUtils.readVarInt(dis);
-        if (outputCount < 1 || outputCount > TransactionValidator.MAX_OUTPUTS) throw new IOException("Invalid output count");
+        if (outputCount < 1 || outputCount > TransactionValidator.MAX_OUTPUTS) {
+            throw new IOException("Invalid output count");
+        }
         for (int i = 0; i < outputCount; i++) {
             TxOutput output = TxOutput.deserialize(dis);
             tx.getOutputs().add(output);
@@ -453,8 +373,6 @@ public class Transaction {
 
         return tx;
     }
-
-
 
     /**
      * 估算VarInt的大小
@@ -473,9 +391,6 @@ public class Transaction {
         }
     }
 
-
-
-
     /**
      * 判断是否为铸币交易
      */
@@ -484,11 +399,10 @@ public class Transaction {
         return inputs != null && inputs.size() == 1 && inputs.getFirst() != null && inputs.getFirst().isCoinbase();
     }
 
-
     public static void main(String[] args) throws IOException {
-        System.out.println("打印{}"+SIGHASH_ALL_ANYONECANPAY);
-        System.out.println("打印{}"+SIGHASH_NONE_ANYONECANPAY);
-        System.out.println("打印{}"+SIGHASH_SINGLE_ANYONECANPAY);
+        System.out.println("打印{}" + SIGHASH_ALL_ANYONECANPAY);
+        System.out.println("打印{}" + SIGHASH_NONE_ANYONECANPAY);
+        System.out.println("打印{}" + SIGHASH_SINGLE_ANYONECANPAY);
 
         System.out.println("===== Transaction 序列化/反序列化测试 =====\n");
 
@@ -526,7 +440,7 @@ public class Transaction {
 
         // 创建输出
         TxOutput output1 = new TxOutput();
-        output1.setValue(1000000L); // 1 BTC in satoshis
+        output1.setValue(1000000L); // 100 万聪，相当于 0.01 BTC
         byte[] scriptPubKey1 = new byte[20];
         for (int i = 0; i < 20; i++) {
             scriptPubKey1[i] = (byte) (i * 2);
@@ -534,7 +448,7 @@ public class Transaction {
         output1.setScriptPubKey(scriptPubKey1);
 
         TxOutput output2 = new TxOutput();
-        output2.setValue(500000L); // 0.5 BTC in satoshis
+        output2.setValue(500000L); // 50 万聪，相当于 0.005 BTC
         byte[] scriptPubKey2 = new byte[20];
         for (int i = 0; i < 20; i++) {
             scriptPubKey2[i] = (byte) ((i * 3) % 256);
@@ -555,7 +469,7 @@ public class Transaction {
         byte[] serialized = tx1.serializeWithOutTxId();
         System.out.println("序列化后字节长度: " + serialized.length + " 字节");
         System.out.println("序列化结果（前64字节）: " + bytesToHex(
-            serialized.length > 64 ? java.util.Arrays.copyOf(serialized, 64) : serialized));
+                serialized.length > 64 ? java.util.Arrays.copyOf(serialized, 64) : serialized));
 
         // 反序列化
         System.out.println("\n=== 反序列化交易 ===");
@@ -564,8 +478,10 @@ public class Transaction {
         // 验证数据
         System.out.println("版本: " + tx2.getVersion() + " (匹配: " + (tx2.getVersion() == tx1.getVersion()) + ")");
         System.out.println("锁定时间: " + tx2.getLockTime() + " (匹配: " + (tx2.getLockTime() == tx1.getLockTime()) + ")");
-        System.out.println("输入数量: " + tx2.getInputs().size() + " (匹配: " + (tx2.getInputs().size() == tx1.getInputs().size()) + ")");
-        System.out.println("输出数量: " + tx2.getOutputs().size() + " (匹配: " + (tx2.getOutputs().size() == tx1.getOutputs().size()) + ")");
+        System.out.println("输入数量: " + tx2.getInputs().size() + " (匹配: "
+                + (tx2.getInputs().size() == tx1.getInputs().size()) + ")");
+        System.out.println("输出数量: " + tx2.getOutputs().size() + " (匹配: "
+                + (tx2.getOutputs().size() == tx1.getOutputs().size()) + ")");
 
         // 验证输入
         System.out.println("\n=== 输入验证 ===");
@@ -573,9 +489,11 @@ public class Transaction {
             TxInput originalInput = tx1.getInputs().get(i);
             TxInput deserializedInput = tx2.getInputs().get(i);
             System.out.println("输入 " + i + ":");
-            System.out.println("  交易ID匹配: " + java.util.Arrays.equals(originalInput.getTxId(), deserializedInput.getTxId()));
+            System.out.println(
+                    "  交易ID匹配: " + java.util.Arrays.equals(originalInput.getTxId(), deserializedInput.getTxId()));
             System.out.println("  索引匹配: " + (originalInput.getIndex() == deserializedInput.getIndex()));
-            System.out.println("  脚本匹配: " + java.util.Arrays.equals(originalInput.getScriptSig(), deserializedInput.getScriptSig()));
+            System.out.println("  脚本匹配: "
+                    + java.util.Arrays.equals(originalInput.getScriptSig(), deserializedInput.getScriptSig()));
         }
 
         // 验证输出
@@ -585,23 +503,25 @@ public class Transaction {
             TxOutput deserializedOutput = tx2.getOutputs().get(i);
             System.out.println("输出 " + i + ":");
             System.out.println("  金额匹配: " + (originalOutput.getValue() == deserializedOutput.getValue()));
-            System.out.println("  脚本匹配: " + java.util.Arrays.equals(originalOutput.getScriptPubKey(), deserializedOutput.getScriptPubKey()));
+            System.out.println("  脚本匹配: "
+                    + java.util.Arrays.equals(originalOutput.getScriptPubKey(), deserializedOutput.getScriptPubKey()));
         }
 
         // 再次序列化反序列化以验证一致性
         System.out.println("\n=== 一致性验证 ===");
         byte[] serialized2 = tx2.serializeWithOutTxId();
-        System.out.println("第二次序列化长度: " + serialized2.length + " (匹配: " + (serialized2.length == serialized.length) + ")");
+        System.out.println(
+                "第二次序列化长度: " + serialized2.length + " (匹配: " + (serialized2.length == serialized.length) + ")");
         System.out.println("第二次序列化内容匹配: " + java.util.Arrays.equals(serialized, serialized2));
 
         Transaction tx3 = deserializeWithOutTxId(serialized2);
         byte[] serialize3 = tx3.serializeWithOutTxId();
-        System.out.println("第三次序列化长度: " + serialize3.length + " (匹配: " + (serialize3.length == serialized.length) + ")");
+        System.out
+                .println("第三次序列化长度: " + serialize3.length + " (匹配: " + (serialize3.length == serialized.length) + ")");
         System.out.println("第三次序列化内容匹配: " + java.util.Arrays.equals(serialized, serialize3));
 
         System.out.println("\n===== 测试完成 =====");
     }
-
 
     /**
      * 区块索引 [区块Hash 32字节][4字节位置索引]
@@ -629,7 +549,6 @@ public class Transaction {
         blockIndex[35] = (byte) ((index >> 24) & 0xFF);
         return blockIndex;
     }
-
 
     /**
      * 从区块索引字节数组中解析区块哈希和交易索引
@@ -663,7 +582,7 @@ public class Transaction {
     @JsonIgnore
     public List<String> getSpendingUTXOKeyList() {
         boolean coinbase = isCoinbase();
-        if (coinbase){
+        if (coinbase) {
             return null;
         }
         ArrayList<String> utxos = new ArrayList<>();
@@ -676,11 +595,10 @@ public class Transaction {
         return utxos;
     }
 
-
     @JsonIgnore
     public List<String> getPendingConfirmationOfReceipt() {
         boolean coinbase = isCoinbase();
-        if (coinbase){
+        if (coinbase) {
             return null;
         }
         ArrayList<String> utxos = new ArrayList<>();
@@ -726,7 +644,7 @@ public class Transaction {
             totalSize += LOCK_TIME_SIZE;
 
             // 将计算结果赋值给实例变量size，保持数据一致性
-            this.size =  totalSize;
+            this.size = totalSize;
 
             return totalSize;
         } catch (Exception e) {
@@ -736,9 +654,7 @@ public class Transaction {
         }
     }
 
-
-
-    public byte[] calculateSigHash(int inputIndex,byte signatureType) {
+    public byte[] calculateSigHash(int inputIndex, byte signatureType) {
         // 1. 参数合法性校验
         if (inputIndex < 0 || inputIndex >= inputs.size()) {
             throw new IllegalArgumentException("输入索引非法：inputIndex=" + inputIndex + "，输入总数=" + inputs.size());
@@ -764,7 +680,6 @@ public class Transaction {
         // 4. 计算双重 SHA256 哈希（比特币标准：SHA256(SHA256(data))）
         byte[] firstHash = Sha.applySHA256(dataToSign);
 
-
         log.debug("SigHash计算完成 | 输入索引={} | SighashType=0x{} | SigHash={}",
                 inputIndex,
                 Integer.toHexString(SIGHASH_ALL & 0xFF),
@@ -772,7 +687,5 @@ public class Transaction {
 
         return firstHash;
     }
-
-
 
 }

@@ -11,20 +11,21 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 public class SnowflakeIdGenerator {
-    // ====================== 雪花算法核心常量 ======================
+
+    // ID 从高到低依次为符号位、相对毫秒时间、节点号和毫秒内序号。
     private static final int SIGN_BIT = 1;
     private static final int TIMESTAMP_BIT = 41;
     private static final int NODE_ID_BIT = 2;
     private static final int SEQUENCE_BIT = 22 - NODE_ID_BIT;
 
-    private static final long MAX_NODE_ID = (1L << NODE_ID_BIT) - 1;    // 511
-    private static final long MAX_SEQUENCE = (1L << SEQUENCE_BIT) - 1;  // 8191
+    private static final long MAX_NODE_ID = (1L << NODE_ID_BIT) - 1;  // 节点号上限，由节点位宽决定
+    private static final long MAX_SEQUENCE = (1L << SEQUENCE_BIT) - 1;  // 同一节点同一毫秒内的最大序号，从 0 起计
 
     private static final int NODE_ID_SHIFT = SEQUENCE_BIT;
     private static final int TIMESTAMP_SHIFT = NODE_ID_BIT + SEQUENCE_BIT;
 
-    private static final long START_TIMESTAMP = 1735689600000L;
-    private static final long TIME_BACKWARD_THRESHOLD = 5L;
+    private static final long START_TIMESTAMP = 1735689600000L;  // 相对时间的起点，2025-01-01 00:00:00 UTC
+    private static final long TIME_BACKWARD_THRESHOLD = 5L;  // 可等待时钟追平的最大回拨毫秒数，超过即拒绝生成 ID
 
     // ====================== 静态缓存节点ID（核心修改） ======================
     // 缓存的节点ID，类加载时预热生成，所有实例复用
@@ -49,8 +50,7 @@ public class SnowflakeIdGenerator {
     public SnowflakeIdGenerator(long nodeId) {
         if (nodeId < 0 || nodeId > MAX_NODE_ID) {
             throw new IllegalArgumentException(
-                    String.format("Node ID must be between 0 and %d (current: %d)", MAX_NODE_ID, nodeId)
-            );
+                    String.format("Node ID must be between 0 and %d (current: %d)", MAX_NODE_ID, nodeId));
         }
         this.nodeId = nodeId;
     }
@@ -60,7 +60,7 @@ public class SnowflakeIdGenerator {
         this.nodeId = CACHED_NODE_ID;
     }
 
-    // ====================== 核心方法 ======================
+    /** 同一毫秒递增序号，序号耗尽后等到下一毫秒再分配。 */
     public synchronized long nextId() {
         long currentTimestamp = System.currentTimeMillis();
 
@@ -69,8 +69,7 @@ public class SnowflakeIdGenerator {
             long timeDiff = lastTimestamp - currentTimestamp;
             if (timeDiff > TIME_BACKWARD_THRESHOLD) {
                 throw new RuntimeException(
-                        String.format("Clock moved backwards! Refuse generate ID for %dms", timeDiff)
-                );
+                        String.format("Clock moved backwards! Refuse generate ID for %dms", timeDiff));
             }
             // 轻微回拨，等待时钟追上
             while (currentTimestamp < lastTimestamp) {
@@ -143,7 +142,7 @@ public class SnowflakeIdGenerator {
 
             // 第二步：MAC获取失败，用安全随机生成
             if (!macSuccess) {
-                // SecureRandom生成0-511的非负整数
+                // 将随机值映射到节点号范围。
                 nodeId = Math.abs(SECURE_RANDOM.nextLong()) % (MAX_NODE_ID + 1);
                 log.info("ℹ使用安全随机生成节点ID：{}", nodeId);
             } else {
@@ -179,8 +178,8 @@ public class SnowflakeIdGenerator {
         int perThreadCount = 10000;
         CountDownLatch latch = new CountDownLatch(threadCount);
         AtomicLong duplicateCount = new AtomicLong(0);
-        java.util.concurrent.ConcurrentHashMap<Long, Boolean> idMap =
-                new java.util.concurrent.ConcurrentHashMap<>(threadCount * perThreadCount);
+        java.util.concurrent.ConcurrentHashMap<Long, Boolean> idMap = new java.util.concurrent.ConcurrentHashMap<>(
+                threadCount * perThreadCount);
 
         for (int i = 0; i < threadCount; i++) {
             new Thread(() -> {
@@ -196,7 +195,6 @@ public class SnowflakeIdGenerator {
         }
         latch.await();
         System.out.println("✅ 并发生成" + (threadCount * perThreadCount) + "个ID完成，重复ID数量：" + duplicateCount.get());
-
 
         long l = generator1.nextId();
         System.out.println("✅ 生成的ID：" + l);

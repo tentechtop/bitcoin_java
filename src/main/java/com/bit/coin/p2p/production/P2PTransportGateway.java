@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface P2PTransportGateway {
+
     Optional<P2PTransportConnection> connect(P2PAddress address);
 
     boolean disconnect(String peerIdHex);

@@ -1,6 +1,7 @@
 package com.bit.coin.net;
 
 import com.bit.coin.blockchain.BlockChainServiceImpl;
+import com.bit.coin.blockchain.ChainTipSnapshot;
 import com.bit.coin.blockchain.Landmark;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.p2p.kad.RoutingTable;
@@ -20,15 +21,13 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -45,10 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
-import static com.bit.coin.blockchain.BlockChainServiceImpl.mainTipBlock;
-import static com.bit.coin.p2p.conn.QuicConnectionManager.staticSendData;
+import static com.bit.coin.p2p.conn.QuicConnectionManager.sendRequest;
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
 @Slf4j
@@ -56,13 +55,14 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @RequiredArgsConstructor
 public class NetServiceImpl implements NetService {
 
-    private static final int MAX_SYNC_PEERS = 8;
+    private static final int MAX_SYNC_PEERS = 8;  // 每轮用于选择同步目标的对端总数上限
     private static final int MAX_HEADERS_PER_REQUEST = BlockHeadersPayload.MAX_HEADERS_PER_RESPONSE;
-    private static final int MAX_IN_FLIGHT_BLOCKS = 128;
-    private static final int MAX_CONCURRENT_REQUESTS_PER_NODE = 3;
-    private static final int BLOCK_FETCH_TIMEOUT_SECONDS = 15;
-    private static final int BLOCK_FETCH_RETRY_TIMES = 2;
+    private static final int MAX_IN_FLIGHT_BLOCKS = 128;  // 已提交下载、尚未按高度验证的区块数上限
+    private static final int MAX_CONCURRENT_REQUESTS_PER_NODE = 3;  // 同一对端可同时处理的同步请求数
+    private static final int BLOCK_FETCH_TIMEOUT_SECONDS = 15;  // 等候对端请求名额和等候网络响应各自的超时秒数
+    private static final int BLOCK_FETCH_RETRY_TIMES = 2;  // 首次请求失败后的额外重试轮数
     private static final int RECENT_ERROR_LIMIT = 20;
+    // 先按累计工作量、高度和最近活跃时间排序，再选对端并按链顶分组。
     private static final Comparator<SyncPeer> SYNC_PEER_ORDER = Comparator
             .comparing((SyncPeer candidate) -> candidate.tip().chainWork())
             .thenComparingInt(candidate -> candidate.tip().height())
@@ -75,6 +75,7 @@ public class NetServiceImpl implements NetService {
             TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(1000),
             new ThreadFactory() {
+
                 private final AtomicInteger threadNum = new AtomicInteger(1);
 
                 @Override
@@ -84,8 +85,7 @@ public class NetServiceImpl implements NetService {
                     return thread;
                 }
             },
-            new ThreadPoolExecutor.CallerRunsPolicy()
-    );
+            new ThreadPoolExecutor.CallerRunsPolicy());
 
     @Autowired
     private RoutingTable routingTable;
@@ -138,6 +138,7 @@ public class NetServiceImpl implements NetService {
         return startSync(true);
     }
 
+    /** 异步启动同步并返回进度；已有任务时返回该任务的进度。 */
     private SyncProgress startSync(boolean headersFirst) {
         if (!syncRunning.compareAndSet(false, true)) {
             syncMessage.set("Sync is already running");
@@ -191,7 +192,9 @@ public class NetServiceImpl implements NetService {
         for (var entry : targets.entrySet()) {
             Peer.ChainTip target = entry.getKey();
             UInt256 localWork = getCurrentLocalChainWork();
-            if (target.chainWork().compareTo(localWork) <= 0) break;
+            if (target.chainWork().compareTo(localWork) <= 0) {
+                break;
+            }
             try {
                 syncTarget(entry.getValue(), target, localWork, headersFirst);
                 lastFailure = null;
@@ -204,7 +207,9 @@ public class NetServiceImpl implements NetService {
             }
         }
         localHeight.set(getCurrentLocalHeight());
-        if (lastFailure != null) throw lastFailure;
+        if (lastFailure != null) {
+            throw lastFailure;
+        }
         setStage("COMPLETED", headersFirst ? "Headers-first block sync completed" : "Block sync completed");
     }
 
@@ -224,10 +229,13 @@ public class NetServiceImpl implements NetService {
         int blocksToSync = target.height() - commonAncestor.getHeight();
         startHeight.set(firstHeight);
         totalBlocks.set(blocksToSync);
-        log.info("Start block sync: mode={}, localHeight={}, targetHeight={}, targetWork={}, commonAncestor={}, peers={}",
-                syncMode.get(), getCurrentLocalHeight(), target.height(), target.chainWork(), commonAncestor.getHeight(),
+        log.info(
+                "Start block sync: mode={}, localHeight={}, targetHeight={}, targetWork={}, commonAncestor={}, peers={}",
+                syncMode.get(), getCurrentLocalHeight(), target.height(), target.chainWork(),
+                commonAncestor.getHeight(),
                 syncPeers.size());
 
+        // 先定位共同祖先；headers-first 模式先验证完整头链，再按这些哈希请求区块正文。
         if (headersFirst) {
             totalHeaders.set(blocksToSync);
             setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
@@ -236,12 +244,15 @@ public class NetServiceImpl implements NetService {
             if (last.chainWork().compareTo(localWork) <= 0) {
                 throw new IllegalStateException("Verified headers do not exceed local cumulative work");
             }
-            if (last.chainWork().compareTo(getCurrentLocalChainWork()) <= 0) return;
+            if (last.chainWork().compareTo(getCurrentLocalChainWork()) <= 0) {
+                return;
+            }
             setStage("DOWNLOADING", "Downloading blocks for verified headers");
-            syncBlocksByHeaders(syncPeers, headerChain);
+            syncBlocks(commonAncestor, target,
+                    height -> fetchBlockByHashFromAnyPeer(syncPeers, headerChain.get(height - firstHeight)));
         } else {
             setStage("DOWNLOADING", "Downloading blocks");
-            byte[] tipHash = syncBlocks(syncPeers, commonAncestor, target);
+            byte[] tipHash = syncBlocks(commonAncestor, target, height -> fetchBlockFromAnyPeer(syncPeers, height));
             if (blockChainService.getChainWorkByHash(tipHash).compareTo(localWork) <= 0) {
                 throw new IllegalStateException("Verified blocks do not exceed local cumulative work");
             }
@@ -251,8 +262,8 @@ public class NetServiceImpl implements NetService {
     private List<HeaderSyncRecord> syncHeaders(
             List<Peer> syncPeers,
             Landmark commonAncestor,
-            Peer.ChainTip target
-    ) {
+            Peer.ChainTip target) {
+        // 每批必须接续上批末尾，并逐步累计工作量；后续按已验证的哈希下载区块正文。
         List<HeaderSyncRecord> headerChain = new ArrayList<>();
         byte[] expectedPreviousHash = commonAncestor.getHash();
         UInt256 runningChainWork = blockChainService.getChainWorkByHash(expectedPreviousHash);
@@ -287,8 +298,7 @@ public class NetServiceImpl implements NetService {
             int startHeight,
             Peer.ChainTip target,
             byte[] expectedPreviousHash,
-            UInt256 previousChainWork
-    ) {
+            UInt256 previousChainWork) {
         int stopHeight = startHeight + Math.min(target.height() - startHeight, MAX_HEADERS_PER_REQUEST - 1);
         int startIndex = Math.floorMod(peerCursor.getAndIncrement(), syncPeers.size());
         IllegalArgumentException lastValidationFailure = null;
@@ -335,6 +345,7 @@ public class NetServiceImpl implements NetService {
         if (headers.size() > stopHeight - startHeight + 1) {
             throw new IllegalArgumentException("Header batch exceeds requested height " + stopHeight);
         }
+        // 先检查批次内高度、父子关系和宣称的链顶，再逐条交给链服务做上下文校验并保存。
         List<HeaderSyncRecord> records = new ArrayList<>(headers.size());
         for (BlockHeadersPayload.Entry entry : headers) {
             int expectedHeight = startHeight + records.size();
@@ -363,8 +374,7 @@ public class NetServiceImpl implements NetService {
     private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromPeer(String peerId, int startHeight, int stopHeight) {
         Semaphore semaphore = peerSemaphores.computeIfAbsent(
                 peerId,
-                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
-        );
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
         boolean headerSlotTracked = false;
@@ -376,17 +386,11 @@ public class NetServiceImpl implements NetService {
 
             inFlightHeaders.incrementAndGet();
             headerSlotTracked = true;
-            byte[] bytes = sendSyncRequest(
+            P2PMessage message = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_Headers,
                     BlockHeadersPayload.serializeRequest(startHeight, stopHeight, MAX_HEADERS_PER_REQUEST),
-                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
-            );
-            if (bytes == null || bytes.length == 0) {
-                return List.of();
-            }
-
-            P2PMessage message = P2PMessage.deserialize(bytes);
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
             if (message == null || message.getData() == null || message.getData().length == 0) {
                 return List.of();
             }
@@ -396,7 +400,8 @@ public class NetServiceImpl implements NetService {
             Thread.currentThread().interrupt();
             return List.of();
         } catch (Exception e) {
-            log.warn("Fetch headers failed: peer={}, startHeight={}, stopHeight={}", peerId, startHeight, stopHeight, e);
+            log.warn("Fetch headers failed: peer={}, startHeight={}, stopHeight={}", peerId, startHeight, stopHeight,
+                    e);
             return List.of();
         } finally {
             if (headerSlotTracked) {
@@ -408,25 +413,23 @@ public class NetServiceImpl implements NetService {
         }
     }
 
-    private byte[] syncBlocks(List<Peer> syncPeers, Landmark commonAncestor, Peer.ChainTip target) throws Exception {
+    /** 并行下载区块，按连续高度验链并提交，返回最后验证的区块哈希。 */
+    private byte[] syncBlocks(Landmark commonAncestor, Peer.ChainTip target, IntFunction<BlockFetchResult> fetchBlock)
+            throws Exception {
         CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(syncExecutor);
-        List<Future<BlockFetchResult>> futures = new ArrayList<>();
-        NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
-
-        int firstHeight = commonAncestor.getHeight() + 1;
-        int lastHeight = target.height();
+        Set<Future<BlockFetchResult>> outstanding = new HashSet<>();
+        Map<Integer, BlockFetchResult> pendingBlocks = new HashMap<>();
+        int lastSubmitted = commonAncestor.getHeight();
+        int lastVerified = lastSubmitted;
         byte[] previousHash = commonAncestor.getHash();
-        int nextSubmitHeight = firstHeight;
-        int nextVerifyHeight = firstHeight;
-        int inFlight = 0;
 
         try {
-            while (nextVerifyHeight <= lastHeight) {
-                while (nextSubmitHeight <= lastHeight && inFlight < MAX_IN_FLIGHT_BLOCKS) {
-                    int height = nextSubmitHeight++;
-                    Future<BlockFetchResult> future = completionService.submit(fetchTask(syncPeers, height));
-                    futures.add(future);
-                    inFlight++;
+            // 下载可并行进行，但按高度连续验证并提交，保证父哈希上下文始终已确认。
+            while (lastVerified < target.height()) {
+                // 乱序到达的区块仍占用窗口，直到前置区块通过验证。
+                while (lastSubmitted < target.height() && lastSubmitted - lastVerified < MAX_IN_FLIGHT_BLOCKS) {
+                    int height = ++lastSubmitted;
+                    outstanding.add(completionService.submit(() -> fetchBlock.apply(height)));
                     inFlightBlocks.incrementAndGet();
                 }
 
@@ -437,7 +440,7 @@ public class NetServiceImpl implements NetService {
                     continue;
                 }
 
-                inFlight--;
+                outstanding.remove(completed);
                 inFlightBlocks.decrementAndGet();
                 BlockFetchResult result = completed.get();
                 if (!result.success()) {
@@ -445,91 +448,25 @@ public class NetServiceImpl implements NetService {
                 }
 
                 pendingBlocks.put(result.height(), result);
-                while (pendingBlocks.containsKey(nextVerifyHeight)) {
-                    BlockFetchResult pending = pendingBlocks.remove(nextVerifyHeight);
+                BlockFetchResult pending;
+                while (lastVerified < target.height() && (pending = pendingBlocks.remove(lastVerified + 1)) != null) {
+                    int height = lastVerified + 1;
                     Block block = pending.block();
-                    if (block.getHeight() != nextVerifyHeight
+                    if (block.getHeight() != height
                             || !Arrays.equals(previousHash, block.getBlockHeader().getPreviousHash())
-                            || (nextVerifyHeight == lastHeight && !target.hashHex().equals(bytesToHex(block.getHash())))) {
-                        throw new IllegalStateException("Block " + nextVerifyHeight + " does not match the target branch");
+                            || (height == target.height() && !target.hashHex().equals(bytesToHex(block.getHash())))) {
+                        throw new IllegalStateException("Block " + height + " does not match the target branch");
                     }
                     verifyFetchedBlock(pending);
                     previousHash = block.getHash();
-                    nextVerifyHeight++;
+                    lastVerified = height;
                 }
             }
             return previousHash;
-        } catch (Exception e) {
-            for (Future<BlockFetchResult> future : futures) {
-                if (!future.isDone()) {
-                    future.cancel(true);
-                }
-            }
-            throw e;
+        } finally {
+            outstanding.forEach(future -> future.cancel(true));
+            inFlightBlocks.set(0);
         }
-    }
-
-    private void syncBlocksByHeaders(List<Peer> syncPeers, List<HeaderSyncRecord> headerChain) throws Exception {
-        CompletionService<BlockFetchResult> completionService = new ExecutorCompletionService<>(syncExecutor);
-        List<Future<BlockFetchResult>> futures = new ArrayList<>();
-        NavigableMap<Integer, BlockFetchResult> pendingBlocks = new TreeMap<>();
-
-        int nextSubmitIndex = 0;
-        int nextVerifyIndex = 0;
-        int inFlight = 0;
-
-        try {
-            while (nextVerifyIndex < headerChain.size()) {
-                while (nextSubmitIndex < headerChain.size() && inFlight < MAX_IN_FLIGHT_BLOCKS) {
-                    HeaderSyncRecord record = headerChain.get(nextSubmitIndex++);
-                    Future<BlockFetchResult> future = completionService.submit(fetchTask(syncPeers, record));
-                    futures.add(future);
-                    inFlight++;
-                    inFlightBlocks.incrementAndGet();
-                }
-
-                Future<BlockFetchResult> completed = completionService.poll(1, TimeUnit.SECONDS);
-                if (completed == null) {
-                    localHeight.set(getCurrentLocalHeight());
-                    touchProgress();
-                    continue;
-                }
-
-                inFlight--;
-                inFlightBlocks.decrementAndGet();
-                BlockFetchResult result = completed.get();
-                if (!result.success()) {
-                    throw new IllegalStateException("Failed to fetch block " + result.height() + ": " + result.error());
-                }
-
-                pendingBlocks.put(result.height(), result);
-                while (nextVerifyIndex < headerChain.size()) {
-                    HeaderSyncRecord expected = headerChain.get(nextVerifyIndex);
-                    BlockFetchResult pending = pendingBlocks.get(expected.height());
-                    if (pending == null) {
-                        break;
-                    }
-                    pendingBlocks.remove(expected.height());
-                    verifyFetchedBlock(pending);
-                    nextVerifyIndex++;
-                }
-            }
-        } catch (Exception e) {
-            for (Future<BlockFetchResult> future : futures) {
-                if (!future.isDone()) {
-                    future.cancel(true);
-                }
-            }
-            throw e;
-        }
-    }
-
-    private Callable<BlockFetchResult> fetchTask(List<Peer> syncPeers, int height) {
-        return () -> fetchBlockFromAnyPeer(syncPeers, height);
-    }
-
-    private Callable<BlockFetchResult> fetchTask(List<Peer> syncPeers, HeaderSyncRecord record) {
-        return () -> fetchBlockByHashFromAnyPeer(syncPeers, record);
     }
 
     private BlockFetchResult fetchBlockFromAnyPeer(List<Peer> syncPeers, int height) {
@@ -664,8 +601,7 @@ public class NetServiceImpl implements NetService {
     private Block fetchBlockFromPeer(String peerId, int height) {
         Semaphore semaphore = peerSemaphores.computeIfAbsent(
                 peerId,
-                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
-        );
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
         try {
@@ -675,17 +611,11 @@ public class NetServiceImpl implements NetService {
                 return null;
             }
 
-            byte[] bytes = sendSyncRequest(
+            P2PMessage message = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_By_Height,
                     RocksDb.intToBytes(height),
-                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
-            );
-            if (bytes == null || bytes.length == 0) {
-                return null;
-            }
-
-            P2PMessage message = P2PMessage.deserialize(bytes);
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
             if (message == null || message.getData() == null || message.getData().length == 0) {
                 return null;
             }
@@ -707,8 +637,7 @@ public class NetServiceImpl implements NetService {
     private Block fetchBlockByHashFromPeer(String peerId, byte[] hash) {
         Semaphore semaphore = peerSemaphores.computeIfAbsent(
                 peerId,
-                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE)
-        );
+                ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
         try {
@@ -718,17 +647,11 @@ public class NetServiceImpl implements NetService {
                 return null;
             }
 
-            byte[] bytes = sendSyncRequest(
+            P2PMessage message = sendSyncRequest(
                     peerId,
                     ProtocolEnum.P2P_Query_Block_By_Hash,
                     hash,
-                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000
-            );
-            if (bytes == null || bytes.length == 0) {
-                return null;
-            }
-
-            P2PMessage message = P2PMessage.deserialize(bytes);
+                    BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
             if (message == null || message.getData() == null || message.getData().length == 0) {
                 return null;
             }
@@ -765,8 +688,8 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
-    byte[] sendSyncRequest(String peerId, ProtocolEnum protocol, byte[] request, int timeoutMillis) {
-        return staticSendData(peerId, protocol, request, timeoutMillis);
+    P2PMessage sendSyncRequest(String peerId, ProtocolEnum protocol, byte[] request, int timeoutMillis) {
+        return sendRequest(peerId, protocol, request, timeoutMillis);
     }
 
     private Landmark queryCommonAncestor(List<Peer> peers, int maxAncestorHeight) {
@@ -776,19 +699,17 @@ public class NetServiceImpl implements NetService {
         for (Peer peer : peers) {
             String peerId = peerIdHex(peer);
             try {
-                byte[] bytes = sendSyncRequest(
+                P2PMessage message = sendSyncRequest(
                         peerId,
                         ProtocolEnum.P2P_Query_Common_Ancestor,
                         payload,
-                        BLOCK_FETCH_TIMEOUT_SECONDS * 1000
-                );
-                if (bytes == null || bytes.length == 0) {
+                        BLOCK_FETCH_TIMEOUT_SECONDS * 1000);
+                if (message == null) {
                     trackerFor(peer).recordFailedRequest("Common ancestor returned empty response");
                     continue;
                 }
 
-                P2PMessage message = P2PMessage.deserialize(bytes);
-                if (message == null || message.getData() == null || message.getData().length == 0) {
+                if (message.getData() == null || message.getData().length == 0) {
                     trackerFor(peer).recordFailedRequest("Common ancestor response is invalid");
                     continue;
                 }
@@ -808,6 +729,7 @@ public class NetServiceImpl implements NetService {
         return null;
     }
 
+    /** 筛选累计工作量领先的对端，按其通告的链顶分组。 */
     private Map<Peer.ChainTip, List<Peer>> selectSyncTargets(List<Peer> peers, UInt256 localWork) {
         return peers.stream()
                 .map(SyncPeer::snapshot)
@@ -822,14 +744,16 @@ public class NetServiceImpl implements NetService {
 
     @Override
     public int getCurrentLocalHeight() {
-        Block tip = mainTipBlock;
-        return tip == null ? 0 : tip.getHeight();
+        BlockChainServiceImpl chain = blockChainService;
+        ChainTipSnapshot tip = chain == null ? null : chain.getMainTipSnapshot();
+        return tip == null ? 0 : tip.height();
     }
 
     @Override
     public UInt256 getCurrentLocalChainWork() {
-        Block tip = mainTipBlock;
-        return tip == null ? UInt256.ZERO : tip.getChainWork();
+        BlockChainServiceImpl chain = blockChainService;
+        ChainTipSnapshot tip = chain == null ? null : chain.getMainTipSnapshot();
+        return tip == null ? UInt256.ZERO : tip.chainWork();
     }
 
     @Override
@@ -923,8 +847,7 @@ public class NetServiceImpl implements NetService {
                 bestPeerId.get(),
                 bestPeerHeight.get(),
                 List.copyOf(recentErrors),
-                getSyncPeerStates()
-        );
+                getSyncPeerStates());
     }
 
     @Override
@@ -1069,6 +992,7 @@ public class NetServiceImpl implements NetService {
     }
 
     private record SyncPeer(Peer peer, Peer.ChainTip tip, long lastSeen) {
+
         private static SyncPeer snapshot(Peer peer) {
             return new SyncPeer(peer, peer.chainTip(), peer.getLastSeen());
         }
@@ -1080,13 +1004,14 @@ public class NetServiceImpl implements NetService {
             Block block,
             String error,
             long elapsedMillis,
-            byte[] expectedHash
-    ) {
+            byte[] expectedHash) {
+
         static BlockFetchResult success(int height, String peerId, Block block, long elapsedMillis) {
             return new BlockFetchResult(height, peerId, block, "", elapsedMillis, null);
         }
 
-        static BlockFetchResult success(int height, String peerId, Block block, long elapsedMillis, byte[] expectedHash) {
+        static BlockFetchResult success(int height, String peerId, Block block, long elapsedMillis,
+                byte[] expectedHash) {
             return new BlockFetchResult(height, peerId, block, "", elapsedMillis, expectedHash);
         }
 
@@ -1103,11 +1028,10 @@ public class NetServiceImpl implements NetService {
             int height,
             byte[] hash,
             BlockHeader header,
-            UInt256 chainWork
-    ) {
-    }
+            UInt256 chainWork) {}
 
     private static final class PeerSyncTracker {
+
         private final String peerId;
         private final AtomicReference<String> status = new AtomicReference<>("CONNECTED");
         private final AtomicInteger assignedStartHeight = new AtomicInteger(Integer.MAX_VALUE);
@@ -1196,8 +1120,7 @@ public class NetServiceImpl implements NetService {
                     verifiedBlocks.get(),
                     failedRequests.get(),
                     lastError.get(),
-                    lastUpdatedAtMillis.get()
-            );
+                    lastUpdatedAtMillis.get());
         }
     }
 }

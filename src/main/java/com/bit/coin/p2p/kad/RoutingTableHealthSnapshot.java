@@ -13,6 +13,4 @@ public record RoutingTableHealthSnapshot(
         double averageBucketFill,
         long lookupSuccessCount,
         long lookupFailureCount,
-        int adaptiveAlpha
-) {
-}
+        int adaptiveAlpha) {}

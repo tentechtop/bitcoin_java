@@ -3,11 +3,13 @@ package com.bit.coin.p2p.production;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class AimdCongestionController {
+
+    // MSS 是一个分段的字节数，CWND 是允许的在途字节上限。
     public static final int DEFAULT_MSS = 1400;
     public static final long DEFAULT_MIN_CWND = 2L * DEFAULT_MSS;
     public static final long DEFAULT_INITIAL_CWND = 10L * DEFAULT_MSS;
     public static final long DEFAULT_MAX_CWND = 16L * 1024 * 1024;
-    public static final long DEFAULT_SSTHRESH = 1024L * 1024;
+    public static final long DEFAULT_SSTHRESH = 1024L * 1024;  // 从慢启动切换到拥塞避免的初始阈值，单位为字节
 
     private final int mss;
     private final long minCwnd;
@@ -31,6 +33,7 @@ public class AimdCongestionController {
         this.slowStartThreshold = new AtomicLong(Math.max(minCwnd, slowStartThreshold));
     }
 
+    /** 仅在本地拥塞窗口和对端接收窗口都足够时，增加在途字节数。 */
     public boolean tryReserve(long bytes, long remoteReceiveWindow) {
         if (bytes <= 0 || remoteReceiveWindow <= 0) {
             return false;
@@ -90,8 +93,7 @@ public class AimdCongestionController {
                 slowStartThreshold.get(),
                 inflightBytes.get(),
                 availableWindow(remoteReceiveWindow),
-                mss
-        );
+                mss);
     }
 
     private void halveWindow() {

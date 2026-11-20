@@ -13,6 +13,7 @@ public class BitCoinVM {
      * 包含EIP-2929/2200/1884等所需的核心上下文
      */
     public static class GasContext {
+
         // 内存相关
         public int currentMemSize; // 当前内存大小（按32字节对齐）
         // 存储相关 (SSTORE)
@@ -48,6 +49,7 @@ public class BitCoinVM {
      * 核心更新：EIP-1884, EIP-2929, EIP-1559, EIP-4844等
      */
     public static class OpCode {
+
         // ============ 0x00: 停止和算术操作 ============
         public static final int STOP = 0x00;           // 停止执行
         public static final int ADD = 0x01;           // 加法
@@ -414,12 +416,14 @@ public class BitCoinVM {
             return switch (opcode) {
                 // ============ 停止和算术操作 ============
                 case STOP -> BigInteger.ZERO;
-                case ADD, SUB, LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR -> BigInteger.valueOf(3);
+                case ADD, SUB, LT, GT, SLT, SGT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR ->
+                    BigInteger.valueOf(3);
                 case MUL, DIV, SDIV, MOD, SMOD, SIGNEXTEND -> BigInteger.valueOf(5);
                 case ADDMOD, MULMOD -> BigInteger.valueOf(8);
                 case EXP -> {
                     // EXP: 10 + 5 * 指数的字节数（EIP-160）
-                    yield BigInteger.valueOf(10).add(BigInteger.valueOf(5).multiply(BigInteger.valueOf(context.exponentBytes)));
+                    yield BigInteger.valueOf(10)
+                            .add(BigInteger.valueOf(5).multiply(BigInteger.valueOf(context.exponentBytes)));
                 }
 
                 // ============ 加密操作 ============
@@ -431,7 +435,8 @@ public class BitCoinVM {
 
                 // ============ 环境信息 (EIP-2929) ============
                 case ADDRESS, ORIGIN, CALLER, CALLVALUE, CALLDATASIZE, CODESIZE, GASPRICE, RETURNDATASIZE,
-                     COINBASE, TIMESTAMP, NUMBER, DIFFICULTY, GASLIMIT, CHAINID, BASEFEE, PC, MSIZE, GAS -> BigInteger.valueOf(2);
+                        COINBASE, TIMESTAMP, NUMBER, DIFFICULTY, GASLIMIT, CHAINID, BASEFEE, PC, MSIZE, GAS ->
+                    BigInteger.valueOf(2);
 
                 case CALLDATALOAD, CODECOPY, CALLDATACOPY, EXTCODECOPY, RETURNDATACOPY, MLOAD, MSTORE, MSTORE8 -> {
                     // 内存操作：基础3 + 内存扩展成本
@@ -441,7 +446,9 @@ public class BitCoinVM {
 
                 case BALANCE, EXTCODESIZE, EXTCODEHASH -> {
                     // EIP-1884: 基础700 + EIP-2929冷/热访问成本
-                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode)) ? BigInteger.valueOf(100) : BigInteger.valueOf(2600);
+                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode))
+                            ? BigInteger.valueOf(100)
+                            : BigInteger.valueOf(2600);
                     yield BigInteger.valueOf(700).add(accessCost);
                 }
 
@@ -452,61 +459,74 @@ public class BitCoinVM {
                 case JUMPI -> BigInteger.valueOf(10);
                 case SLOAD -> {
                     // EIP-2929: 冷存储2100，热存储100
-                    yield context.warmStorageSlots.contains(context.storageOldValue) ? BigInteger.valueOf(100) : BigInteger.valueOf(2100);
+                    yield context.warmStorageSlots.contains(context.storageOldValue) ? BigInteger.valueOf(100)
+                            : BigInteger.valueOf(2100);
                 }
                 case SSTORE -> {
                     // EIP-2200: SSTORE的复杂Gas计算（考虑新旧值）
-                    yield calculateSStoreGas(context.storageOldValue, context.storageNewValue, context.warmStorageSlots);
+                    yield calculateSStoreGas(context.storageOldValue, context.storageNewValue,
+                            context.warmStorageSlots);
                 }
 
                 // ============ 推送/复制/交换操作 ============
                 case PUSH1, PUSH2, PUSH3, PUSH4, PUSH5, PUSH6, PUSH7, PUSH8, PUSH9, PUSH10,
-                     PUSH11, PUSH12, PUSH13, PUSH14, PUSH15, PUSH16, PUSH17, PUSH18, PUSH19, PUSH20,
-                     PUSH21, PUSH22, PUSH23, PUSH24, PUSH25, PUSH26, PUSH27, PUSH28, PUSH29, PUSH30,
-                     PUSH31, PUSH32, DUP1, DUP2, DUP3, DUP4, DUP5, DUP6, DUP7, DUP8, DUP9, DUP10,
-                     DUP11, DUP12, DUP13, DUP14, DUP15, DUP16, SWAP1, SWAP2, SWAP3, SWAP4, SWAP5,
-                     SWAP6, SWAP7, SWAP8, SWAP9, SWAP10, SWAP11, SWAP12, SWAP13, SWAP14, SWAP15, SWAP16 -> BigInteger.valueOf(3);
+                        PUSH11, PUSH12, PUSH13, PUSH14, PUSH15, PUSH16, PUSH17, PUSH18, PUSH19, PUSH20,
+                        PUSH21, PUSH22, PUSH23, PUSH24, PUSH25, PUSH26, PUSH27, PUSH28, PUSH29, PUSH30,
+                        PUSH31, PUSH32, DUP1, DUP2, DUP3, DUP4, DUP5, DUP6, DUP7, DUP8, DUP9, DUP10,
+                        DUP11, DUP12, DUP13, DUP14, DUP15, DUP16, SWAP1, SWAP2, SWAP3, SWAP4, SWAP5,
+                        SWAP6, SWAP7, SWAP8, SWAP9, SWAP10, SWAP11, SWAP12, SWAP13, SWAP14, SWAP15, SWAP16 ->
+                    BigInteger.valueOf(3);
 
                 // ============ 日志操作 ============
                 case LOG0 -> {
                     // LOG0: 375 + 8 * 数据字节数
-                    yield BigInteger.valueOf(375).add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
+                    yield BigInteger.valueOf(375)
+                            .add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
                 }
                 case LOG1 -> {
                     // LOG1: 375 + 750 + 8 * 数据字节数
-                    yield BigInteger.valueOf(1125).add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
+                    yield BigInteger.valueOf(1125)
+                            .add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
                 }
                 case LOG2 -> {
                     // LOG2: 375 + 1500 + 8 * 数据字节数
-                    yield BigInteger.valueOf(1875).add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
+                    yield BigInteger.valueOf(1875)
+                            .add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
                 }
                 case LOG3 -> {
                     // LOG3: 375 + 2250 + 8 * 数据字节数
-                    yield BigInteger.valueOf(2625).add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
+                    yield BigInteger.valueOf(2625)
+                            .add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
                 }
                 case LOG4 -> {
                     // LOG4: 375 + 3000 + 8 * 数据字节数
-                    yield BigInteger.valueOf(3375).add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
+                    yield BigInteger.valueOf(3375)
+                            .add(BigInteger.valueOf(8).multiply(BigInteger.valueOf(context.dataLength)));
                 }
 
                 // ============ 系统操作 ============
                 case CREATE, CREATE2 -> {
                     // CREATE/CREATE2: 基础32000 + 新账户25000（如果目标账户不存在）
-                    BigInteger newAccountCost = context.targetAccountExists ? BigInteger.ZERO : BigInteger.valueOf(25000);
+                    BigInteger newAccountCost = context.targetAccountExists ? BigInteger.ZERO
+                            : BigInteger.valueOf(25000);
                     yield BigInteger.valueOf(32000).add(newAccountCost);
                 }
                 case CALL, CALLCODE, DELEGATECALL, STATICCALL -> {
                     // CALL系列: 基础700 + 转账9000 + 新账户25000 + 冷地址访问2600（EIP-2929）
                     BigInteger transferCost = context.isTransfer ? BigInteger.valueOf(9000) : BigInteger.ZERO;
-                    BigInteger newAccountCost = context.targetAccountExists ? BigInteger.ZERO : BigInteger.valueOf(25000);
-                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode)) ? BigInteger.ZERO : BigInteger.valueOf(2600);
+                    BigInteger newAccountCost = context.targetAccountExists ? BigInteger.ZERO
+                            : BigInteger.valueOf(25000);
+                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode)) ? BigInteger.ZERO
+                            : BigInteger.valueOf(2600);
                     yield BigInteger.valueOf(700).add(transferCost).add(newAccountCost).add(accessCost);
                 }
                 case RETURN, REVERT, INVALID -> BigInteger.ZERO;
                 case SELFDESTRUCT -> {
                     // SELFDESTRUCT: 5000（目标账户存在）/25000（目标账户不存在） + 冷地址访问2600
-                    BigInteger baseCost = context.targetAccountExists ? BigInteger.valueOf(5000) : BigInteger.valueOf(25000);
-                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode)) ? BigInteger.ZERO : BigInteger.valueOf(2600);
+                    BigInteger baseCost = context.targetAccountExists ? BigInteger.valueOf(5000)
+                            : BigInteger.valueOf(25000);
+                    BigInteger accessCost = context.warmAddresses.contains(BigInteger.valueOf(opcode)) ? BigInteger.ZERO
+                            : BigInteger.valueOf(2600);
                     yield baseCost.add(accessCost);
                 }
 
@@ -548,7 +568,8 @@ public class BitCoinVM {
          * @param warmSlots 热存储槽列表
          * @return SSTORE的精确Gas成本
          */
-        private static BigInteger calculateSStoreGas(BigInteger oldValue, BigInteger newValue, Set<BigInteger> warmSlots) {
+        private static BigInteger calculateSStoreGas(BigInteger oldValue, BigInteger newValue,
+                Set<BigInteger> warmSlots) {
             // 1. 冷/热访问基础成本
             BigInteger accessCost = warmSlots.contains(oldValue) ? BigInteger.valueOf(100) : BigInteger.valueOf(2100);
 
@@ -582,6 +603,7 @@ public class BitCoinVM {
      * 包含执行合约所需的所有状态
      */
     public static class ExecutionContext {
+
         // 基础执行信息
         public BigInteger pc;                 // 程序计数器
         public BigInteger gas;                // 剩余Gas
@@ -697,6 +719,7 @@ public class BitCoinVM {
          * 日志条目
          */
         public static class LogEntry {
+
             public BigInteger address;       // 日志地址
             public List<BigInteger> topics;  // 日志主题
             public byte[] data;              // 日志数据
@@ -863,6 +886,7 @@ public class BitCoinVM {
      * 包含合约执行的结果信息
      */
     public static class ExecutionResult {
+
         public boolean success;              // 是否成功执行
         public BigInteger gasUsed;           // 已使用的Gas
         public BigInteger gasRefund;         // 应返还的Gas
@@ -927,13 +951,13 @@ public class BitCoinVM {
         @Override
         public String toString() {
             return String.format("ExecutionResult{" +
-                            "success=%s, " +
-                            "gasUsed=%s, " +
-                            "returnData=%s, " +
-                            "revertReason='%s', " +
-                            "logs=%d, " +
-                            "gasCost=%s" +
-                            "}",
+                    "success=%s, " +
+                    "gasUsed=%s, " +
+                    "returnData=%s, " +
+                    "revertReason='%s', " +
+                    "logs=%d, " +
+                    "gasCost=%s" +
+                    "}",
                     success,
                     gasUsed.toString(),
                     bytesToHex(returnData),
@@ -943,7 +967,9 @@ public class BitCoinVM {
         }
 
         public String bytesToHex(byte[] bytes) {
-            if (bytes == null) return "";
+            if (bytes == null) {
+                return "";
+            }
             StringBuilder sb = new StringBuilder();
             for (byte b : bytes) {
                 sb.append(String.format("%02x", b));
@@ -952,14 +978,15 @@ public class BitCoinVM {
         }
     }
 
-
     /**
      * EVM虚拟机实现
      * 完整的以太坊虚拟机实现
      */
     public static class VM {
+
         // 配置选项
         public static class Config {
+
             public boolean enableDebug = false;      // 启用调试模式
             public boolean enableTracing = false;    // 启用执行跟踪
             public boolean enableGasMetering = true; // 启用Gas计量
@@ -975,6 +1002,7 @@ public class BitCoinVM {
 
         // 执行器
         private static class Executor {
+
             private final ExecutionContext ctx;
             private final Config config;
             private final List<ExecutionStep> trace = new ArrayList<>();
@@ -1020,8 +1048,7 @@ public class BitCoinVM {
                 }
 
                 step.gasAfter = ctx.gas;
-                step.stackSnapshot = ctx.stackSize > 0 ?
-                        Arrays.copyOf(ctx.stack, ctx.stackSize) : new BigInteger[0];
+                step.stackSnapshot = ctx.stackSize > 0 ? Arrays.copyOf(ctx.stack, ctx.stackSize) : new BigInteger[0];
 
                 if (config.enableTracing) {
                     trace.add(step);
@@ -1236,7 +1263,8 @@ public class BitCoinVM {
                         if (shift >= 256) {
                             ctx.push(BigInteger.ZERO);
                         } else {
-                            ctx.push(val2.shiftLeft(shift).and(BigInteger.valueOf(2).pow(256).subtract(BigInteger.ONE)));
+                            ctx.push(
+                                    val2.shiftLeft(shift).and(BigInteger.valueOf(2).pow(256).subtract(BigInteger.ONE)));
                         }
                         break;
 
@@ -1455,7 +1483,7 @@ public class BitCoinVM {
                     case OpCode.MSTORE8:
                         offset = ctx.pop().intValue();
                         byte byteVal = ctx.pop().byteValue();
-                        ctx.writeMemory(offset, new byte[]{byteVal});
+                        ctx.writeMemory(offset, new byte[] { byteVal });
                         break;
 
                     case OpCode.SLOAD:
@@ -1546,9 +1574,9 @@ public class BitCoinVM {
                         // ============ 系统操作 ============
                         else if (opcode == OpCode.CREATE || opcode == OpCode.CREATE2) {
                             // 简化实现
-                            ctx.pop(); // value
-                            ctx.pop(); // offset
-                            ctx.pop(); // length
+                            ctx.pop(); // value：转给新合约的金额
+                            ctx.pop(); // offset：初始化代码在内存中的起始偏移量
+                            ctx.pop(); // length：初始化代码的字节数
                             // 返回新合约地址
                             ctx.push(BigInteger.ZERO);
                         }
@@ -1556,13 +1584,13 @@ public class BitCoinVM {
                         else if (opcode == OpCode.CALL || opcode == OpCode.CALLCODE ||
                                 opcode == OpCode.DELEGATECALL || opcode == OpCode.STATICCALL) {
                             // 简化实现
-                            ctx.pop(); // gas
-                            ctx.pop(); // address
-                            ctx.pop(); // value
-                            ctx.pop(); // argsOffset
-                            ctx.pop(); // argsLength
-                            ctx.pop(); // retOffset
-                            ctx.pop(); // retLength
+                            ctx.pop(); // gas：分配给本次调用的 Gas
+                            ctx.pop(); // address：调用目标地址
+                            ctx.pop(); // value：调用传递的金额
+                            ctx.pop(); // argsOffset：输入数据在内存中的起始偏移量
+                            ctx.pop(); // argsLength：输入数据的字节数
+                            ctx.pop(); // retOffset：接收返回数据的内存起始偏移量
+                            ctx.pop(); // retLength：接收返回数据的内存区域大小（字节）
                             // 总是返回成功
                             ctx.push(BigInteger.ONE);
                         }
@@ -1624,7 +1652,6 @@ public class BitCoinVM {
                 return false;
             }
 
-
             /**
              * 将BigInteger转换为字节数组
              */
@@ -1666,6 +1693,7 @@ public class BitCoinVM {
          * 执行步骤记录
          */
         public static class ExecutionStep {
+
             public BigInteger pc;            // 程序计数器
             public int opcode;               // 操作码
             public BigInteger gasBefore;     // 执行前Gas
@@ -1775,11 +1803,11 @@ public class BitCoinVM {
         }
     }
 
-
     /**
      * 操作接口
      */
     private interface Operation {
+
         void execute(ExecutionContext ctx);
     }
 
@@ -1788,6 +1816,7 @@ public class BitCoinVM {
      * 支持完整的EVM操作码生成，包含标签、跳转、内存操作等高级功能
      */
     public static class Assembler {
+
         private List<Byte> code = new ArrayList<>();
         private Map<String, Integer> labels = new HashMap<>();
         private Map<String, List<LabelReference>> labelReferences = new HashMap<>();
@@ -1796,6 +1825,7 @@ public class BitCoinVM {
          * 标签引用记录
          */
         private static class LabelReference {
+
             int position;  // 需要填充的位置
             String label;  // 引用的标签名
 
@@ -2164,8 +2194,12 @@ public class BitCoinVM {
         // ============ 推送操作 ============
         public Assembler push(BigInteger value) {
             int byteCount = (value.bitLength() + 7) / 8;
-            if (byteCount == 0) byteCount = 1;
-            if (byteCount > 32) byteCount = 32;
+            if (byteCount == 0) {
+                byteCount = 1;
+            }
+            if (byteCount > 32) {
+                byteCount = 32;
+            }
 
             int opcode = OpCode.PUSH1 + byteCount - 1;
             code.add((byte) opcode);
@@ -2204,7 +2238,9 @@ public class BitCoinVM {
 
         public Assembler pushBytes(byte[] data) {
             int byteCount = data.length;
-            if (byteCount > 32) byteCount = 32;
+            if (byteCount > 32) {
+                byteCount = 32;
+            }
 
             int opcode = OpCode.PUSH1 + byteCount - 1;
             code.add((byte) opcode);
@@ -2254,22 +2290,69 @@ public class BitCoinVM {
             return this;
         }
 
-        public Assembler dup1() { return dup(1); }
-        public Assembler dup2() { return dup(2); }
-        public Assembler dup3() { return dup(3); }
-        public Assembler dup4() { return dup(4); }
-        public Assembler dup5() { return dup(5); }
-        public Assembler dup6() { return dup(6); }
-        public Assembler dup7() { return dup(7); }
-        public Assembler dup8() { return dup(8); }
-        public Assembler dup9() { return dup(9); }
-        public Assembler dup10() { return dup(10); }
-        public Assembler dup11() { return dup(11); }
-        public Assembler dup12() { return dup(12); }
-        public Assembler dup13() { return dup(13); }
-        public Assembler dup14() { return dup(14); }
-        public Assembler dup15() { return dup(15); }
-        public Assembler dup16() { return dup(16); }
+        public Assembler dup1() {
+            return dup(1);
+        }
+
+        public Assembler dup2() {
+            return dup(2);
+        }
+
+        public Assembler dup3() {
+            return dup(3);
+        }
+
+        public Assembler dup4() {
+            return dup(4);
+        }
+
+        public Assembler dup5() {
+            return dup(5);
+        }
+
+        public Assembler dup6() {
+            return dup(6);
+        }
+
+        public Assembler dup7() {
+            return dup(7);
+        }
+
+        public Assembler dup8() {
+            return dup(8);
+        }
+
+        public Assembler dup9() {
+            return dup(9);
+        }
+
+        public Assembler dup10() {
+            return dup(10);
+        }
+
+        public Assembler dup11() {
+            return dup(11);
+        }
+
+        public Assembler dup12() {
+            return dup(12);
+        }
+
+        public Assembler dup13() {
+            return dup(13);
+        }
+
+        public Assembler dup14() {
+            return dup(14);
+        }
+
+        public Assembler dup15() {
+            return dup(15);
+        }
+
+        public Assembler dup16() {
+            return dup(16);
+        }
 
         // ============ 交换操作 (SWAP) ============
         public Assembler swap(int n) {
@@ -2280,22 +2363,69 @@ public class BitCoinVM {
             return this;
         }
 
-        public Assembler swap1() { return swap(1); }
-        public Assembler swap2() { return swap(2); }
-        public Assembler swap3() { return swap(3); }
-        public Assembler swap4() { return swap(4); }
-        public Assembler swap5() { return swap(5); }
-        public Assembler swap6() { return swap(6); }
-        public Assembler swap7() { return swap(7); }
-        public Assembler swap8() { return swap(8); }
-        public Assembler swap9() { return swap(9); }
-        public Assembler swap10() { return swap(10); }
-        public Assembler swap11() { return swap(11); }
-        public Assembler swap12() { return swap(12); }
-        public Assembler swap13() { return swap(13); }
-        public Assembler swap14() { return swap(14); }
-        public Assembler swap15() { return swap(15); }
-        public Assembler swap16() { return swap(16); }
+        public Assembler swap1() {
+            return swap(1);
+        }
+
+        public Assembler swap2() {
+            return swap(2);
+        }
+
+        public Assembler swap3() {
+            return swap(3);
+        }
+
+        public Assembler swap4() {
+            return swap(4);
+        }
+
+        public Assembler swap5() {
+            return swap(5);
+        }
+
+        public Assembler swap6() {
+            return swap(6);
+        }
+
+        public Assembler swap7() {
+            return swap(7);
+        }
+
+        public Assembler swap8() {
+            return swap(8);
+        }
+
+        public Assembler swap9() {
+            return swap(9);
+        }
+
+        public Assembler swap10() {
+            return swap(10);
+        }
+
+        public Assembler swap11() {
+            return swap(11);
+        }
+
+        public Assembler swap12() {
+            return swap(12);
+        }
+
+        public Assembler swap13() {
+            return swap(13);
+        }
+
+        public Assembler swap14() {
+            return swap(14);
+        }
+
+        public Assembler swap15() {
+            return swap(15);
+        }
+
+        public Assembler swap16() {
+            return swap(16);
+        }
 
         // ============ 日志操作 ============
         public Assembler log0() {
@@ -2460,8 +2590,12 @@ public class BitCoinVM {
                 }
                 BigInteger targetBig = BigInteger.valueOf(targetPos);
                 int byteCount = (targetBig.bitLength() + 7) / 8;
-                if (byteCount == 0) byteCount = 1;
-                if (byteCount > 32) byteCount = 32;
+                if (byteCount == 0) {
+                    byteCount = 1;
+                }
+                if (byteCount > 32) {
+                    byteCount = 32;
+                }
                 int pushOpcode = OpCode.PUSH1 + byteCount - 1;
 
                 // 在引用位置插入PUSHn和目标地址
@@ -2557,8 +2691,7 @@ public class BitCoinVM {
         }
     }
 
-
-    //main
+    // main 入口方法
     public static void main(String[] args) {
         System.out.println("=== BitCoinVM 使用案例演示 ===\n");
 
@@ -2613,9 +2746,9 @@ public class BitCoinVM {
 
         BitCoinVM.Assembler asm = new BitCoinVM.Assembler();
         byte[] code = asm.push(42)           // 要存储的值
-                .push(0)            // 存储slot 0
+                .push(0)            // 写入存储槽 0
                 .sstore()           // 存储到状态
-                .push(0)            // 从slot 0
+                .push(0)            // 从存储槽 0 读取
                 .sload()            // 加载存储值
                 .push(0)            // 内存偏移0
                 .mstore()           // 存储到内存

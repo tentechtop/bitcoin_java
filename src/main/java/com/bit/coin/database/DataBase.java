@@ -1,7 +1,5 @@
 package com.bit.coin.database;
 
-
-
 import com.bit.coin.config.SystemConfig;
 import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
@@ -43,14 +41,14 @@ public interface DataBase {
      * @param key
      * @param value
      */
-    void insert(TableEnum table,byte[] key, byte[] value);
+    void insert(TableEnum table, byte[] key, byte[] value);
 
     /**
      * 输出一条数据
      * @param table
      * @param key
      */
-    void delete(TableEnum table,byte[] key);
+    void delete(TableEnum table, byte[] key);
 
     /**
      * 修改一条数据
@@ -58,7 +56,7 @@ public interface DataBase {
      * @param key
      * @param value
      */
-    void update(TableEnum table,byte[] key, byte[] value);
+    void update(TableEnum table, byte[] key, byte[] value);
 
     /**
      * 获取一条数据
@@ -66,7 +64,7 @@ public interface DataBase {
      * @param key
      * @return
      */
-    byte[] get(TableEnum table,byte[] key);
+    byte[] get(TableEnum table, byte[] key);
 
     /**
      * 获取一条数据
@@ -74,7 +72,7 @@ public interface DataBase {
      * @param key
      * @return
      */
-    byte[] get(TableEnum table,int key);
+    byte[] get(TableEnum table, int key);
 
     /**
      * 获取一条数据
@@ -82,8 +80,7 @@ public interface DataBase {
      * @param key
      * @return
      */
-    byte[] get(TableEnum table,long key);
-
+    byte[] get(TableEnum table, long key);
 
     /**
      * 数据数量
@@ -93,11 +90,16 @@ public interface DataBase {
     int count(TableEnum table);
 
     //在一个事务内完成 自动提交
-    void batchInsert(TableEnum table,byte[][] keys, byte[][] values);
-    void batchDelete(TableEnum table,byte[][] keys);
-    void batchUpdate(TableEnum table,byte[][] keys, byte[][] values);
-    byte[][] batchGet(TableEnum table,byte[][] keys);
+    void batchInsert(TableEnum table, byte[][] keys, byte[][] values);
+
+    void batchDelete(TableEnum table, byte[][] keys);
+
+    void batchUpdate(TableEnum table, byte[][] keys, byte[][] values);
+
+    byte[][] batchGet(TableEnum table, byte[][] keys);
+
     void close();
+
     void compact(byte[] start, byte[] limit);
 
     /**
@@ -109,17 +111,21 @@ public interface DataBase {
      * @return 分页结果（包含当前页数据、最后一个键、是否为最后一页）
      */
     <T> PageResult<T> page(TableEnum table, int pageSize, byte[] lastKey);
-    <T> PageResult<T> pageByPrefix(TableEnum table,byte[] prefix, int pageSize, byte[] lastKey);
+
+    <T> PageResult<T> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
 
     <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey);
-    <T> PageResult<T> pageKeyByPrefix(TableEnum table,byte[] prefix, int pageSize, byte[] lastKey);
+
+    <T> PageResult<T> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
+
     <T> PageResult<T> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
+
     boolean existsByPrefix(TableEnum table, byte[] prefix);
+
     /**
      * 事务完成
      */
     boolean dataTransaction(List<RocksDb.DbOperation> operations);
-
 
     /**
      * 按键范围查询数据（[startKey, endKey)）
@@ -144,13 +150,26 @@ public interface DataBase {
 
     // 辅助类：封装键值对（用于范围查询返回结果）
     class KeyValue<T> {
+
         private byte[] key;
         private T value;
+
         // 构造器、getter、setter
-        public byte[] getKey() { return key; }
-        public void setKey(byte[] key) { this.key = key; }
-        public T getValue() { return value; }
-        public void setValue(T value) { this.value = value; }
+        public byte[] getKey() {
+            return key;
+        }
+
+        public void setKey(byte[] key) {
+            this.key = key;
+        }
+
+        public T getValue() {
+            return value;
+        }
+
+        public void setValue(T value) {
+            this.value = value;
+        }
     }
 
     /**
@@ -173,7 +192,6 @@ public interface DataBase {
      * @param key 键（null 表示刷新表内所有缓存键）
      */
     void refreshCache(TableEnum table, byte[] key);
-
 
     /**
      * 开启事务（手动提交模式）
@@ -202,7 +220,6 @@ public interface DataBase {
      */
     void addToTransaction(String transactionId, RocksDb.DbOperation operation);
 
-
     /**
      * 获取数据库所有表名（列族名）
      * @return 表名列表
@@ -215,7 +232,6 @@ public interface DataBase {
      */
     boolean checkHealth();
 
-
     /**
      * 迭代器遍历（支持自定义处理逻辑，避免一次性加载所有数据到内存）
      * @param table 表名
@@ -224,7 +240,6 @@ public interface DataBase {
     void iterate(TableEnum table, KeyValueHandler handler);
 
     void iterateByPrefix(TableEnum table, byte[] prefix, KeyValueHandler handler);
-
 
     /**
      * 批量删除指定范围的键（比逐条删除更高效）

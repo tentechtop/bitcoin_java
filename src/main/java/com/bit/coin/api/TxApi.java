@@ -34,11 +34,11 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 @RequestMapping("/tx")
 public class TxApi {
 
-    // 字节常量定义（提取为常量，便于维护）
-    private static final int INPUT_FIXED_SIZE = 133;   // 单个输入固定字节数
-    private static final int OUTPUT_FIXED_SIZE = 28;  // 单个输出固定字节数
-    private static final int BASE_FEE = 1000;          // 基础手续费
-    private static final int FEE_PER_BYTE = 10;        // 每字节手续费
+    // 此接口选币和计算找零时，按输入、输出笔数估算交易大小。
+    private static final int INPUT_FIXED_SIZE = 133;  // 每个输入计入的估算字节数
+    private static final int OUTPUT_FIXED_SIZE = 28;  // 每个输出计入的估算字节数
+    private static final int BASE_FEE = 1000;  // 每笔交易固定收取的聪数
+    private static final int FEE_PER_BYTE = 10;  // 估算大小每增加一字节追加的聪数
 
     @Autowired
     private TxPool txPool;
@@ -52,16 +52,10 @@ public class TxApi {
     @Autowired
     private DataBase dataBase;
 
-
-
-
-
-
-
     @PostMapping("/transfer")
     public Result<Transaction> transfer(@RequestBody TransferTestDTO transferDTO) throws Exception {
 
-        try{
+        try {
             // 1. 解析私钥
             byte[] privateKey = SerializeUtils.hexToBytes(transferDTO.getPrivateKeyHex());
             if (privateKey.length != 32) {
@@ -80,7 +74,8 @@ public class TxApi {
             // 3. 获取发送方的UTXO
             assert bytes != null;
             String senderAddress = Base58.encode(bytes);
-            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT | COINBASE_MATURED   );
+            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress,
+                    CONFIRMED_UNSPENT | COINBASE_MATURED);
 
             List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
             //筛选掉交易池中锁定的UTXO
@@ -88,7 +83,7 @@ public class TxApi {
             //utxos要去除utxoInPool 判断utxo的key是否相等
             utxos = filterUtxoExcludePool(utxos, utxoInPool);
 
-            log.info("可用余额{}",utxos.size());
+            log.info("可用余额{}", utxos.size());
             long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额
 
             // 4. 预校验：总可用余额是否足够覆盖 转账金额 + 最小预估手续费（避免白忙活）
@@ -111,7 +106,8 @@ public class TxApi {
 
                 // 关键修改：判断条件改为 总输入 ≥ 转账金额 + 预估手续费
                 // 每次选择新的UTXO后，重新预估手续费（因为输入数变了）
-                long estimatedFee = BASE_FEE + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
+                long estimatedFee = BASE_FEE
+                        + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
                 targetAmount = transferDTO.getValue() + estimatedFee;
 
                 if (totalInput >= targetAmount) {
@@ -120,10 +116,12 @@ public class TxApi {
             }
 
             // 校验：选中的UTXO是否足够覆盖 转账金额+手续费
-            long finalEstimatedFee = BASE_FEE + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
+            long finalEstimatedFee = BASE_FEE
+                    + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
             if (totalInput < transferDTO.getValue() + finalEstimatedFee) {
                 throw new IllegalArgumentException("UTXO选择失败，无法凑够足够的金额（含手续费）。需要: " +
-                        (transferDTO.getValue() + finalEstimatedFee) + " satoshi，选中UTXO总金额: " + totalInput + " satoshi");
+                        (transferDTO.getValue() + finalEstimatedFee) + " satoshi，选中UTXO总金额: " + totalInput
+                        + " satoshi");
             }
 
             // 6. 创建交易对象
@@ -216,19 +214,18 @@ public class TxApi {
             log.info("转账交易创建成功: txId={}, 输入金额={}, 输出金额={}, 手续费={}, 找零={}, 交易大小={}字节",
                     txIdHex, totalInput, transferDTO.getValue() + (change > 0 ? change : 0), fee, change, txSize);
 
-            return Result.OK("提交成功",tx);
+            return Result.OK("提交成功", tx);
         } catch (Exception e) {
             log.error("转账异常", e);
             return Result.error(e.getMessage());
         }
     }
 
-
     //TODO 废弃 无法兼容索引需要重新设计
     @PostMapping("/transfer101")
     public Result<Transaction> transfer101(@RequestBody TransferTestDTO transferDTO) throws Exception {
 
-        try{
+        try {
             // 1. 解析私钥
             byte[] privateKey = SerializeUtils.hexToBytes(transferDTO.getPrivateKeyHex());
             if (privateKey.length != 32) {
@@ -251,17 +248,16 @@ public class TxApi {
             standardLockingScript.addOpCode(Script.OP_EQUALVERIFY);
             standardLockingScript.addOpCode(Script.OP_CHECKSIG);
 
-
-
             String publicKeyHex = transferDTO.getPublicKeyHex();
             byte[] bytes = hexToBytes(publicKeyHex);
             // 3. 获取发送方的UTXO
             assert bytes != null;
             String senderAddress = Base58.encode(bytes);
-            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress, CONFIRMED_UNSPENT  | COINBASE_MATURED);
+            Map<String, Object> utxOs = utxoCache.getAddressAllUTXOAndTotalByStatus(senderAddress,
+                    CONFIRMED_UNSPENT | COINBASE_MATURED);
 
             List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
-            log.info("可用余额{}",utxos.size());
+            log.info("可用余额{}", utxos.size());
             long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额
 
             // 4. 预校验：总可用余额是否足够覆盖 转账金额 + 最小预估手续费（避免白忙活）
@@ -284,7 +280,8 @@ public class TxApi {
 
                 // 关键修改：判断条件改为 总输入 ≥ 转账金额 + 预估手续费
                 // 每次选择新的UTXO后，重新预估手续费（因为输入数变了）
-                long estimatedFee = BASE_FEE + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
+                long estimatedFee = BASE_FEE
+                        + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
                 targetAmount = transferDTO.getValue() + estimatedFee;
 
                 if (totalInput >= targetAmount) {
@@ -293,10 +290,12 @@ public class TxApi {
             }
 
             // 校验：选中的UTXO是否足够覆盖 转账金额+手续费
-            long finalEstimatedFee = BASE_FEE + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
+            long finalEstimatedFee = BASE_FEE
+                    + (selectedUtxos.size() * INPUT_FIXED_SIZE + 1 * OUTPUT_FIXED_SIZE) * FEE_PER_BYTE;
             if (totalInput < transferDTO.getValue() + finalEstimatedFee) {
                 throw new IllegalArgumentException("UTXO选择失败，无法凑够足够的金额（含手续费）。需要: " +
-                        (transferDTO.getValue() + finalEstimatedFee) + " satoshi，选中UTXO总金额: " + totalInput + " satoshi");
+                        (transferDTO.getValue() + finalEstimatedFee) + " satoshi，选中UTXO总金额: " + totalInput
+                        + " satoshi");
             }
 
             // 6. 创建交易对象
@@ -397,14 +396,12 @@ public class TxApi {
             log.info("转账交易创建成功: txId={}, 输入金额={}, 输出金额={}, 手续费={}, 找零={}, 交易大小={}字节",
                     txIdHex, totalInput, transferDTO.getValue() + (change > 0 ? change : 0), fee, change, txSize);
 
-            return Result.OK("提交成功",tx);
+            return Result.OK("提交成功", tx);
         } catch (Exception e) {
             log.error("转账异常", e);
             return Result.error(e.getMessage());
         }
     }
-
-
 
     /**
      * 从原始UTXO列表中移除交易池锁定的UTXO（使用Stream API，简洁高效）
@@ -464,7 +461,5 @@ public class TxApi {
 
         return result;
     }
-
-
 
 }

@@ -20,10 +20,9 @@ public class TxPoolApi {
     @Autowired
     private TxPool txPool;
 
-
     //获取交易池全部的交易
     @GetMapping("/getAllTxs")
-    public Transaction[] getAllTxs(){
+    public Transaction[] getAllTxs() {
 
         return txPool.getAllTxs();
     }
@@ -39,7 +38,5 @@ public class TxPoolApi {
         tx.setTxId(tx.calculateTxId());
         return txPool.replaceTx(tx);
     }
-
-
 
 }

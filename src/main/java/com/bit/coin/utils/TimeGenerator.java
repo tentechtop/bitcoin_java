@@ -3,8 +3,8 @@ package com.bit.coin.utils;
 import java.security.SecureRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
-
 public class TimeGenerator {
+
     // 安全随机数生成器，用于极端情况补充唯一性
     private static final SecureRandom RANDOM = new SecureRandom();
     // 时间戳与随机数的分隔符（避免数值碰撞）
@@ -44,6 +44,5 @@ public class TimeGenerator {
     public static long parseTimestamp(long uniqueTime) {
         return uniqueTime >>> 16; // 右移16位，去除随机数部分
     }
-
 
 }

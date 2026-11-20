@@ -10,16 +10,20 @@ import java.util.function.LongSupplier;
 @Slf4j
 @Component
 public class SmartSyncTrigger {
-    private static final long AUTO_SYNC_DEBOUNCE_MILLIS = 5_000L;
+
+    private static final long AUTO_SYNC_DEBOUNCE_MILLIS = 5_000L;  // 两次自动启动同步的最短间隔，单位为毫秒
 
     private final NetService netService;
     private final LongSupplier clock;
     private long lastAutoSyncAtMillis;
     private UInt256 pendingWork = UInt256.ZERO;
     private long pendingUntil;
-    @org.springframework.beans.factory.annotation.Autowired private com.bit.coin.config.SystemConfig systemConfig;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.bit.coin.config.SystemConfig systemConfig;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "pending-chain-sync"); t.setDaemon(true); return t;
+        Thread t = new Thread(r, "pending-chain-sync");
+        t.setDaemon(true);
+        return t;
     });
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -32,14 +36,25 @@ public class SmartSyncTrigger {
         this.clock = clock;
     }
 
-    @jakarta.annotation.PostConstruct void start() {
-        if (systemConfig.isNetworkingEnabled()) executor.scheduleWithFixedDelay(() -> {
-            try { checkPending(); } catch (RuntimeException e) { log.debug("Pending sync failed: {}", e.toString()); }
-        }, 1, 1, TimeUnit.SECONDS);
+    @jakarta.annotation.PostConstruct
+    void start() {
+        if (systemConfig.isNetworkingEnabled()) {
+            executor.scheduleWithFixedDelay(() -> {
+                try {
+                    checkPending();
+                } catch (RuntimeException e) {
+                    log.debug("Pending sync failed: {}", e.toString());
+                }
+            }, 1, 1, TimeUnit.SECONDS);
+        }
     }
 
-    @jakarta.annotation.PreDestroy void stop() { executor.shutdownNow(); }
+    @jakarta.annotation.PreDestroy
+    void stop() {
+        executor.shutdownNow();
+    }
 
+    /** 暂存累计工作量领先的通告；返回 true 表示本次已触发区块头优先同步。 */
     public synchronized boolean triggerIfRemoteAhead(UInt256 remoteWork, String reason) {
         if (remoteWork == null || remoteWork.compareTo(netService.getCurrentLocalChainWork()) <= 0) {
             return false;
@@ -47,15 +62,19 @@ public class SmartSyncTrigger {
         long now = clock.getAsLong();
         if (now > pendingUntil || remoteWork.compareTo(pendingWork) >= 0) {
             pendingWork = remoteWork;
-            pendingUntil = now + 60_000;
+            pendingUntil = now + 60_000;  // 保留通告一分钟，供同步忙碌或处于冷却期时重试
         }
         return tryPending(reason);
     }
 
-    synchronized void checkPending() { tryPending("deferred-announcement"); }
+    synchronized void checkPending() {
+        tryPending("deferred-announcement");
+    }
 
     private boolean tryPending(String reason) {
-        if (pendingWork.equals(UInt256.ZERO)) return false;
+        if (pendingWork.equals(UInt256.ZERO)) {
+            return false;
+        }
         long now = clock.getAsLong();
         UInt256 localWork = netService.getCurrentLocalChainWork();
         if (now > pendingUntil || pendingWork.compareTo(localWork) <= 0) {
@@ -63,7 +82,9 @@ public class SmartSyncTrigger {
             return false;
         }
         SyncProgress current = netService.getSyncProgress();
-        if (current != null && current.running()) return false;
+        if (current != null && current.running()) {
+            return false;
+        }
         if (now - lastAutoSyncAtMillis < AUTO_SYNC_DEBOUNCE_MILLIS) {
             return false;
         }

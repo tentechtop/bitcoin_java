@@ -17,7 +17,8 @@ import static com.bit.coin.p2p.protocol.P2PMessage.newResponseMessage;
 
 @Slf4j
 @Component
-public class P2PFindNodeReqHandle implements ProtocolHandler.ResultProtocolHandler{
+public class P2PFindNodeReqHandle implements ProtocolHandler.ResultProtocolHandler {
+
     @Autowired
     private RoutingTable routingTable;
 
@@ -28,14 +29,15 @@ public class P2PFindNodeReqHandle implements ProtocolHandler.ResultProtocolHandl
         byte[] targetId = new byte[32];
         System.arraycopy(data, 0, targetId, 0, 32);
         //读取后4字节
-        int count = bytesToInt(new byte[]{data[32], data[33], data[34], data[35]});
+        int count = bytesToInt(new byte[] { data[32], data[33], data[34], data[35] });
         List<Peer> closestPeers = routingTable.findClosestPeers(targetId, count);
-        log.info("返回最近的节点信息{}",closestPeers.size());
+        log.info("返回最近的节点信息{}", closestPeers.size());
         byte[] bytes = routingTable.serializePeers(closestPeers);
-        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Find_Node_Req,requestParams.getRequestId(), bytes);
+        P2PMessage p2PMessage = newResponseMessage(SelfPeer.getId(), ProtocolEnum.P2P_Find_Node_Req,
+                requestParams.getRequestId(), bytes);
         byte[] serialize = p2PMessage.serialize();
 
-        log.info("序列化后{}",serialize.length);
+        log.info("序列化后{}", serialize.length);
 
         return serialize;
     }
