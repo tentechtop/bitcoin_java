@@ -6,10 +6,12 @@ import com.bit.coin.txpool.TxPoolStatusSnapshot;
 import com.bit.coin.txpool.TxPoolTransactionSnapshot;
 
 import java.math.BigInteger;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 /**
- * 根据当前内存池的费率和字节积压估算手续费，不保证确认时间。
+ * 根据当前内存池积压和本节点近期确认样本估算手续费，不保证确认时间。
  * 使用本项目完整序列化字节（含 txId），与内存池中继和打包的计费口径一致。
  * 这是静态积压模型，不预测新交易流入，也不模拟祖先交易包的 CPFP 排序。
  */
@@ -18,6 +20,10 @@ public final class FeeEstimate {
     public static final long BLOCK_CAPACITY_BYTES = 1024L * 1024L;
     public static final int DEFAULT_TARGET_BLOCKS = 3;
     public static final int MAX_TARGET_BLOCKS = 144;
+    private static final int MAX_CONFIRMATION_SAMPLES = 10_000;
+    private static final int MIN_CONFIRMATION_SAMPLES = 5;
+
+    private static final Deque<ConfirmationSample> CONFIRMATION_SAMPLES = new ArrayDeque<>();
 
     private FeeEstimate() {}
 
@@ -33,6 +39,50 @@ public final class FeeEstimate {
             long mempoolBytes,
             long timestampMillis
     ) {}
+
+    private record ConfirmationSample(int delayBlocks, long feeRate, int blockHeight) {}
+
+    /** Record a transaction observed in the mempool when it confirms on the active chain. */
+    public static synchronized void recordConfirmed(int arrivalHeight, int confirmedHeight, long fee, long size) {
+        if (arrivalHeight < 0 || confirmedHeight <= arrivalHeight || size <= 0
+                || size > TransactionValidator.MAX_TRANSACTION_BYTES || !TransactionValidator.moneyRange(fee)) {
+            return;
+        }
+        long feeRate = fee == 0 ? 0 : fee / size + (fee % size == 0 ? 0 : 1);
+        feeRate = Math.max(MIN_RELAY_FEE_RATE, feeRate);
+        CONFIRMATION_SAMPLES.addLast(new ConfirmationSample(confirmedHeight - arrivalHeight, feeRate, confirmedHeight));
+        while (CONFIRMATION_SAMPLES.size() > MAX_CONFIRMATION_SAMPLES) CONFIRMATION_SAMPLES.removeFirst();
+    }
+
+    /** Remove observations from a disconnected branch and discard old confirmation history. */
+    public static synchronized void reorg(int forkHeight, int currentHeight) {
+        CONFIRMATION_SAMPLES.removeIf(sample -> sample.blockHeight() > forkHeight);
+        prune(currentHeight);
+    }
+
+    public static synchronized void advanceHeight(int currentHeight) {
+        prune(currentHeight);
+    }
+
+    private static void prune(int currentHeight) {
+        int oldestHeight = Math.max(0, currentHeight - MAX_TARGET_BLOCKS);
+        CONFIRMATION_SAMPLES.removeIf(sample -> sample.blockHeight() < oldestHeight);
+    }
+
+    public static synchronized int confirmationSampleCount() {
+        return CONFIRMATION_SAMPLES.size();
+    }
+
+    private static synchronized long historicalFeeRate(int targetBlocks) {
+        List<Long> qualifiedRates = CONFIRMATION_SAMPLES.stream()
+                .filter(sample -> sample.delayBlocks() <= targetBlocks)
+                .map(ConfirmationSample::feeRate)
+                .sorted()
+                .toList();
+        if (qualifiedRates.size() < MIN_CONFIRMATION_SAMPLES) return MIN_RELAY_FEE_RATE;
+        int index = qualifiedRates.size() / 2;
+        return Math.max(MIN_RELAY_FEE_RATE, qualifiedRates.get(index));
+    }
 
     public static Estimate estimate(TxPoolStatusSnapshot snapshot, int targetBlocks, long txSize) {
         validateRequest(targetBlocks, txSize);
@@ -86,18 +136,23 @@ public final class FeeEstimate {
                                      int targetBlocks, long txSize) {
         long mempoolBytes = samples.stream().mapToLong(TxPoolTransactionSnapshot::size).sum();
         // 给待提交交易留出空间，再找到目标窗口中第一个放不下的费率档位。
+        long historicalFeeRate = historicalFeeRate(targetBlocks);
+        long mempoolFeeRate = MIN_RELAY_FEE_RATE;
+        boolean hasMempoolPressure = false;
         long remainingBytes = BLOCK_CAPACITY_BYTES * targetBlocks - txSize;
-        long feeRate = MIN_RELAY_FEE_RATE;
-        String source = "minimum-relay";
         for (TxPoolTransactionSnapshot sample : samples) {
-            remainingBytes -= sample.size();
-            if (remainingBytes < 0) {
-                // 严格超过截断档位，避免与该档交易同费率时因排序规则而继续排队。
-                feeRate = Math.max(MIN_RELAY_FEE_RATE, sample.fee() / sample.size() + 1);
-                source = "mempool";
+            if (remainingBytes < sample.size()) {
+                long baseRate = sample.fee() / sample.size();
+                mempoolFeeRate = Math.max(MIN_RELAY_FEE_RATE,
+                        baseRate + (sample.fee() % sample.size() == 0 ? 0 : 1));
+                hasMempoolPressure = true;
                 break;
             }
+            remainingBytes -= sample.size();
         }
+        long feeRate = Math.max(historicalFeeRate, mempoolFeeRate);
+        String source = hasMempoolPressure && mempoolFeeRate > historicalFeeRate ? "mempool"
+                : historicalFeeRate > MIN_RELAY_FEE_RATE ? "historical" : "minimum-relay";
         // 超过货币范围时明确拒绝，而不是截断、溢出或返回无法支付的费用。
         if (feeRate > TransactionValidator.MAX_MONEY / txSize) {
             throw new IllegalArgumentException("Estimated fee exceeds the money range");

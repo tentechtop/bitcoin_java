@@ -687,20 +687,26 @@
             event.target.classList.add('active');
         }
 
+        let statusTimeout;
         function showStatus(message, type) {
             const statusBar = document.getElementById('statusBar');
             statusBar.textContent = message;
             statusBar.className = `status-bar ${type}`;
-            setTimeout(() => {
-                statusBar.style.display = 'none';
+            clearTimeout(statusTimeout);
+            statusTimeout = setTimeout(() => {
+                statusBar.className = 'status-bar';
             }, 3000);
         }
 
-        function formatResult(data) {
-            if (typeof data === 'string') {
-                return data;
+        async function formatResult(response) {
+            const text = await response.text();
+            if (!text.trim()) return `HTTP ${response.status}`;
+            try {
+                const data = JSON.parse(text);
+                return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            } catch {
+                return text;
             }
-            return JSON.stringify(data, null, 2);
         }
 
         async function callApi(apiName, params, btn) {
@@ -723,10 +729,10 @@
                 }
 
                 const response = await NodeApi.fetch(url);
-                const data = await response.json();
+                const result = await formatResult(response);
 
                 resultArea.classList.add('show');
-                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: formatResult(data)}));
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: result}));
 
                 if (response.ok) {
                     showStatus('请求成功!', 'success');
@@ -760,10 +766,10 @@
                     body: body
                 });
 
-                const data = await response.json();
+                const result = await formatResult(response);
 
                 resultArea.classList.add('show');
-                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: formatResult(data)}));
+                resultArea.replaceChildren(Object.assign(document.createElement('pre'), {textContent: result}));
 
                 if (response.ok) {
                     showStatus('请求成功!', 'success');

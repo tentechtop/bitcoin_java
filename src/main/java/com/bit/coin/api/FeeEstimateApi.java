@@ -26,7 +26,6 @@ public class FeeEstimateApi {
 
     @GetMapping("/fee-estimates")
     public List<FeeEstimate.Estimate> recommended(@RequestParam long txSize) {
-        FeeEstimate.validateRequest(FeeEstimate.DEFAULT_TARGET_BLOCKS, txSize);
-        return FeeEstimate.recommended(txPool.getStatusSnapshot(), txSize);
+        return txPool.recommendedFeeEstimates(txSize);
     }
 }

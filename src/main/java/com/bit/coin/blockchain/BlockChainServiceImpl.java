@@ -7,6 +7,7 @@ import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.PageResult;
 import com.bit.coin.database.rocksDb.RocksDb;
 import com.bit.coin.database.rocksDb.TableEnum;
+import com.bit.coin.estimate.FeeEstimate;
 
 
 import com.bit.coin.p2p.kad.RoutingTable;
@@ -249,6 +250,12 @@ public class BlockChainServiceImpl implements BlockChainService{
             utxoCache.invalidateAll();
             // Database commit is complete. Cache/mempool failures must never be described as a rolled-back commit.
             try {
+                if (!accepted.disconnected().isEmpty()) {
+                    int forkHeight = accepted.disconnected().stream().mapToInt(Block::getHeight).min().orElse(1) - 1;
+                    FeeEstimate.reorg(forkHeight, block.getHeight());
+                } else {
+                    FeeEstimate.advanceHeight(block.getHeight());
+                }
                 for (Block confirmed : accepted.connected()) removeConfirmedTxsFromPool(confirmed);
                 txPool.revalidate();
                 List<Block> disconnected = new ArrayList<>(accepted.disconnected());
@@ -475,6 +482,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     private void removeConfirmedTxsFromPool(Block block) {
         List<Transaction> transactions = block.getTransactions();
         if (transactions == null || transactions.isEmpty()) {
+            FeeEstimate.advanceHeight(block.getHeight());
             return;
         }
 
@@ -487,9 +495,7 @@ public class BlockChainServiceImpl implements BlockChainService{
         }
 
         // 从交易池删除已确认的交易
-        if (!confirmedTxs.isEmpty()) {
-            txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]),block.getHeight());
-        }
+        txPool.onBlockConfirmed(confirmedTxs.toArray(new Transaction[0]), block.getHeight());
     }
 
 
@@ -750,22 +756,7 @@ public class BlockChainServiceImpl implements BlockChainService{
     public Transaction getTxAndQueryInputByHash(byte[] txId) {
         //先查询是否在交易池中
         Transaction tx = txPool.getTx(txId);
-        if (tx!=null){
-            //带出输入引用的输出
-            Map<String, UTXO> utxoMap = tx.getUtxoMap();
-            List<TxInput> inputs = tx.getInputs();
-            for (TxInput input : inputs){
-                int index = input.getIndex();
-                byte[] txId1 = input.getTxId();
-                UTXO utxo = utxoMap.get(UTXO.getKey(txId1, index));
-                if (utxo!=null){
-                    TxOutput txOutput = new TxOutput();
-                    txOutput.setValue(utxo.getValue());
-                    txOutput.setScriptPubKey(utxo.getScript());
-                    input.setOutput(txOutput);
-                }
-            }
-            tx.setInputs(inputs);
+        if (tx != null) {
             return tx;
         }
         // 1. 从 "tx_to_block" 表中获取区块索引信息

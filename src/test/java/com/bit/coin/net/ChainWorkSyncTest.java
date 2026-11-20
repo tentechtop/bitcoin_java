@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.ByteBuffer;
@@ -90,19 +91,9 @@ class ChainWorkSyncTest {
         ParamsConfig.Params params = new ParamsConfig.Params(regtest.getName(), regtest.getNet(), regtest.getDefaultPort(),
                 regtest.getGenesisHash(), regtest.getPowLimit(), regtest.getPowLimitBits(), false, 10, 150,
                 Duration.ofSeconds(8), Duration.ofSeconds(4), 4, false, Duration.ZERO);
-        SystemConfig config = spy(new SystemConfig());
-        config.setPath(directory.resolve("chain").toString());
-        doReturn(params).when(config).getParams();
         Block previousTip = BlockChainServiceImpl.mainTipBlock;
         try (RocksDb database = new RocksDb()) {
-            assertTrue(database.createDatabase(config));
-            BlockChainServiceImpl chain = new BlockChainServiceImpl();
-            ReflectionTestUtils.setField(chain, "config", config);
-            ReflectionTestUtils.setField(chain, "dataBase", database);
-            ReflectionTestUtils.setField(chain, "txPool", mock(TxPool.class));
-            ReflectionTestUtils.setField(chain, "utxoCache", mock(UTXOCache.class));
-            ReflectionTestUtils.setField(chain, "routingTable", mock(RoutingTable.class));
-            chain.init();
+            BlockChainServiceImpl chain = initChain(database, params);
             Block genesis = chain.getMainLatestBlock();
             List<Block> local = branch(genesis, params, 8, localHeight);
             for (Block block : local.subList(1, local.size())) assertTrue(chain.verifyBlock(block));
@@ -162,6 +153,115 @@ class ChainWorkSyncTest {
         } finally {
             BlockChainServiceImpl.mainTipBlock = previousTip;
         }
+    }
+
+    @ParameterizedTest
+    @EnumSource(InvalidHeader.class)
+    void retriesRejectedBatchFromLastAcceptedForkHeader(InvalidHeader invalid) throws Exception {
+        ParamsConfig.Params params = ParamsConfig.RegressionNetParams;
+        Block previousTip = BlockChainServiceImpl.mainTipBlock;
+        try (RocksDb database = new RocksDb()) {
+            BlockChainServiceImpl chain = initChain(database, params);
+            Block genesis = chain.getMainLatestBlock();
+            assertTrue(chain.verifyBlock(branch(genesis, params, 8, 1).getLast()));
+            List<Block> fork = branch(genesis, params, 1, 4);
+            Block tip = fork.getLast();
+            Peer healthy = peer(1, tip.getHeight(), tip.getChainWork().toBigInteger().longValueExact());
+            healthy.setHashHex(bytesToHex(tip.getHash()));
+            healthy.setLastSeen(2);
+            Peer faulty = peer(2, tip.getHeight(), tip.getChainWork().toBigInteger().longValueExact());
+            faulty.setChainTip(healthy.chainTip());
+            faulty.setLastSeen(1);
+            String healthyId = bytesToHex(healthy.getId());
+            String faultyId = bytesToHex(faulty.getId());
+            byte[] rejectedBatch = rejectedBatch(fork, invalid);
+
+            RoutingTable routingTable = mock(RoutingTable.class);
+            when(routingTable.getOnlineNodes()).thenReturn(List.of(healthy, faulty));
+            NetServiceImpl net = spy(new NetServiceImpl());
+            ReflectionTestUtils.setField(net, "routingTable", routingTable);
+            ReflectionTestUtils.setField(net, "blockChainService", chain);
+            record Request(String peerId, int startHeight, int downloadedHeaders, int verifiedHeaders) {}
+            List<Request> requests = new ArrayList<>();
+            doAnswer(call -> {
+                String id = call.getArgument(0);
+                ProtocolEnum protocol = call.getArgument(1);
+                byte[] request = call.getArgument(2);
+                byte[] payload;
+                if (protocol == ProtocolEnum.P2P_Query_Block_Headers) {
+                    int start = BlockHeadersPayload.deserializeRequest(request).startHeight();
+                    SyncProgress progress = net.getSyncProgress();
+                    requests.add(new Request(id, start, progress.downloadedHeaders(), progress.verifiedHeaders()));
+                    if (id.equals(faultyId)) {
+                        payload = rejectedBatch;
+                    } else if (start == 1) {
+                        payload = BlockHeadersPayload.serializeResponse(List.of(new BlockHeadersPayload.Entry(1,
+                                fork.get(1).getBlockHeader())));
+                    } else {
+                        payload = syncResponse(protocol, request, fork);
+                    }
+                } else {
+                    payload = syncResponse(protocol, request, fork);
+                }
+                return P2PMessage.newNormalMessage(id.equals(healthyId) ? healthy.getId() : faulty.getId(),
+                        protocol, payload).serialize();
+            }).when(net).sendSyncRequest(anyString(), any(), any(), anyInt());
+
+            try {
+                net.startSyncBlockHeadersFirst();
+                Future<?> sync = (Future<?>) ReflectionTestUtils.getField(net, "currentSyncTask");
+                sync.get(10, TimeUnit.SECONDS);
+                SyncProgress progress = net.getSyncProgress();
+                assertEquals(List.of(new Request(healthyId, 1, 0, 0), new Request(faultyId, 2, 1, 1),
+                        new Request(healthyId, 2, 1, 1)), requests);
+                assertEquals("COMPLETED", progress.status(), progress.message());
+                assertEquals(tip.getHeight(), progress.downloadedHeaders());
+                assertEquals(tip.getHeight(), progress.verifiedHeaders());
+                assertEquals(tip.getHeight(), progress.verifiedBlocks());
+                assertArrayEquals(tip.getHash(), chain.getMainLatestBlock().getHash());
+                assertEquals(1, progress.peers().stream().filter(peer -> faultyId.equals(peer.peerId()))
+                        .findFirst().orElseThrow().failedRequests());
+            } finally {
+                net.shutdown();
+            }
+        } finally {
+            BlockChainServiceImpl.mainTipBlock = previousTip;
+        }
+    }
+
+    private enum InvalidHeader { WRONG_TIP, WRONG_DIFFICULTY, MEDIAN_TIME, FUTURE_TIME }
+
+    private static byte[] rejectedBatch(List<Block> fork, InvalidHeader invalid) {
+        int height = invalid == InvalidHeader.WRONG_TIP ? fork.getLast().getHeight() : 3;
+        List<BlockHeadersPayload.Entry> entries = new ArrayList<>();
+        for (int i = 2; i < height; i++) {
+            entries.add(new BlockHeadersPayload.Entry(i, fork.get(i).getBlockHeader()));
+        }
+        BlockHeader header = BlockHeader.deserialize(fork.get(height).getBlockHeader().serialize());
+        switch (invalid) {
+            case WRONG_TIP -> header.setNonce(header.getNonce() + 1);
+            case WRONG_DIFFICULTY -> header.setBits(0x203fffff);
+            case MEDIAN_TIME -> header.setTime(fork.get(1).getBlockHeader().getTime());
+            case FUTURE_TIME -> header.setTime(System.currentTimeMillis() / 1000 + 86400);
+        }
+        while (!header.verifyProofOfWork(false)) header.setNonce(header.getNonce() + 1);
+        entries.add(new BlockHeadersPayload.Entry(height, header));
+        return BlockHeadersPayload.serializeResponse(entries);
+    }
+
+    private BlockChainServiceImpl initChain(RocksDb database, ParamsConfig.Params params) {
+        SystemConfig config = spy(new SystemConfig());
+        config.setPath(directory.resolve("chain").toString());
+        doReturn(params).when(config).getParams();
+        assertTrue(database.createDatabase(config));
+        BlockChainServiceImpl chain = new BlockChainServiceImpl();
+        ReflectionTestUtils.setField(chain, "config", config);
+        ReflectionTestUtils.setField(chain, "dataBase", database);
+        ReflectionTestUtils.setField(chain, "txPool", mock(TxPool.class));
+        ReflectionTestUtils.setField(chain, "utxoCache", mock(UTXOCache.class));
+        ReflectionTestUtils.setField(chain, "routingTable", mock(RoutingTable.class));
+        chain.init();
+        return chain;
     }
 
     private static List<Block> branch(Block genesis, ParamsConfig.Params params, int spacing, int height) {

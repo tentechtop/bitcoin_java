@@ -51,15 +51,23 @@ class TxPoolCapacityTest {
     }
 
     private Transaction spend(UTXO source, long... amounts) {
+        return spend(List.of(source), amounts);
+    }
+
+    private Transaction spend(List<UTXO> sources, long... amounts) {
         Transaction tx = new Transaction(); tx.setVersion(1);
-        TxInput input = new TxInput(); input.setTxId(source.getTxId()); input.setIndex(source.getIndex());
-        input.setSequence(0xFFFFFFFDL); input.setScriptSig(new byte[TxInput.SCRIPT_SIG_LENGTH]);
-        tx.getInputs().add(input);
+        Map<String, UTXO> inputs = new HashMap<>();
+        for (UTXO source : sources) {
+            TxInput input = new TxInput(); input.setTxId(source.getTxId()); input.setIndex(source.getIndex());
+            input.setSequence(0xFFFFFFFDL); input.setScriptSig(new byte[TxInput.SCRIPT_SIG_LENGTH]);
+            tx.getInputs().add(input);
+            inputs.put(bytesToHex(source.getKey()), source);
+        }
         for (long amount : amounts) {
             TxOutput output = new TxOutput(); output.setValue(amount); output.setScriptPubKey(lock);
             tx.getOutputs().add(output);
         }
-        tx.setUtxoMap(Map.of(bytesToHex(source.getKey()), source));
+        tx.setUtxoMap(inputs);
         tx.sign(Ed25519Signer.extractPrivateKeyCore(owner.getPrivate()), publicKey);
         tx.setTxId(tx.calculateTxId());
         return tx;
@@ -136,6 +144,20 @@ class TxPoolCapacityTest {
         assertTrue(pool.addTx(root), "Eviction must release the original confirmed input for future admission");
     }
 
+    @Test void doesNotEvictHighFeeDescendantPackageForLowerPackageRateCandidate() {
+        openPool(2, 64L * 1024 * 1024);
+        Transaction parent = spend(source(), 99_000);
+        Transaction child = spend(output(parent), 10_000);
+        assertTrue(pool.addTx(parent));
+        assertTrue(pool.addTx(child));
+        Transaction candidate = spend(source(), 70_000);
+
+        assertFalse(pool.addTx(candidate));
+        assertNotNull(pool.getTx(parent.getTxId()));
+        assertNotNull(pool.getTx(child.getTxId()));
+        assertNull(pool.getTx(candidate.getTxId()));
+    }
+
     @Test void doesNotEvictTransactionsBeingPacked() {
         openPool(2, 64L * 1024 * 1024);
         Transaction root = spend(source(), 98_000), child = spend(output(root), 90_000);
@@ -147,5 +169,52 @@ class TxPoolCapacityTest {
         assertEquals(2, pool.transactionCount()); assertEquals(2, pool.getStatusSnapshot().packingCount());
         assertNotNull(pool.getTx(root.getTxId())); assertNotNull(pool.getTx(child.getTxId()));
         assertNull(pool.getTx(candidate.getTxId()));
+    }
+
+    @Test void repricesTheOtherParentAfterSelectingTheirSharedChild() {
+        Transaction cheap = spend(source(), 99_000), expensive = spend(source(), 84_000);
+        Transaction shared = spend(List.of(output(cheap), output(expensive)), 175_000);
+        Transaction unrelated = spend(source(), 88_000);
+        List<Transaction> original = List.of(cheap, expensive, shared, unrelated);
+        long limit = original.stream().mapToLong(TransactionValidator::memoryWeight).sum();
+        openPool(10, limit);
+        original.forEach(tx -> assertTrue(pool.addTx(tx)));
+
+        // Both candidates need more space than the cheap parent and its shared child can free.
+        // The other parent's rate rises above the unrelated transaction's when the child is deducted.
+        UTXO input = source();
+        long[] amounts = new long[9];
+        Arrays.fill(amounts, 8_500);
+        Transaction lowerBid = spend(input, amounts);
+        assertTrue(TransactionValidator.memoryWeight(lowerBid) >
+                TransactionValidator.memoryWeight(cheap) + TransactionValidator.memoryWeight(shared));
+        assertFalse(pool.addTx(lowerBid));
+        original.forEach(tx -> assertNotNull(pool.getTx(tx.getTxId())));
+        assertEquals(4, pool.transactionCount());
+        assertEquals(limit, pool.estimatedMemoryBytes());
+        assertEquals(2, pool.getStatusSnapshot().dependencyCount());
+
+        Arrays.fill(amounts, 1_000);
+        Transaction higherBid = spend(input, amounts);
+        assertTrue(pool.addTx(higherBid));
+        assertNull(pool.getTx(cheap.getTxId()));
+        assertNull(pool.getTx(shared.getTxId()));
+        assertNull(pool.getTx(unrelated.getTxId()));
+        assertNotNull(pool.getTx(expensive.getTxId()));
+        assertNotNull(pool.getTx(higherBid.getTxId()));
+        assertEquals(2, pool.transactionCount());
+        assertEquals((long) TransactionValidator.memoryWeight(expensive) + TransactionValidator.memoryWeight(higherBid),
+                pool.estimatedMemoryBytes());
+    }
+
+    @Test void candidateMustBeatTheEvictionRateWithItsOwnFee() {
+        openPool(2, 64L * 1024 * 1024);
+        Transaction parent = spend(source(), 50_000), unrelated = spend(source(), 99_000);
+        assertTrue(pool.addTx(parent)); assertTrue(pool.addTx(unrelated));
+
+        assertFalse(pool.addTx(spend(output(parent), 49_000)));
+        assertNotNull(pool.getTx(parent.getTxId())); assertNotNull(pool.getTx(unrelated.getTxId()));
+        assertTrue(pool.addTx(spend(output(parent), 48_999)));
+        assertNull(pool.getTx(unrelated.getTxId()));
     }
 }

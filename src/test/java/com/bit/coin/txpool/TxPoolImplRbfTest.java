@@ -1,5 +1,6 @@
 package com.bit.coin.txpool;
 
+import com.bit.coin.blockchain.BlockChainServiceImpl;
 import com.bit.coin.cache.UTXOCache;
 import com.bit.coin.database.DataBase;
 import com.bit.coin.database.rocksDb.TableEnum;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -65,6 +67,24 @@ class TxPoolImplRbfTest {
         privateKey = Ed25519Signer.extractPrivateKeyCore(keyPair.getPrivate());
         publicKey = Ed25519Signer.extractPublicKeyCore(keyPair.getPublic());
         sourceUtxo.setScript(com.bit.coin.utils.Sha.applyRIPEMD160(com.bit.coin.utils.Sha.applySHA256(publicKey)));
+    }
+
+    @Test
+    void pendingTransactionDetailsIncludeAnIndependentCopyOfTheSpentOutput() {
+        Transaction tx = signedTx(FINAL_SEQUENCE, 80_000L);
+        assertTrue(txPool.addTx(tx));
+        BlockChainServiceImpl chain = new BlockChainServiceImpl();
+        ReflectionTestUtils.setField(chain, "txPool", txPool);
+
+        TxOutput spent = chain.getTxAndQueryInputByHash(tx.getTxId()).getInputs().getFirst().getOutput();
+        assertNotNull(spent);
+        assertEquals(sourceUtxo.getValue(), spent.getValue());
+        byte[] expectedScript = sourceUtxo.getScript().clone();
+        assertArrayEquals(expectedScript, spent.getScriptPubKey());
+
+        spent.getScriptPubKey()[0] ^= 1;
+        TxOutput reread = chain.getTxAndQueryInputByHash(tx.getTxId()).getInputs().getFirst().getOutput();
+        assertArrayEquals(expectedScript, reread.getScriptPubKey());
     }
 
     @Test

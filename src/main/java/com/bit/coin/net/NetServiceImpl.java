@@ -231,11 +231,8 @@ public class NetServiceImpl implements NetService {
         if (headersFirst) {
             totalHeaders.set(blocksToSync);
             setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
-            List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, firstHeight, target.height());
+            List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, target);
             HeaderSyncRecord last = headerChain.getLast();
-            if (!target.hashHex().equals(bytesToHex(last.hash()))) {
-                throw new IllegalStateException("Verified headers do not reach the advertised tip");
-            }
             if (last.chainWork().compareTo(localWork) <= 0) {
                 throw new IllegalStateException("Verified headers do not exceed local cumulative work");
             }
@@ -254,82 +251,47 @@ public class NetServiceImpl implements NetService {
     private List<HeaderSyncRecord> syncHeaders(
             List<Peer> syncPeers,
             Landmark commonAncestor,
-            int firstHeight,
-            int lastHeight
+            Peer.ChainTip target
     ) {
         List<HeaderSyncRecord> headerChain = new ArrayList<>();
         byte[] expectedPreviousHash = commonAncestor.getHash();
         UInt256 runningChainWork = blockChainService.getChainWorkByHash(expectedPreviousHash);
-        int nextHeight = firstHeight;
+        int acceptedHeight = commonAncestor.getHeight();
 
-        while (nextHeight <= lastHeight) {
-            List<BlockHeadersPayload.Entry> entries = fetchHeaderBatchFromAnyPeer(syncPeers, nextHeight, lastHeight);
-            if (entries.isEmpty()) {
+        while (acceptedHeight < target.height()) {
+            int nextHeight = acceptedHeight + 1;
+            List<HeaderSyncRecord> batch = fetchHeaderBatchFromAnyPeer(syncPeers, nextHeight, target,
+                    expectedPreviousHash, runningChainWork);
+            if (batch.isEmpty()) {
                 String error = "Unable to download headers starting at height " + nextHeight;
                 addRecentError(error);
                 throw new IllegalStateException(error);
             }
 
-            for (BlockHeadersPayload.Entry entry : entries) {
-                if (entry.height() != nextHeight) {
-                    String error = "Unexpected header height: expected=" + nextHeight + ", actual=" + entry.height();
-                    addRecentError(error);
-                    throw new IllegalStateException(error);
-                }
-
-                HeaderSyncRecord record = validateAndStoreHeader(entry, expectedPreviousHash, runningChainWork);
-                headerChain.add(record);
-                expectedPreviousHash = record.hash();
-                runningChainWork = record.chainWork();
-                downloadedHeaders.incrementAndGet();
-                verifiedHeaders.incrementAndGet();
-                syncMessage.set("Verified header " + record.height());
-                touchProgress();
-
-                nextHeight++;
-                if (nextHeight > lastHeight) {
-                    break;
-                }
-            }
+            headerChain.addAll(batch);
+            HeaderSyncRecord last = batch.getLast();
+            acceptedHeight = last.height();
+            expectedPreviousHash = last.hash();
+            runningChainWork = last.chainWork();
+            downloadedHeaders.addAndGet(batch.size());
+            verifiedHeaders.addAndGet(batch.size());
+            syncMessage.set("Verified header " + acceptedHeight);
+            touchProgress();
         }
 
         return headerChain;
     }
 
-    private HeaderSyncRecord validateAndStoreHeader(
-            BlockHeadersPayload.Entry entry,
+    private List<HeaderSyncRecord> fetchHeaderBatchFromAnyPeer(
+            List<Peer> syncPeers,
+            int startHeight,
+            Peer.ChainTip target,
             byte[] expectedPreviousHash,
             UInt256 previousChainWork
     ) {
-        BlockHeader header = entry.header();
-        if (header == null) {
-            throw new IllegalStateException("Header is null at height " + entry.height());
-        }
-        if (!Arrays.equals(expectedPreviousHash, header.getPreviousHash())) {
-            throw new IllegalStateException("Header " + entry.height() + " does not connect to previous header");
-        }
-        if (!header.verifyProofOfWork(false)) {
-            throw new IllegalStateException("Header " + entry.height() + " failed proof-of-work validation");
-        }
-        long currentTime = System.currentTimeMillis() / 1000;
-        if (header.getTime() > currentTime + 7200) {
-            throw new IllegalStateException("Header " + entry.height() + " timestamp is too far in the future");
-        }
-
-        UInt256 chainWork = previousChainWork.add(UInt256.fromBigInteger(header.getWork()));
-        if (!blockChainService.addBlockHeaderToStore(header, entry.height(), chainWork)) {
-            throw new IllegalStateException("Failed to store header " + entry.height());
-        }
-        return new HeaderSyncRecord(entry.height(), header.calculateHash(), header, chainWork);
-    }
-
-    private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromAnyPeer(
-            List<Peer> syncPeers,
-            int startHeight,
-            int lastHeight
-    ) {
-        int stopHeight = Math.min(lastHeight, startHeight + MAX_HEADERS_PER_REQUEST - 1);
+        int stopHeight = startHeight + Math.min(target.height() - startHeight, MAX_HEADERS_PER_REQUEST - 1);
         int startIndex = Math.floorMod(peerCursor.getAndIncrement(), syncPeers.size());
+        IllegalArgumentException lastValidationFailure = null;
 
         for (int attempt = 0; attempt <= BLOCK_FETCH_RETRY_TIMES; attempt++) {
             for (int i = 0; i < syncPeers.size(); i++) {
@@ -337,8 +299,17 @@ public class NetServiceImpl implements NetService {
                 String peerId = peerIdHex(peer);
                 List<BlockHeadersPayload.Entry> headers = fetchHeaderBatchFromPeer(peerId, startHeight, stopHeight);
                 if (!headers.isEmpty()) {
-                    trackerFor(peer).status.set("HEADERS");
-                    return headers;
+                    try {
+                        List<HeaderSyncRecord> batch = validateAndStoreHeaderBatch(headers, startHeight, stopHeight,
+                                target, expectedPreviousHash, previousChainWork);
+                        trackerFor(peer).status.set("HEADERS");
+                        return batch;
+                    } catch (IllegalArgumentException invalidHeaders) {
+                        lastValidationFailure = invalidHeaders;
+                        trackerFor(peer).recordFailedRequest("Invalid headers starting at " + startHeight + ": "
+                                + invalidHeaders.getMessage());
+                        continue;
+                    }
                 }
                 trackerFor(peer).recordFailedRequest("Headers starting at " + startHeight + " returned empty response");
             }
@@ -352,7 +323,41 @@ public class NetServiceImpl implements NetService {
                 }
             }
         }
+        if (lastValidationFailure != null) {
+            throw new IllegalStateException("All peers returned invalid headers starting at " + startHeight,
+                    lastValidationFailure);
+        }
         return List.of();
+    }
+
+    private List<HeaderSyncRecord> validateAndStoreHeaderBatch(List<BlockHeadersPayload.Entry> headers, int startHeight,
+            int stopHeight, Peer.ChainTip target, byte[] expectedPreviousHash, UInt256 chainWork) {
+        if (headers.size() > stopHeight - startHeight + 1) {
+            throw new IllegalArgumentException("Header batch exceeds requested height " + stopHeight);
+        }
+        List<HeaderSyncRecord> records = new ArrayList<>(headers.size());
+        for (BlockHeadersPayload.Entry entry : headers) {
+            int expectedHeight = startHeight + records.size();
+            if (entry == null || entry.height() != expectedHeight) {
+                throw new IllegalArgumentException("Unexpected header height at " + expectedHeight);
+            }
+            BlockHeader header = entry.header();
+            if (header == null || !Arrays.equals(expectedPreviousHash, header.getPreviousHash())) {
+                throw new IllegalArgumentException("Header batch does not connect at " + expectedHeight);
+            }
+            expectedPreviousHash = header.calculateHash();
+            if (expectedHeight == target.height() && !target.hashHex().equals(bytesToHex(expectedPreviousHash))) {
+                throw new IllegalArgumentException("Verified headers do not reach the advertised tip");
+            }
+            chainWork = chainWork.add(UInt256.fromBigInteger(header.getWork()));
+            records.add(new HeaderSyncRecord(expectedHeight, expectedPreviousHash, header, chainWork));
+        }
+        for (HeaderSyncRecord record : records) {
+            if (!blockChainService.addBlockHeaderToStore(record.header(), record.height(), record.chainWork())) {
+                throw new IllegalArgumentException("Header validation failed at height " + record.height());
+            }
+        }
+        return records;
     }
 
     private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromPeer(String peerId, int startHeight, int stopHeight) {

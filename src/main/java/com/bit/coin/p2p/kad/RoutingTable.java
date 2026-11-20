@@ -202,15 +202,12 @@ public class RoutingTable {
     /**
      * 定时检查并执行持久化（有变动才执行）
      */
-    private void checkAndPersist() {
+    void checkAndPersist() {
         try {
             int changeCount = nodeChangeCount.get();
             if (changeCount > 0) {
                 log.info("定时检查发现{}个节点变动，执行持久化", changeCount);
                 persistToDatabase();
-                // 持久化成功后重置计数器
-                nodeChangeCount.set(0);
-
             } else {
                 log.debug("定时检查无节点变动，跳过持久化");
             }
@@ -326,7 +323,6 @@ public class RoutingTable {
             if (currentCount >= persistThreshold) {
                 log.info("累计节点变动达到{}次，触发立即持久化", persistThreshold);
                 persistToDatabase();
-                nodeChangeCount.set(0); // 重置计数器
             }
         }
     }
@@ -620,7 +616,6 @@ public class RoutingTable {
             if (currentCount >= persistThreshold) {
                 log.info("累计节点变动达到{}次，触发立即持久化", persistThreshold);
                 persistToDatabase();
-                nodeChangeCount.set(0); // 重置计数器
             }
         }
     }
@@ -1150,7 +1145,6 @@ public class RoutingTable {
         delete(nodeIdBytes);
         log.warn("移除通信失败节点{}，原因：{}", bytesToHex(nodeIdBytes), reason);
         persistToDatabase();
-        nodeChangeCount.set(0);
     }
 
     private byte[] parseNodeId(String nodeId) {
@@ -1182,9 +1176,10 @@ public class RoutingTable {
     /**
      * 持久化路由表中的所有节点到数据库
      */
-    public void persistToDatabase() {
+    public synchronized void persistToDatabase() {
         try {
-            // 收集所有节点
+            // 快照遍历期间的变更留给下一轮持久化
+            int changesAtSnapshotStart = nodeChangeCount.get();
             List<Peer> allPeers = new ArrayList<>();
             for (Bucket bucket : buckets) {
                 allPeers.addAll(bucket.getNodesArrayList());
@@ -1192,14 +1187,12 @@ public class RoutingTable {
             if (allPeers.isEmpty()) {
                 dataBase.delete(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY);
                 log.info("路由表为空，已删除数据库中的路由表节点快照");
-                log.debug("路由表为空，无需持久化");
-                return;
+            } else {
+                byte[] serializedPeers = serializePeers(allPeers);
+                dataBase.insert(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY, serializedPeers);
+                log.info("成功持久化{}个节点到路由表", allPeers.size());
             }
-
-            // 序列化节点列表（这里假设Peer类支持列表序列化，或自定义序列化逻辑）
-            byte[] serializedPeers = serializePeers(allPeers);
-            dataBase.insert(TableEnum.PEER, ROUTING_TABLE_PEERS_KEY, serializedPeers);
-            log.info("成功持久化{}个节点到路由表", allPeers.size());
+            nodeChangeCount.addAndGet(-changesAtSnapshotStart);
         } catch (Exception e) {
             log.error("持久化路由表失败", e);
         }

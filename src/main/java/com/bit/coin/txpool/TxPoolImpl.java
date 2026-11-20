@@ -47,6 +47,9 @@ public class TxPoolImpl implements TxPool{
     private final long memoryCapacityBytes;
     private static final long TX_EXPIRY_MS = TimeUnit.HOURS.toMillis(72);
     private final Map<String, Integer> entryWeights = new HashMap<>();
+    private final Map<String, Integer> feeEstimateArrivalHeights = new HashMap<>();
+    private final Map<String, Long> feeEstimateObservedFees = new HashMap<>();
+    private final Map<String, Long> feeEstimateObservedSizes = new HashMap<>();
     private long mempoolMemoryBytes;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "mempool-maintenance"); thread.setDaemon(true); return thread;
@@ -62,12 +65,40 @@ public class TxPoolImpl implements TxPool{
         Integer previous = entryWeights.put(id, size);
         mempoolMemoryBytes += size - (previous == null ? 0 : previous);
         mempool.put(id, tx);
+        if (previous == null) {
+            int arrivalHeight = currentChainHeight();
+            feeEstimateArrivalHeights.put(id, arrivalHeight);
+            feeEstimateObservedFees.put(id, tx.getFee());
+            feeEstimateObservedSizes.put(id, FeeEstimate.transactionSize(tx));
+        }
     }
     private Transaction eraseTx(String id) {
         Integer previous = entryWeights.remove(id);
         if (previous != null) mempoolMemoryBytes -= previous;
         broadcastQueue.remove(id);
-        return mempool.remove(id);
+        Transaction removed = mempool.remove(id);
+        if (removed == null) {
+            feeEstimateArrivalHeights.remove(id);
+            feeEstimateObservedFees.remove(id);
+            feeEstimateObservedSizes.remove(id);
+        }
+        return removed;
+    }
+
+    private void forgetFeeEstimateObservation(String id) {
+        feeEstimateArrivalHeights.remove(id);
+        feeEstimateObservedFees.remove(id);
+        feeEstimateObservedSizes.remove(id);
+    }
+
+    private int currentChainHeight() {
+        try {
+            var provider = chainProvider;
+            var chain = provider == null ? null : provider.getIfAvailable();
+            return chain == null || chain.getMainLatestBlock() == null ? 0 : chain.getMainLatestBlock().getHeight();
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
     public synchronized long estimatedMemoryBytes() { return mempoolMemoryBytes; }
     private void enqueueBroadcast(byte[] id) {
@@ -680,6 +711,18 @@ public class TxPoolImpl implements TxPool{
         return estimateFee(FeeEstimate.DEFAULT_TARGET_BLOCKS, FeeEstimate.transactionSize(tx)).fee();
     }
 
+    @Override
+    public synchronized FeeEstimate.Estimate estimateFee(int targetBlocks, long txSize) {
+        FeeEstimate.validateRequest(targetBlocks, txSize);
+        return FeeEstimate.estimate(getStatusSnapshot(), targetBlocks, txSize);
+    }
+
+    @Override
+    public synchronized List<FeeEstimate.Estimate> recommendedFeeEstimates(long txSize) {
+        FeeEstimate.validateRequest(FeeEstimate.DEFAULT_TARGET_BLOCKS, txSize);
+        return FeeEstimate.recommended(getStatusSnapshot(), txSize);
+    }
+
     private static Transaction copyForRead(Transaction source) {
         if (source == null) return null;
         Transaction copy = Transaction.deserialize(wireBytes(source));
@@ -690,19 +733,28 @@ public class TxPoolImpl implements TxPool{
 
     @Override
     public Transaction getTx(String txHash) {
-        if (txHash == null) {
-            return null;
+        Transaction source = txHash == null ? null : mempool.get(txHash);
+        if (source == null) return null;
+
+        Transaction copy = copyForRead(source);
+        Map<String, UTXO> spentOutputs = source.getUtxoMap();
+        if (spentOutputs != null) {
+            for (TxInput input : copy.getInputs()) {
+                UTXO spent = spentOutputs.get(bytesToHex(UTXO.getKey(input.getTxId(), input.getIndex())));
+                if (spent != null) {
+                    TxOutput output = new TxOutput();
+                    output.setValue(spent.getValue());
+                    output.setScriptPubKey(spent.getScript().clone());
+                    input.setOutput(output);
+                }
+            }
         }
-        return copyForRead(mempool.get(txHash));
+        return copy;
     }
 
     @Override
     public Transaction getTx(byte[] txHash) {
-        if (txHash == null) {
-            return null;
-        }
-        String txIdStr = bytesToHex(txHash);
-        return copyForRead(mempool.get(txIdStr));
+        return txHash == null ? null : getTx(bytesToHex(txHash));
     }
 
     @Override
@@ -1521,6 +1573,47 @@ public class TxPoolImpl implements TxPool{
         return feeRate(tx) >= MIN_RELAY_FEE_RATE;
     }
 
+    private static final class EvictionPackage {
+        final String root;
+        final long rootFee;
+        final int rootSize;
+        long fee;
+        long wireSize;
+
+        EvictionPackage(String root, long rootFee, int rootSize) {
+            this.root = root;
+            this.rootFee = rootFee;
+            this.rootSize = rootSize;
+        }
+
+        double feeRate() { return (double) fee / wireSize; }
+    }
+
+    private Set<String> evictionAncestorsIncludingSelf(Collection<String> ids) {
+        Set<String> ancestors = new HashSet<>();
+        Deque<String> pending = new ArrayDeque<>(ids);
+        while (!pending.isEmpty()) {
+            String id = pending.removeFirst();
+            if (ancestors.add(id)) pending.addAll(txToParents.getOrDefault(id, Set.of()));
+        }
+        return ancestors;
+    }
+
+    private NavigableSet<EvictionPackage> rankEvictionPackages(Map<String, EvictionPackage> packages) {
+        var ranked = new TreeSet<>(Comparator.comparingDouble(EvictionPackage::feeRate).thenComparing(pkg -> pkg.root));
+        for (EvictionPackage pkg : packages.values()) {
+            for (String id : collectDescendantsIncludingSelf(pkg.root)) {
+                EvictionPackage member = packages.get(id);
+                if (member != null) {
+                    pkg.fee += member.rootFee;
+                    pkg.wireSize += member.rootSize;
+                }
+            }
+            ranked.add(pkg);
+        }
+        return ranked;
+    }
+
     private boolean ensureCapacityFor(Transaction candidate) {
         int candidateBytes = TransactionValidator.memoryWeight(candidate);
         if (candidateBytes > memoryCapacityBytes) return false;
@@ -1529,45 +1622,46 @@ public class TxPoolImpl implements TxPool{
         }
 
         // Protect all unconfirmed ancestors, including grandparents, and transactions being mined.
-        Set<String> protectedIds = new HashSet<>(packingTxs.keySet());
+        Set<String> required = new HashSet<>(packingTxs.keySet());
         for (TxInput input : candidate.getInputs()) {
-            for (Transaction ancestor : getPackageInMiningOrder(bytesToHex(input.getTxId()))) {
-                protectedIds.add(bytesToHex(ancestor.getTxId()));
-            }
+            required.add(bytesToHex(input.getTxId()));
         }
+        Set<String> protectedIds = evictionAncestorsIncludingSelf(required);
         double candidateRate = feeRate(candidate);
-        List<Transaction> evictionCandidates = mempool.values().stream()
-                .filter(Objects::nonNull)
-                .filter(tx -> !protectedIds.contains(bytesToHex(tx.getTxId())))
-                .filter(tx -> feeRate(tx) < candidateRate)
-                .sorted(Comparator.comparingDouble(this::feeRate)
-                        .thenComparing(tx -> bytesToHex(tx.getTxId())))
-                .toList();
-
-        // Plan the complete removal before touching indexes or pool entries. Failed admission is a no-op.
-        Set<String> evictionIds = new LinkedHashSet<>();
+        Map<String, EvictionPackage> packages = new HashMap<>();
+        mempool.forEach((id, tx) -> {
+            if (!protectedIds.contains(id)) {
+                packages.put(id, new EvictionPackage(id, tx.getFee(), Math.max(1, estimateTxSize(tx))));
+            }
+        });
+        NavigableSet<EvictionPackage> ranked = rankEvictionPackages(packages);
+        List<String> evictionRoots = new ArrayList<>();
         long remainingBytes = mempoolMemoryBytes;
         int remainingCount = mempool.size();
-        for (Transaction eviction : evictionCandidates) {
-            String evictionId = bytesToHex(eviction.getTxId());
-            if (evictionIds.contains(evictionId)) continue;
-            Set<String> descendants = collectDescendantsIncludingSelf(evictionId);
-            if (!Collections.disjoint(descendants, protectedIds)) continue;
-            for (String id : descendants) {
-                if (mempool.containsKey(id) && evictionIds.add(id)) {
-                    remainingCount--;
-                    remainingBytes -= entryWeights.getOrDefault(id, 0);
+        while (remainingCount >= transactionCapacity || remainingBytes + candidateBytes > memoryCapacityBytes) {
+            EvictionPackage cheapest = ranked.pollFirst();
+            if (cheapest == null || cheapest.feeRate() >= candidateRate) return false;
+            evictionRoots.add(cheapest.root);
+            for (String id : collectDescendantsIncludingSelf(cheapest.root)) {
+                EvictionPackage member = packages.remove(id);
+                if (member == null) continue;
+                ranked.remove(member);
+                remainingCount--;
+                remainingBytes -= entryWeights.getOrDefault(id, 0);
+                for (String ancestor : evictionAncestorsIncludingSelf(txToParents.getOrDefault(id, Set.of()))) {
+                    EvictionPackage affected = packages.get(ancestor);
+                    if (affected == null) continue;
+                    ranked.remove(affected);
+                    affected.fee -= member.rootFee;
+                    affected.wireSize -= member.rootSize;
+                    ranked.add(affected);
                 }
-            }
-            if (remainingCount < transactionCapacity && remainingBytes + candidateBytes <= memoryCapacityBytes) {
-                for (String id : evictionIds) {
-                    removeTxAndDescendants(id, TransactionStatusResolver.REJECTED,
-                            TransactionStatusResolver.INSUFFICIENT_FEE);
-                }
-                return true;
             }
         }
-        return false;
+        for (String root : evictionRoots) {
+            removeTxAndDescendants(root, TransactionStatusResolver.REJECTED, TransactionStatusResolver.INSUFFICIENT_FEE);
+        }
+        return true;
     }
 
     private List<Transaction> getPackageInMiningOrder(String txIdStr) {
@@ -1732,9 +1826,11 @@ public class TxPoolImpl implements TxPool{
 
     @Override
     public synchronized void revalidate() {
-        for (Transaction tx : getAllTxs()) {
-            if (!verifyTx(tx, Collections.singleton(bytesToHex(tx.getTxId())))) removeTxAndDescendants(bytesToHex(tx.getTxId()), TransactionStatusResolver.REJECTED,
-                    TransactionStatusResolver.DOUBLE_SPEND_FLAG);
+        for (String id : new ArrayList<>(mempool.keySet())) {
+            Transaction tx = mempool.get(id);
+            if (tx != null && !verifyTx(tx, Collections.singleton(id))) {
+                removeTxAndDescendants(id, TransactionStatusResolver.REJECTED, TransactionStatusResolver.DOUBLE_SPEND_FLAG);
+            }
         }
     }
 
@@ -1754,6 +1850,16 @@ public class TxPoolImpl implements TxPool{
                 String txIdStr = bytesToHex(tx.getTxId());
                 confirmedIds.add(txIdStr);
                 blockSpentOutpoints.addAll(getInputKeys(tx));
+
+                Integer arrivalHeight = feeEstimateArrivalHeights.get(txIdStr);
+                if (arrivalHeight != null) {
+                    Long observedFee = feeEstimateObservedFees.get(txIdStr);
+                    Long observedSize = feeEstimateObservedSizes.get(txIdStr);
+                    if (observedFee != null && observedSize != null) {
+                        FeeEstimate.recordConfirmed(arrivalHeight, height, observedFee, observedSize);
+                    }
+                    forgetFeeEstimateObservation(txIdStr);
+                }
 
                 long status = tx.getStatus();
                 status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.CONFIRMED);
@@ -1776,6 +1882,7 @@ public class TxPoolImpl implements TxPool{
             throw new IllegalStateException("Failed to reconcile committed block with mempool", e);
         }
     }
+
 
 
 

@@ -41,6 +41,11 @@ public interface TxPool {
         return FeeEstimate.estimate(getStatusSnapshot(), targetBlocks, txSize);
     }
 
+    default List<FeeEstimate.Estimate> recommendedFeeEstimates(long txSize) {
+        FeeEstimate.validateRequest(FeeEstimate.DEFAULT_TARGET_BLOCKS, txSize);
+        return FeeEstimate.recommended(getStatusSnapshot(), txSize);
+    }
+
     //查询内存池中的交易
     Transaction getTx(String txHash);
 

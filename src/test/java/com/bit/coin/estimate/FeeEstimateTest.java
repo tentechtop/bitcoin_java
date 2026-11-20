@@ -11,6 +11,11 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class FeeEstimateTest {
+    @org.junit.jupiter.api.BeforeEach
+    void clearConfirmationHistory() {
+        FeeEstimate.reorg(-1, Integer.MAX_VALUE);
+    }
+
     @Test
     void emptyAndSparsePoolsUseMinimumRelayFee() {
         for (var pool : List.of(snapshot(List.of()), snapshot(List.of(sample(100_000, 100))))) {
@@ -34,8 +39,8 @@ class FeeEstimateTest {
 
         var quotes = FeeEstimate.recommended(pool, 250);
         assertEquals(List.of(1, 3, 6), quotes.stream().map(FeeEstimate.Estimate::targetBlocks).toList());
-        assertEquals(List.of(41L, 11L, 3L), quotes.stream().map(FeeEstimate.Estimate::feeRate).toList());
-        assertEquals(List.of(10_250L, 2_750L, 750L), quotes.stream().map(FeeEstimate.Estimate::fee).toList());
+        assertEquals(List.of(40L, 10L, 2L), quotes.stream().map(FeeEstimate.Estimate::feeRate).toList());
+        assertEquals(List.of(10_000L, 2_500L, 500L), quotes.stream().map(FeeEstimate.Estimate::fee).toList());
         assertTrue(quotes.stream().allMatch(q -> q.sampleCount() == 12 && q.source().equals("mempool")));
 
         long previous = Long.MAX_VALUE;
@@ -53,7 +58,7 @@ class FeeEstimateTest {
         entries.add(sample(950_000, 2));
         for (int i = 0; i < 200; i++) entries.add(sample(500, 100));
         var quote = FeeEstimate.estimate(snapshot(entries), 1, 250);
-        assertEquals(3, quote.feeRate());
+        assertEquals(2, quote.feeRate());
         assertEquals(1_050_000, quote.mempoolBytes());
     }
 
@@ -62,7 +67,7 @@ class FeeEstimateTest {
         var pool = snapshot(List.of(sample(500_000, 9),
                 sample(FeeEstimate.BLOCK_CAPACITY_BYTES - 500_000 - 250, 9)));
         assertEquals(1, FeeEstimate.estimate(pool, 1, 250).feeRate());
-        assertEquals(10, FeeEstimate.estimate(pool, 1, 251).feeRate());
+        assertEquals(9, FeeEstimate.estimate(pool, 1, 251).feeRate());
     }
 
     @Test
@@ -83,7 +88,7 @@ class FeeEstimateTest {
                 entry(500, TransactionValidator.MAX_MONEY + 1, true, false, false),
                 sample(TransactionValidator.MAX_TRANSACTION_BYTES + 1L, 10)));
         var quote = FeeEstimate.estimate(pool, 1, 250);
-        assertEquals(6, quote.feeRate());
+        assertEquals(5, quote.feeRate());
         assertEquals(2, quote.sampleCount());
         assertEquals(1_200_000, quote.mempoolBytes());
     }
@@ -101,6 +106,39 @@ class FeeEstimateTest {
         assertEquals(1_000_000, FeeEstimate.estimate(empty, 144, 1_000_000).fee());
         var expensive = snapshot(List.of(entry(600_000, TransactionValidator.MAX_MONEY, true, false, false)));
         assertThrows(IllegalArgumentException.class, () -> FeeEstimate.estimate(expensive, 1, 1_000_000));
+    }
+
+    @Test
+    void historicalSamplesDistinguishTargetsAndMempoolPressureWins() {
+        for (int i = 0; i < 10; i++) FeeEstimate.recordConfirmed(100, 101, 2_000, 100);
+        for (int i = 0; i < 10; i++) FeeEstimate.recordConfirmed(100, 104, 5_000, 100);
+        var empty = snapshot(List.of());
+        assertEquals(20, FeeEstimate.estimate(empty, 1, 100).feeRate());
+        assertEquals(20, FeeEstimate.estimate(empty, 3, 100).feeRate());
+        assertEquals(50, FeeEstimate.estimate(empty, 6, 100).feeRate());
+        assertEquals("historical", FeeEstimate.estimate(empty, 3, 100).source());
+
+        FeeEstimate.reorg(102, 104);
+        assertEquals(10, FeeEstimate.confirmationSampleCount());
+        assertEquals(20, FeeEstimate.estimate(empty, 3, 100).feeRate());
+
+        for (int i = 0; i < 4; i++) FeeEstimate.recordConfirmed(100, 101, 9_000, 100);
+        assertEquals(20, FeeEstimate.estimate(empty, 1, 100).feeRate());
+        FeeEstimate.recordConfirmed(100, 101, 9_000, 100);
+        assertEquals(20, FeeEstimate.estimate(empty, 1, 100).feeRate());
+
+        var backlog = snapshot(List.of(entry(FeeEstimate.BLOCK_CAPACITY_BYTES, 150, true, false, false)));
+        assertEquals(20, FeeEstimate.estimate(backlog, 1, 100).feeRate());
+        assertEquals("historical", FeeEstimate.estimate(backlog, 1, 100).source());
+    }
+
+    @Test
+    void confirmationSamplesAreBoundedAndExpireByHeight() {
+        for (int i = 0; i < 10_005; i++) FeeEstimate.recordConfirmed(1, 2, 100, 10);
+        assertEquals(10_000, FeeEstimate.confirmationSampleCount());
+        FeeEstimate.advanceHeight(2 + FeeEstimate.MAX_TARGET_BLOCKS + 1);
+        assertEquals(0, FeeEstimate.confirmationSampleCount());
+        assertEquals(1, FeeEstimate.estimate(snapshot(List.of()), 1, 100).feeRate());
     }
 
     private static TxPoolTransactionSnapshot sample(long size, long rate) {

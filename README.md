@@ -144,7 +144,7 @@ cd bitcoin_java
 mvn clean package -Pdev-fast
 
 # CI 构建（包含全部测试）
-mvn clean package -Pci
+mvn clean verify -Pci
 ```
 
 ### 启动节点
@@ -157,11 +157,11 @@ java -jar target/bitcoin_java-0.0.1-SNAPSHOT.jar
 
 | 页面 | 地址 |
 |------|------|
-| 首页仪表盘 | `http://localhost:8080/home/index.html` |
-| 区块链可视化 | `http://localhost:8080/block-visualization.html` |
-| P2P 网络监控 | `http://localhost:8080/p2p-monitor.html` |
-| 同步状态监控 | `http://localhost:8080/sync-monitor.html` |
-| 交易池监控 | `http://localhost:8080/txpool-monitor.html` |
+| 首页仪表盘 | `http://localhost:18333/home/index.html` |
+| 区块链可视化 | `http://localhost:18333/block-visualization.html` |
+| P2P 网络监控 | `http://localhost:18333/p2p-monitor.html` |
+| 同步状态监控 | `http://localhost:18333/sync-monitor.html` |
+| 交易池监控 | `http://localhost:18333/txpool-monitor.html` |
 
 ---
 
@@ -434,6 +434,7 @@ curl -H "Authorization: Bearer <READ_TOKEN>" "http://localhost:18333/txpool/fee-
 `targetBlocks` 范围为 1～144，单档接口默认值为 3；`txSize` 必填，范围为 1～1,000,000。
 大小使用本项目 `Transaction.serialize().length` 的完整字节数，包含 32 字节 txId、最终签名和找零输出；
 不是 Bitcoin 主网的 vbyte，也不要使用不含 txId 的 `Transaction.getSize()`。
+费率单位为 `sat/byte`，总手续费单位为 `sat`。估算器结合可打包交易的内存池字节积压和本节点近期确认的内存池交易样本，取两者中较高的费率；历史样本按实际确认区块数匹配目标，仅在目标范围内至少有 5 个样本时启用。最多保留 10,000 个样本，并在确认高度超过 144 个区块后过期；链重组会移除断开分支上的样本。冷启动、样本不足或历史样本过期时回退到积压估算，空池再使用最低中继费率；结果是本地参考，不保证确认时间。
 接口沿用 `/txpool/**` 的读取权限策略：默认需要 READ 或 ADMIN 凭据，启用 `node.api.public-read` 后允许匿名读取。
 
 空池示例响应：
