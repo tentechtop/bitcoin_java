@@ -31,7 +31,8 @@ public class P2PReceiveBlockHandle implements ProtocolHandler.VoidProtocolHandle
     public void handleVoid(P2PMessage requestParams) throws IOException {
         Block block = Block.deserialize(requestParams.getData());
         byte[] senderId = requestParams.getSenderId();
-        log.info("从远程节点接收到区块信息{}", block);
+        log.debug("从远程节点接收到区块 hash={}, height={}",
+                bytesToHex(block.getHash()), block.getHeight());
 
         byte[] hash = block.getHash();
         boolean missingParent = blockChainService.isMissingParentBlock(block);

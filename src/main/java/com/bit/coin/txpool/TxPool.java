@@ -27,6 +27,11 @@ public interface TxPool {
     //验证并加入到内存池
     boolean addTx(Transaction tx);
 
+    /** 已完成网络协议解析的交易入口，避免 P2P 接收路径再次序列化和反序列化。 */
+    default boolean addDecodedTx(Transaction tx) {
+        return addTx(tx);
+    }
+
     boolean addTx(List<Transaction> tx);
 
     Result<String> addTx(TransferDTO tx);

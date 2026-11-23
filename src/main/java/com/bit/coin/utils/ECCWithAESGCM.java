@@ -144,9 +144,12 @@ public class ECCWithAESGCM {
      * @throws Exception 解密异常（包含认证失败）
      */
     public static byte[] aesGcmDecrypt(SecretKey key, byte[] encryptedData) throws Exception {
-        // 分离IV和密文
+        if (encryptedData == null || encryptedData.length < GCM_IV_LENGTH + GCM_TAG_LENGTH / 8) {
+            throw new IllegalArgumentException("AES-GCM密文长度不足");
+        }
+
+        // 只复制IV，密文直接从原始数组按偏移解密，避免一次完整密文拷贝。
         byte[] iv = Arrays.copyOfRange(encryptedData, 0, GCM_IV_LENGTH);
-        byte[] ciphertext = Arrays.copyOfRange(encryptedData, GCM_IV_LENGTH, encryptedData.length);
 
         // 初始化GCM参数
         GCMParameterSpec gcmSpec = new GCMParameterSpec(GCM_TAG_LENGTH, iv);
@@ -156,7 +159,7 @@ public class ECCWithAESGCM {
         cipher.init(Cipher.DECRYPT_MODE, key, gcmSpec);
 
         // 执行解密（自动验证标签）
-        return cipher.doFinal(ciphertext);
+        return cipher.doFinal(encryptedData, GCM_IV_LENGTH, encryptedData.length - GCM_IV_LENGTH);
     }
 
     // 测试示例

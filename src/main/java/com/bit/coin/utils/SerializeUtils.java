@@ -3,10 +3,10 @@ package com.bit.coin.utils;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 public class SerializeUtils {
+
+    private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
 
     /**
      * 将 int 以小端字节序写入 DataOutputStream。
@@ -16,10 +16,10 @@ public class SerializeUtils {
      * @throws IOException 如果发生I/O错误
      */
     public static void writeLittleEndianInt(DataOutputStream dos, int value) throws IOException {
-        dos.write(ByteBuffer.allocate(4)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(value)
-                .array());
+        dos.writeByte(value);
+        dos.writeByte(value >>> 8);
+        dos.writeByte(value >>> 16);
+        dos.writeByte(value >>> 24);
     }
 
     public static void writeLittleEndianLong(DataOutputStream dos, long value) throws IOException {
@@ -27,9 +27,16 @@ public class SerializeUtils {
     }
 
     public static long readLittleEndianLong(DataInputStream dis) throws IOException {
-        byte[] bytes = new byte[8];
-        dis.readFully(bytes);
-        return littleEndianToLong(bytes);
+        long b0 = dis.readUnsignedByte();
+        long b1 = dis.readUnsignedByte();
+        long b2 = dis.readUnsignedByte();
+        long b3 = dis.readUnsignedByte();
+        long b4 = dis.readUnsignedByte();
+        long b5 = dis.readUnsignedByte();
+        long b6 = dis.readUnsignedByte();
+        long b7 = dis.readUnsignedByte();
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+                | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56);
     }
 
     /**
@@ -86,17 +93,24 @@ public class SerializeUtils {
         if (bytes.length != 4) {
             throw new IllegalArgumentException("字节数组长度必须为4");
         }
-        return ByteBuffer.wrap(bytes)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .getInt();
+        return (bytes[0] & 0xFF)
+                | ((bytes[1] & 0xFF) << 8)
+                | ((bytes[2] & 0xFF) << 16)
+                | ((bytes[3] & 0xFF) << 24);
     }
 
     // 辅助方法: long转小端字节序
     public static byte[] longToLittleEndian(long value) {
-        return ByteBuffer.allocate(8)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .putLong(value)
-                .array();
+        return new byte[] {
+                (byte) value,
+                (byte) (value >>> 8),
+                (byte) (value >>> 16),
+                (byte) (value >>> 24),
+                (byte) (value >>> 32),
+                (byte) (value >>> 40),
+                (byte) (value >>> 48),
+                (byte) (value >>> 56)
+        };
     }
 
     public static byte[] intToLittleEndian(int value) {
@@ -123,9 +137,14 @@ public class SerializeUtils {
         if (bytes.length != 8) {
             throw new IllegalArgumentException("字节数组长度必须为8");
         }
-        return ByteBuffer.wrap(bytes)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .getLong();
+        return (bytes[0] & 0xFFL)
+                | ((bytes[1] & 0xFFL) << 8)
+                | ((bytes[2] & 0xFFL) << 16)
+                | ((bytes[3] & 0xFFL) << 24)
+                | ((bytes[4] & 0xFFL) << 32)
+                | ((bytes[5] & 0xFFL) << 40)
+                | ((bytes[6] & 0xFFL) << 48)
+                | ((bytes[7] & 0xFFL) << 56);
     }
 
     /**
@@ -194,11 +213,13 @@ public class SerializeUtils {
         if (bytes == null) {
             return "";
         }
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+        char[] result = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int value = bytes[i] & 0xFF;
+            result[i * 2] = HEX_DIGITS[value >>> 4];
+            result[i * 2 + 1] = HEX_DIGITS[value & 0x0F];
         }
-        return sb.toString();
+        return new String(result);
     }
 
     /**
@@ -238,9 +259,10 @@ public class SerializeUtils {
      * @throws IOException
      */
     public static int readLittleEndianInt(DataInputStream dis) throws IOException {
-        byte[] bytes = new byte[4];
-        dis.readFully(bytes);
-        return littleEndianToInt(bytes);
+        return dis.readUnsignedByte()
+                | (dis.readUnsignedByte() << 8)
+                | (dis.readUnsignedByte() << 16)
+                | (dis.readUnsignedByte() << 24);
     }
 
     public static int readLittleEndianInt(byte[] intValueBytes) {
@@ -260,10 +282,17 @@ public class SerializeUtils {
             return null;
         }
         int len = hex.length();
+        if ((len & 1) != 0) {
+            throw new IllegalArgumentException("十六进制字符串长度必须为偶数");
+        }
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
-            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
-                    + Character.digit(hex.charAt(i + 1), 16));
+            int high = Character.digit(hex.charAt(i), 16);
+            int low = Character.digit(hex.charAt(i + 1), 16);
+            if (high < 0 || low < 0) {
+                throw new IllegalArgumentException("包含无效的十六进制字符");
+            }
+            data[i / 2] = (byte) ((high << 4) | low);
         }
         return data;
     }

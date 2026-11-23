@@ -456,13 +456,24 @@ public class TxPoolImpl implements TxPool {
 
     @Override
     synchronized public boolean addTx(Transaction tx) {
+        return addTxInternal(tx, true);
+    }
+
+    @Override
+    synchronized public boolean addDecodedTx(Transaction tx) {
+        return addTxInternal(tx, false);
+    }
+
+    private boolean addTxInternal(Transaction tx, boolean canonicalize) {
         if (tx == null) {
             log.warn("添加交易失败：交易为null");
             return false;
         }
 
         try {
-            tx = Transaction.deserialize(wireBytes(tx));
+            if (canonicalize) {
+                tx = Transaction.deserialize(wireBytes(tx));
+            }
             // 1. 验证交易
             if (tx.getTxId() == null) {
                 tx.setTxId(tx.calculateTxId());
@@ -2031,10 +2042,13 @@ public class TxPoolImpl implements TxPool {
                 String txIdStr = bytesToHex(tx.getTxId());
 
                 // 回退交易状态到IN_POOL
-                long status = tx.getStatus();
+                Transaction memTx = mempool.get(txIdStr);
+                long status = memTx == null ? tx.getStatus() : memTx.getStatus();
                 status = TransactionStatusResolver.setLifecycleStatus(status, TransactionStatusResolver.IN_POOL);
                 status = TransactionStatusResolver.removeFlag(status, TransactionStatusResolver.MEMPOOL_LOCKED);
-                tx.setStatus(status);
+                if (memTx != null) {
+                    memTx.setStatus(status);
+                }
 
                 // 从打包状态移除，交易仍留在mempool中（可重新参与打包）
                 Transaction removed = packingTxs.remove(txIdStr);

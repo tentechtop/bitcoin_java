@@ -1264,7 +1264,7 @@ public class QuicConnectionManager {
             }
         }
 
-        log.info("[获取在线节点] 共找到{}个在线节点，节点列表：{}", onlinePeers.size(), onlinePeers);
+        log.debug("[获取在线节点] 共找到{}个在线节点", onlinePeers.size());
         return onlinePeers;
     }
 

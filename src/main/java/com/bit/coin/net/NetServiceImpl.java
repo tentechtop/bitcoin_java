@@ -40,6 +40,11 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -95,8 +100,10 @@ public class NetServiceImpl implements NetService {
 
     private final AtomicBoolean syncRunning = new AtomicBoolean(false);
     private final AtomicInteger peerCursor = new AtomicInteger(0);
-    private final ConcurrentMap<String, Semaphore> peerSemaphores = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, PeerSyncTracker> peerStates = new ConcurrentHashMap<>();
+    private final com.github.benmanes.caffeine.cache.Cache<String, Semaphore> peerSemaphores =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(256).build();
+    private final com.github.benmanes.caffeine.cache.Cache<String, PeerSyncTracker> peerStates =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(256).build();
     private final ConcurrentLinkedDeque<String> recentErrors = new ConcurrentLinkedDeque<>();
 
     private final AtomicReference<String> syncStatus = new AtomicReference<>("IDLE");
@@ -239,17 +246,19 @@ public class NetServiceImpl implements NetService {
         if (headersFirst) {
             totalHeaders.set(blocksToSync);
             setStage("DOWNLOADING_HEADERS", "Downloading and verifying block headers");
-            List<HeaderSyncRecord> headerChain = syncHeaders(syncPeers, commonAncestor, target);
-            HeaderSyncRecord last = headerChain.getLast();
-            if (last.chainWork().compareTo(localWork) <= 0) {
-                throw new IllegalStateException("Verified headers do not exceed local cumulative work");
+            try (HeaderHashIndex headerIndex = new HeaderHashIndex()) {
+                HeaderSyncRecord last = syncHeaders(syncPeers, commonAncestor, target, headerIndex);
+                if (last.chainWork().compareTo(localWork) <= 0) {
+                    throw new IllegalStateException("Verified headers do not exceed local cumulative work");
+                }
+                if (last.chainWork().compareTo(getCurrentLocalChainWork()) <= 0) {
+                    return;
+                }
+                setStage("DOWNLOADING", "Downloading blocks for verified headers");
+                syncBlocks(commonAncestor, target,
+                        height -> fetchBlockByHashFromAnyPeer(syncPeers,
+                                new HeaderSyncRecord(height, headerIndex.get(height), null, null)));
             }
-            if (last.chainWork().compareTo(getCurrentLocalChainWork()) <= 0) {
-                return;
-            }
-            setStage("DOWNLOADING", "Downloading blocks for verified headers");
-            syncBlocks(commonAncestor, target,
-                    height -> fetchBlockByHashFromAnyPeer(syncPeers, headerChain.get(height - firstHeight)));
         } else {
             setStage("DOWNLOADING", "Downloading blocks");
             byte[] tipHash = syncBlocks(commonAncestor, target, height -> fetchBlockFromAnyPeer(syncPeers, height));
@@ -259,12 +268,12 @@ public class NetServiceImpl implements NetService {
         }
     }
 
-    private List<HeaderSyncRecord> syncHeaders(
+    private HeaderSyncRecord syncHeaders(
             List<Peer> syncPeers,
             Landmark commonAncestor,
-            Peer.ChainTip target) {
+            Peer.ChainTip target,
+            HeaderHashIndex headerIndex) throws Exception {
         // 每批必须接续上批末尾，并逐步累计工作量；后续按已验证的哈希下载区块正文。
-        List<HeaderSyncRecord> headerChain = new ArrayList<>();
         byte[] expectedPreviousHash = commonAncestor.getHash();
         UInt256 runningChainWork = blockChainService.getChainWorkByHash(expectedPreviousHash);
         int acceptedHeight = commonAncestor.getHeight();
@@ -279,7 +288,9 @@ public class NetServiceImpl implements NetService {
                 throw new IllegalStateException(error);
             }
 
-            headerChain.addAll(batch);
+            for (HeaderSyncRecord record : batch) {
+                headerIndex.put(record.height(), record.hash());
+            }
             HeaderSyncRecord last = batch.getLast();
             acceptedHeight = last.height();
             expectedPreviousHash = last.hash();
@@ -290,7 +301,7 @@ public class NetServiceImpl implements NetService {
             touchProgress();
         }
 
-        return headerChain;
+        return new HeaderSyncRecord(acceptedHeight, expectedPreviousHash, null, runningChainWork);
     }
 
     private List<HeaderSyncRecord> fetchHeaderBatchFromAnyPeer(
@@ -372,8 +383,7 @@ public class NetServiceImpl implements NetService {
     }
 
     private List<BlockHeadersPayload.Entry> fetchHeaderBatchFromPeer(String peerId, int startHeight, int stopHeight) {
-        Semaphore semaphore = peerSemaphores.computeIfAbsent(
-                peerId,
+        Semaphore semaphore = peerSemaphores.get(peerId,
                 ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
@@ -576,7 +586,7 @@ public class NetServiceImpl implements NetService {
             boolean verified = blockChainService.verifyBlock(result.block());
             if (!verified) {
                 failedBlocks.incrementAndGet();
-                PeerSyncTracker tracker = peerStates.get(result.peerId());
+                PeerSyncTracker tracker = peerStates.getIfPresent(result.peerId());
                 if (tracker != null) {
                     tracker.recordFailedRequest("Block " + result.height() + " failed validation");
                 }
@@ -585,7 +595,7 @@ public class NetServiceImpl implements NetService {
 
             verifiedBlocks.incrementAndGet();
             localHeight.set(getCurrentLocalHeight());
-            PeerSyncTracker tracker = peerStates.get(result.peerId());
+            PeerSyncTracker tracker = peerStates.getIfPresent(result.peerId());
             if (tracker != null) {
                 tracker.recordVerified(result.height());
             }
@@ -599,8 +609,7 @@ public class NetServiceImpl implements NetService {
     }
 
     private Block fetchBlockFromPeer(String peerId, int height) {
-        Semaphore semaphore = peerSemaphores.computeIfAbsent(
-                peerId,
+        Semaphore semaphore = peerSemaphores.get(peerId,
                 ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
@@ -635,8 +644,7 @@ public class NetServiceImpl implements NetService {
     }
 
     private Block fetchBlockByHashFromPeer(String peerId, byte[] hash) {
-        Semaphore semaphore = peerSemaphores.computeIfAbsent(
-                peerId,
+        Semaphore semaphore = peerSemaphores.get(peerId,
                 ignored -> new Semaphore(MAX_CONCURRENT_REQUESTS_PER_NODE));
 
         boolean acquired = false;
@@ -859,7 +867,7 @@ public class NetServiceImpl implements NetService {
                 .map(this::peerIdHex)
                 .collect(Collectors.toCollection(HashSet::new));
 
-        return peerStates.values().stream()
+        return peerStates.asMap().values().stream()
                 .filter(tracker -> onlineIds.contains(tracker.peerId) || tracker.hasActivity())
                 .map(tracker -> tracker.snapshot(onlineIds.contains(tracker.peerId)))
                 .sorted(Comparator
@@ -889,15 +897,13 @@ public class NetServiceImpl implements NetService {
             }
         }
 
-        peerSemaphores.clear();
-        peerStates.clear();
+        peerSemaphores.invalidateAll();
         recentErrors.clear();
     }
 
     private void resetProgress() {
         long now = System.currentTimeMillis();
         peerCursor.set(0);
-        peerStates.clear();
         recentErrors.clear();
         syncStatus.set("STARTING");
         syncMessage.set("Starting block sync");
@@ -977,7 +983,7 @@ public class NetServiceImpl implements NetService {
 
     private PeerSyncTracker trackerFor(Peer peer) {
         String peerId = peerIdHex(peer);
-        return peerStates.computeIfAbsent(peerId, ignored -> new PeerSyncTracker(peer));
+        return peerStates.get(peerId, ignored -> new PeerSyncTracker(peer));
     }
 
     private String peerIdHex(Peer peer) {
@@ -1029,6 +1035,70 @@ public class NetServiceImpl implements NetService {
             byte[] hash,
             BlockHeader header,
             UInt256 chainWork) {}
+
+    private static final class HeaderHashIndex implements AutoCloseable {
+
+        private final Path path;
+        private final FileChannel channel;
+
+        private HeaderHashIndex() throws Exception {
+            path = Files.createTempFile("bitcoin-header-sync-", ".idx");
+            try {
+                channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            } catch (Exception e) {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (Exception cleanupException) {
+                    e.addSuppressed(cleanupException);
+                }
+                throw e;
+            }
+        }
+
+        private synchronized void put(int height, byte[] hash) throws Exception {
+            if (height < 0 || hash == null || hash.length != 32) {
+                throw new IllegalArgumentException("Header hash must be 32 bytes");
+            }
+            ByteBuffer buffer = ByteBuffer.wrap(hash);
+            long offset = Math.multiplyExact((long) height, 32L);
+            while (buffer.hasRemaining()) {
+                offset += channel.write(buffer, offset);
+            }
+        }
+
+        private synchronized byte[] get(int height) {
+            if (height < 0) {
+                throw new IllegalArgumentException("Header height must not be negative");
+            }
+            try {
+                byte[] hash = new byte[32];
+                ByteBuffer buffer = ByteBuffer.wrap(hash);
+                long offset = Math.multiplyExact((long) height, 32L);
+                while (buffer.hasRemaining()) {
+                    int read = channel.read(buffer, offset);
+                    if (read < 0) {
+                        throw new IllegalStateException("Missing verified header hash at height " + height);
+                    }
+                    if (read == 0) {
+                        continue;
+                    }
+                    offset += read;
+                }
+                return hash;
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("Failed to read verified header hash at height " + height, e);
+            }
+        }
+
+        @Override
+        public void close() throws Exception {
+            try {
+                channel.close();
+            } finally {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
 
     private static final class PeerSyncTracker {
 

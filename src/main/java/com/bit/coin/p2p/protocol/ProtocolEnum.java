@@ -3,6 +3,9 @@ package com.bit.coin.p2p.protocol;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * 协议枚举（用作注册时的键）
  */
@@ -54,6 +57,8 @@ public enum ProtocolEnum {
     // 是否有返回值 true/有返回值 false/无返回值
     private final boolean hasResponse;
 
+    private static final Map<Integer, ProtocolEnum> BY_CODE = buildCodeIndex();
+
     ProtocolEnum(int code, String protocol, boolean hasResponse) {
         this.code = code;
         this.protocol = protocol;
@@ -63,12 +68,19 @@ public enum ProtocolEnum {
     // ========== 辅助方法 ==========
     /** 根据code反向查找枚举 */
     public static ProtocolEnum fromCode(int code) {
-        for (ProtocolEnum e : values()) {
-            if (e.getCode() == code) {
-                return e;
-            }
+        ProtocolEnum protocol = BY_CODE.get(code);
+        if (protocol != null) {
+            return protocol;
         }
         throw new IllegalArgumentException("无效的协议code：" + code);
+    }
+
+    private static Map<Integer, ProtocolEnum> buildCodeIndex() {
+        Map<Integer, ProtocolEnum> index = new HashMap<>();
+        for (ProtocolEnum protocol : values()) {
+            index.put(protocol.code, protocol);
+        }
+        return Map.copyOf(index);
     }
 
     /** 根据协议字符串反向查找枚举（标准化处理） */

@@ -20,6 +20,10 @@ import java.security.KeyPair;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -115,6 +119,42 @@ class TxPoolImplRbfTest {
     }
 
     @Test
+    void concurrentAdmissionOfTheSameOutpointAcceptsOnlyOneTransaction() throws Exception {
+        Transaction first = signedTx(FINAL_SEQUENCE, 80_000L);
+        Transaction second = signedTx(FINAL_SEQUENCE, 70_000L);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<Boolean> firstResult = executor.submit(() -> admitWhenReleased(first, ready, start));
+            Future<Boolean> secondResult = executor.submit(() -> admitWhenReleased(second, ready, start));
+            assertTrue(ready.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            start.countDown();
+
+            int accepted = (firstResult.get() ? 1 : 0) + (secondResult.get() ? 1 : 0);
+            assertEquals(1, accepted);
+            assertEquals(1, txPool.transactionCount());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void failedMiningUnlocksTheStoredTransactionCopy() {
+        Transaction tx = signedTx(RBF_SEQUENCE, 80_000L);
+        assertTrue(txPool.addTx(tx));
+
+        Transaction[] extracted = txPool.extractTxsForBlock();
+        assertEquals(1, extracted.length);
+        assertEquals(1, txPool.getStatusSnapshot().packingCount());
+
+        txPool.onBlockFailed(extracted);
+
+        assertEquals(0, txPool.getStatusSnapshot().packingCount());
+        assertEquals(1, txPool.extractTxsForBlock().length);
+    }
+
+    @Test
     void optInConflictIsAutomaticallyReplacedOnAddTx() {
         Transaction original = signedTx(RBF_SEQUENCE, 80_000L);
         Transaction replacement = signedTx(FINAL_SEQUENCE, 70_000L);
@@ -164,6 +204,13 @@ class TxPoolImplRbfTest {
         tx.sign(privateKey, publicKey);
         tx.setTxId(tx.calculateTxId());
         return tx;
+    }
+
+    private boolean admitWhenReleased(Transaction tx, CountDownLatch ready, CountDownLatch start)
+            throws InterruptedException {
+        ready.countDown();
+        start.await();
+        return txPool.addTx(tx);
     }
 
     private UTXO sourceUtxo() {

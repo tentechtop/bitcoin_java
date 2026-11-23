@@ -51,13 +51,13 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
             case BroadcastResource.TYPE_BLOCK -> shouldRequestBlock(senderId, resource);
             case BroadcastResource.TYPE_TRANSACTION -> shouldRequestTransaction(resource);
             default -> {
-                log.info("Received unknown resource announcement: type={}", resource.getType());
+                log.debug("Received unknown resource announcement: type={}", resource.getType());
                 yield false;
             }
         };
 
         if (needResource && senderId != null) {
-            log.info("Request announced resource: type={}, hash={}", resource.getType(),
+            log.debug("Request announced resource: type={}, hash={}", resource.getType(),
                     bytesToHex(resource.getHash()));
             staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Get_Resource_Req, data, 5000);
         }
@@ -65,7 +65,7 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
 
     private boolean shouldRequestBlock(byte[] senderId, BroadcastResource resource) {
         byte[] hash = resource.getHash();
-        log.info("Received block announcement: hash={}, height={}", bytesToHex(hash), resource.getHeight());
+        log.debug("Received block announcement: hash={}, height={}", bytesToHex(hash), resource.getHeight());
 
         if (resource.hasBlockState() && senderId != null) {
             routingTable.updateLatest(
@@ -93,7 +93,7 @@ public class BroadcastResourceHandle implements ProtocolHandler.VoidProtocolHand
 
     private boolean shouldRequestTransaction(BroadcastResource resource) {
         byte[] hash = resource.getHash();
-        log.info("Received transaction announcement: hash={}", bytesToHex(hash));
+        log.debug("Received transaction announcement: hash={}", bytesToHex(hash));
 
         Transaction poolTx = txPool.getTx(hash);
         if (poolTx != null) {

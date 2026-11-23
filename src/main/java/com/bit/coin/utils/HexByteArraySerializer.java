@@ -9,6 +9,7 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
 
     // 十六进制字符表
     private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
+    private static final char[] UPPER_HEX_CHARS = "0123456789ABCDEF".toCharArray();
 
     // 是否使用大写字母
     private final boolean useUpperCase;
@@ -51,8 +52,11 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
             return;
         }
 
-        // 构建十六进制字符串
-        StringBuilder hexString = new StringBuilder();
+        char[] digits = useUpperCase ? UPPER_HEX_CHARS : HEX_CHARS;
+        int delimiterLength = withDelimiter ? delimiter.length() : 0;
+        int capacity = (withPrefix ? 2 : 0) + value.length * 2
+                + Math.max(0, value.length - 1) * delimiterLength;
+        StringBuilder hexString = new StringBuilder(capacity);
 
         // 如果需要前缀
         if (withPrefix) {
@@ -64,18 +68,9 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
                 hexString.append(delimiter);
             }
 
-            // 获取字节的高4位和低4位
-            int high = (value[i] >> 4) & 0x0F;
-            int low = value[i] & 0x0F;
-
-            // 转换为十六进制字符
-            if (useUpperCase) {
-                hexString.append(Character.toUpperCase(HEX_CHARS[high]));
-                hexString.append(Character.toUpperCase(HEX_CHARS[low]));
-            } else {
-                hexString.append(HEX_CHARS[high]);
-                hexString.append(HEX_CHARS[low]);
-            }
+            int unsigned = value[i] & 0xFF;
+            hexString.append(digits[unsigned >>> 4]);
+            hexString.append(digits[unsigned & 0x0F]);
         }
 
         gen.writeString(hexString.toString());
@@ -89,13 +84,8 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
     public static String byteToHex(byte b, boolean useUpperCase) {
         int high = (b >> 4) & 0x0F;
         int low = b & 0x0F;
-
-        if (useUpperCase) {
-            return String.valueOf(Character.toUpperCase(HEX_CHARS[high])) +
-                    Character.toUpperCase(HEX_CHARS[low]);
-        } else {
-            return String.valueOf(HEX_CHARS[high]) + HEX_CHARS[low];
-        }
+        char[] digits = useUpperCase ? UPPER_HEX_CHARS : HEX_CHARS;
+        return new String(new char[] {digits[high], digits[low]});
     }
 
     // 静态方法：将字节数组转换为十六进制字符串
@@ -114,8 +104,11 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
             return "";
         }
 
-        StringBuilder hexString = new StringBuilder();
+        char[] digits = useUpperCase ? UPPER_HEX_CHARS : HEX_CHARS;
         String delim = delimiter != null ? delimiter : " ";
+        int capacity = (withPrefix ? 2 : 0) + bytes.length * 2
+                + Math.max(0, bytes.length - 1) * (withDelimiter ? delim.length() : 0);
+        StringBuilder hexString = new StringBuilder(capacity);
 
         if (withPrefix) {
             hexString.append("0x");
@@ -126,16 +119,9 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
                 hexString.append(delim);
             }
 
-            int high = (bytes[i] >> 4) & 0x0F;
-            int low = bytes[i] & 0x0F;
-
-            if (useUpperCase) {
-                hexString.append(Character.toUpperCase(HEX_CHARS[high]));
-                hexString.append(Character.toUpperCase(HEX_CHARS[low]));
-            } else {
-                hexString.append(HEX_CHARS[high]);
-                hexString.append(HEX_CHARS[low]);
-            }
+            int unsigned = bytes[i] & 0xFF;
+            hexString.append(digits[unsigned >>> 4]);
+            hexString.append(digits[unsigned & 0x0F]);
         }
 
         return hexString.toString();
@@ -152,19 +138,34 @@ public class HexByteArraySerializer extends StdSerializer<byte[]> {
             hexString = hexString.substring(2);
         }
 
-        // 移除所有分隔符
-        hexString = hexString.replaceAll("\\s+", "");
-
-        // 确保字符串长度为偶数
-        if (hexString.length() % 2 != 0) {
+        int hexDigits = 0;
+        for (int i = 0; i < hexString.length(); i++) {
+            if (!Character.isWhitespace(hexString.charAt(i))) {
+                hexDigits++;
+            }
+        }
+        if ((hexDigits & 1) != 0) {
             throw new IllegalArgumentException("Invalid hex string length");
         }
 
-        byte[] bytes = new byte[hexString.length() / 2];
-
-        for (int i = 0; i < hexString.length(); i += 2) {
-            String hexByte = hexString.substring(i, i + 2);
-            bytes[i / 2] = (byte) Integer.parseInt(hexByte, 16);
+        byte[] bytes = new byte[hexDigits / 2];
+        int high = -1;
+        int outputIndex = 0;
+        for (int i = 0; i < hexString.length(); i++) {
+            char ch = hexString.charAt(i);
+            if (Character.isWhitespace(ch)) {
+                continue;
+            }
+            int value = Character.digit(ch, 16);
+            if (value < 0) {
+                throw new IllegalArgumentException("Invalid hex character: " + ch);
+            }
+            if (high < 0) {
+                high = value;
+            } else {
+                bytes[outputIndex++] = (byte) ((high << 4) | value);
+                high = -1;
+            }
         }
 
         return bytes;

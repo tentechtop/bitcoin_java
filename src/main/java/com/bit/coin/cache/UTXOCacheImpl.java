@@ -90,9 +90,11 @@ public class UTXOCacheImpl implements UTXOCache {
         ChainTipSnapshot snapshot = chains.getObject().getMainTipSnapshot();
         int tip = snapshot == null ? 0 : snapshot.height();
         long status = setLifecycleStatus(0, CONFIRMED_UNSPENT);
-        status = !utxo.isCoinbase() || (long) tip + 1 - utxo.getHeight() >= config.getParams().getCoinbaseMaturity()
-                ? setCoinbaseMatured(status)
-                : setCoinbaseMaturing(status);
+        if (utxo.isCoinbase()) {
+            status = (long) tip + 1 - utxo.getHeight() >= config.getParams().getCoinbaseMaturity()
+                    ? setCoinbaseMatured(status)
+                    : setCoinbaseMaturing(status);
+        }
         utxo.setStatus(status);
         return utxo;
     }
@@ -150,7 +152,22 @@ public class UTXOCacheImpl implements UTXOCache {
 
     @Override
     public List<UTXO> getAddressAllUTXOByStatus(String address, long status) {
-        return getAddressAllUTXO(address).stream().filter(u -> (u.getStatus() & status) == status).toList();
+        return getAddressAllUTXO(address).stream()
+                .filter(utxo -> matchesRequestedStatus(utxo, status))
+                .toList();
+    }
+
+    /**
+     * 余额查询使用 CONFIRMED_UNSPENT | COINBASE_MATURED 表示可花费余额。
+     * 普通确认输出无需携带 coinbase 标志，只有 coinbase 输出需要检查成熟度。
+     */
+    private static boolean matchesRequestedStatus(UTXO utxo, long status) {
+        if (status == (CONFIRMED_UNSPENT | COINBASE_MATURED)) {
+            long lifecycle = getLifecycleStatus(utxo.getStatus());
+            return lifecycle == CONFIRMED_UNSPENT
+                    && (!utxo.isCoinbase() || isCoinbaseMatured(utxo.getStatus()));
+        }
+        return (utxo.getStatus() & status) == status;
     }
 
     @Override

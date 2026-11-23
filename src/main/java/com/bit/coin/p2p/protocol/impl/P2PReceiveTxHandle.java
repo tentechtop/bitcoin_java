@@ -31,14 +31,16 @@ public class P2PReceiveTxHandle implements ProtocolHandler.VoidProtocolHandler {
         byte[] senderId = requestParams.getSenderId();
         Transaction deserialize = Transaction.deserialize(data);
         if (deserialize != null) {
-            log.info("收到 交易信息{}", deserialize.toString());
+            String txId = bytesToHex(deserialize.getTxId());
+            log.debug("收到交易信息 txId={}", txId);
             //是否已经存在
-            Integer ifPresent = EXIST_RESOURCE_CACHE.getIfPresent(bytesToHex(deserialize.getTxId()));
+            Integer ifPresent = EXIST_RESOURCE_CACHE.getIfPresent(txId);
             if (ifPresent == null) {
                 Transaction txByHash = blockChainService.getTxByHash(deserialize.getTxId());
                 if (txByHash == null) {
-                    txPool.addTx(deserialize);
+                    txPool.addDecodedTx(deserialize);
                 }
+                EXIST_RESOURCE_CACHE.put(txId, com.bit.coin.p2p.protocol.dto.BroadcastResource.TYPE_TRANSACTION);
             }
         }
     }

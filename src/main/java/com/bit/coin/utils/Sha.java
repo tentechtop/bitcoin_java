@@ -10,6 +10,9 @@ import java.security.Security;
 @Slf4j
 public class Sha {
 
+    private static final byte[] EMPTY_BYTES = new byte[0];
+    private static final ThreadLocal<byte[]> BYTE_BUFFER_SCRATCH = ThreadLocal.withInitial(() -> new byte[4096]);
+
     // ThreadLocal存储每个线程独立的SHA-256实例
     private static final ThreadLocal<MessageDigest> SHA256_THREAD_LOCAL = ThreadLocal.withInitial(() -> {
         try {
@@ -139,7 +142,7 @@ public class Sha {
      */
     public static byte[] applySHA256(byte[] data) {
         // 允许空数组（哈希计算空数组是合法的）
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = SHA256_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -172,14 +175,12 @@ public class Sha {
             digest.update(data.array(), data.arrayOffset() + data.position(), data.remaining());
         } else {
             // 堆外缓冲区：批量读取（复用ThreadLocal临时数组）
-            ThreadLocal<byte[]> tempCache = ThreadLocal.withInitial(() -> new byte[4096]);
-            byte[] temp = tempCache.get();
-            int remaining = data.remaining();
-            while (remaining > 0) {
-                int len = Math.min(remaining, temp.length);
-                data.get(temp, 0, len);
+            ByteBuffer input = data.duplicate();
+            byte[] temp = BYTE_BUFFER_SCRATCH.get();
+            while (input.hasRemaining()) {
+                int len = Math.min(input.remaining(), temp.length);
+                input.get(temp, 0, len);
                 digest.update(temp, 0, len);
-                remaining -= len;
             }
         }
         return digest.digest();
@@ -214,7 +215,7 @@ public class Sha {
      */
     public static byte[] applyRIPEMD160(byte[] data) {
         // 允许空输入，转为空数组处理（与其他哈希方法保持一致）
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         // 复用线程本地的实例，避免重复创建
         MessageDigest digest = RIPEMD160_THREAD_LOCAL.get();
         digest.reset(); // 重置实例状态，避免上次计算残留影响
@@ -228,10 +229,17 @@ public class Sha {
         SHA256_THREAD_LOCAL.remove();
         SHA512_THREAD_LOCAL.remove();
         SHA3_THREAD_LOCAL.remove();
+        RIPEMD160_THREAD_LOCAL.remove();
+        SHA3_224_THREAD_LOCAL.remove();
+        SHA3_256_THREAD_LOCAL.remove();
+        SHA3_384_THREAD_LOCAL.remove();
+        SHA3_512_THREAD_LOCAL.remove();
+        KECCAK_256_THREAD_LOCAL.remove();
+        BYTE_BUFFER_SCRATCH.remove();
     }
 
     public static byte[] doubleSha256(byte[] serialized) {
-        return applySHA256(applyRIPEMD160(serialized));
+        return applySHA256(applySHA256(serialized));
     }
 
     // ========== 新增 SHA3/Keccak 系列方法 ==========
@@ -244,7 +252,7 @@ public class Sha {
      * 线程安全的标准SHA3-224计算（NIST标准）
      */
     public static byte[] applySha3_224(byte[] data) {
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = SHA3_224_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -254,7 +262,7 @@ public class Sha {
      * 线程安全的标准SHA3-256计算（NIST标准）
      */
     public static byte[] applySha3_256(byte[] data) {
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = SHA3_256_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -264,7 +272,7 @@ public class Sha {
      * 线程安全的标准SHA3-384计算（NIST标准）
      */
     public static byte[] applySha3_384(byte[] data) {
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = SHA3_384_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -274,7 +282,7 @@ public class Sha {
      * 线程安全的标准SHA3-512计算（NIST标准）
      */
     public static byte[] applySha3_512(byte[] data) {
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = SHA3_512_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -285,7 +293,7 @@ public class Sha {
      * 以太坊黄皮书中的SHA3实际是Keccak-256，无后缀填充
      */
     public static byte[] applyKeccak256(byte[] data) {
-        data = data == null ? new byte[0] : data;
+        data = data == null ? EMPTY_BYTES : data;
         MessageDigest digest = KECCAK_256_THREAD_LOCAL.get();
         digest.reset();
         return digest.digest(data);
@@ -306,14 +314,12 @@ public class Sha {
             digest.update(data.array(), data.arrayOffset() + data.position(), data.remaining());
         } else {
             // 堆外缓冲区：批量读取，减少系统调用
-            ThreadLocal<byte[]> tempCache = ThreadLocal.withInitial(() -> new byte[4096]);
-            byte[] temp = tempCache.get();
-            int remaining = data.remaining();
-            while (remaining > 0) {
-                int len = Math.min(remaining, temp.length);
-                data.get(temp, 0, len);
+            ByteBuffer input = data.duplicate();
+            byte[] temp = BYTE_BUFFER_SCRATCH.get();
+            while (input.hasRemaining()) {
+                int len = Math.min(input.remaining(), temp.length);
+                input.get(temp, 0, len);
                 digest.update(temp, 0, len);
-                remaining -= len;
             }
         }
         return digest.digest();

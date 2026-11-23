@@ -1,12 +1,16 @@
 package com.bit.coin.utils;
 
 import java.math.BigInteger;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
  * 无符号256位整数实现（32字节），基于BigInteger封装，支持与BigInteger互操作、数学运算和格式转换
  */
 public class UInt256 implements Comparable<UInt256> {
+
+    private static final int BYTE_LENGTH = 32;
+    private static final int HEX_LENGTH = BYTE_LENGTH * 2;
 
     // 常量定义：2^256（用于校验最大值）
     private static final BigInteger TWO_POW_256 = BigInteger.ONE.shiftLeft(256);
@@ -69,9 +73,10 @@ public class UInt256 implements Comparable<UInt256> {
             throw new IllegalArgumentException("Hex string cannot be null");
         }
         // 移除0x/0X前缀
-        String cleanHex = hexStr.trim().startsWith("0x") || hexStr.trim().startsWith("0X")
-                ? hexStr.trim().substring(2)
-                : hexStr.trim();
+        String trimmed = hexStr.trim();
+        String cleanHex = trimmed.startsWith("0x") || trimmed.startsWith("0X")
+                ? trimmed.substring(2)
+                : trimmed;
         // 解析为16进制BigInteger
         BigInteger bigInt = new BigInteger(cleanHex, 16);
         return new UInt256(bigInt);
@@ -101,15 +106,19 @@ public class UInt256 implements Comparable<UInt256> {
      */
     public byte[] toBytes() {
         byte[] rawBytes = this.value.toByteArray();
-        byte[] result = new byte[32];
+        byte[] result = new byte[BYTE_LENGTH];
 
-        // 处理BigInteger字节数组长度不足/超过的情况（理论上不会超过，构造时已校验）
-        if (rawBytes.length <= 32) {
-            // 大端序：将有效字节复制到结果数组的末尾，前面补0
-            System.arraycopy(rawBytes, 0, result, 32 - rawBytes.length, rawBytes.length);
-        } else {
+        int sourceOffset = 0;
+        int copyLength = rawBytes.length;
+        // BigInteger 对最高位为1的正数会增加一个符号字节。
+        if (copyLength == BYTE_LENGTH + 1 && rawBytes[0] == 0) {
+            sourceOffset = 1;
+            copyLength = BYTE_LENGTH;
+        }
+        if (copyLength > BYTE_LENGTH) {
             throw new IllegalStateException("UInt256 value exceeds 32 bytes (should not happen)");
         }
+        System.arraycopy(rawBytes, sourceOffset, result, BYTE_LENGTH - copyLength, copyLength);
         return result;
     }
 
@@ -117,9 +126,11 @@ public class UInt256 implements Comparable<UInt256> {
      * 转换为十六进制字符串（64位，大写，无0x前缀）
      */
     public String toHexString() {
-        String hex = this.value.toString(16);
-        // 补0到64位（32字节=64个十六进制字符），大写
-        return String.format("%64s", hex).replace(' ', '0').toUpperCase();
+        String hex = this.value.toString(16).toUpperCase(Locale.ROOT);
+        if (hex.length() >= HEX_LENGTH) {
+            return hex;
+        }
+        return "0".repeat(HEX_LENGTH - hex.length()) + hex;
     }
 
     /**

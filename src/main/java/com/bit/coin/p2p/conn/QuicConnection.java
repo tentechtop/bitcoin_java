@@ -127,7 +127,11 @@ public class QuicConnection implements QuicConnectionInterFace {
     private final LocalCongestionWindow congestionWindow = new LocalCongestionWindow();
     private final AtomicLong sentBytes = new AtomicLong(0);
     private final AtomicLong receivedBytes = new AtomicLong(0);
-    private final ConcurrentHashMap<Long, Long> pingSendTimeMap = new ConcurrentHashMap<>();
+    private final Map<Long, Long> pingSendTimeMap = com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+            .maximumSize(256)
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .<Long, Long>build()
+            .asMap();
     private volatile long lastRttMillis = -1;
     private volatile long lastStatsTime = System.currentTimeMillis();
     private volatile long lastStatsSentBytes = 0;
@@ -279,8 +283,8 @@ public class QuicConnection implements QuicConnectionInterFace {
         long dataId = quicFrame.getDataId();
         int framePayloadSize = quicFrame.getFrameTotalLength();
         ReceiveQuicData receiveQuicData = null;
-        if (receiveDataMap.containsKey(quicFrame.getDataId())) {
-            receiveQuicData = receiveDataMap.get(quicFrame.getDataId());
+        receiveQuicData = receiveDataMap.get(quicFrame.getDataId());
+        if (receiveQuicData != null) {
             // 检查接收中的数据是否已过期。
             if (System.currentTimeMillis() - receiveQuicData.getStartReceiveTime() > receiveQuicData.getExpireTime()) {
                 log.warn("[数据过期] dataId={}已过期，丢弃帧", quicFrame.getDataId());

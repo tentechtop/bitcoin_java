@@ -96,15 +96,23 @@ public class RoutingTable {
     private CopyOnWriteArrayList<Bucket> buckets;//读多写少场景
 
     // 最后访问时间，用于刷新桶
-    private final Map<Integer, Long> lastBucketAccessTime = new ConcurrentHashMap<>();
+    private final com.github.benmanes.caffeine.cache.Cache<Integer, Long> lastBucketAccessTime =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(256).build();
 
     private DataBase dataBase;
 
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    private final ExecutorService executor = new ThreadPoolExecutor(
+            10, 10, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(CANDIDATE_POOL_LIMIT),
+            runnable -> {
+                Thread thread = new Thread(runnable, "routing-table-worker");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.DiscardPolicy());
     private final Map<String, Future<List<Peer>>> pendingQueries = new ConcurrentHashMap<>();
     private final ReentrantLock queryLock = new ReentrantLock();
 
     private static final int CANDIDATE_POOL_LIMIT = 512;  // 待验证节点数上限，池满时先移除最久未见的候选
+    private static final int MAX_DISCOVERED_PEERS = 512;
     private static final int CANDIDATE_VALIDATION_BATCH_SIZE = 8;  // 每轮最多提交验证的候选节点数
     private static final int PEER_HINT_BATCH_SIZE = 8;  // 一次向一个对端推荐的节点数上限
     private static final int MAX_CANDIDATE_ATTEMPTS = 3;  // 候选验证失败达到此次数后移出候选池
@@ -113,8 +121,10 @@ public class RoutingTable {
     private static final long PEER_HINT_MIN_INTERVAL_PER_PEER = 2 * 60 * 1000L;  // 向同一对端再次推荐节点前的最短间隔，单位为毫秒
 
     private final Map<String, CandidatePeer> candidatePeers = new ConcurrentHashMap<>();
-    private final Map<String, PeerScore> peerScores = new ConcurrentHashMap<>();
-    private final Map<String, Long> lastHintSentAt = new ConcurrentHashMap<>();
+    private final com.github.benmanes.caffeine.cache.Cache<String, PeerScore> peerScores =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(4096).build();
+    private final com.github.benmanes.caffeine.cache.Cache<String, Long> lastHintSentAt =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(4096).build();
     private final AtomicLong lookupSuccessCount = new AtomicLong();
     private final AtomicLong lookupFailureCount = new AtomicLong();
     private ScheduledFuture<?> candidateValidationTask;
@@ -362,7 +372,7 @@ public class RoutingTable {
         }
         String oldPeerId = bytesToHex(oldPeer.getId());
         String newPeerId = bytesToHex(newPeer.getId());
-        PeerScore oldScore = peerScores.get(oldPeerId);
+        PeerScore oldScore = peerScores.getIfPresent(oldPeerId);
         double oldValue = scorePeer(oldPeerId, oldPeer);
         double newValue = scorePeer(newPeerId, newPeer);
         if (oldScore != null && oldScore.state() == PeerQualityState.BAD) {
@@ -670,7 +680,7 @@ public class RoutingTable {
     }
 
     public List<PeerScoreSnapshot> getPeerScoreSnapshots() {
-        return peerScores.entrySet().stream()
+        return peerScores.asMap().entrySet().stream()
                 .map(entry -> entry.getValue().snapshot(entry.getKey()))
                 .sorted(Comparator.comparingDouble(PeerScoreSnapshot::score).reversed()
                         .thenComparing(PeerScoreSnapshot::peerId))
@@ -691,7 +701,7 @@ public class RoutingTable {
         int good = 0;
         int questionable = 0;
         int bad = 0;
-        for (PeerScore score : peerScores.values()) {
+        for (PeerScore score : peerScores.asMap().values()) {
             switch (score.state()) {
                 case GOOD -> good++;
                 case QUESTIONABLE -> questionable++;
@@ -833,7 +843,7 @@ public class RoutingTable {
                     continue;
                 }
                 String targetPeerId = bytesToHex(target.getId());
-                long lastSent = lastHintSentAt.getOrDefault(targetPeerId, 0L);
+                long lastSent = Optional.ofNullable(lastHintSentAt.getIfPresent(targetPeerId)).orElse(0L);
                 if (now - lastSent < PEER_HINT_MIN_INTERVAL_PER_PEER) {
                     continue;
                 }
@@ -897,7 +907,7 @@ public class RoutingTable {
         int good = 0;
         int questionable = 0;
         int bad = 0;
-        for (PeerScore score : peerScores.values()) {
+        for (PeerScore score : peerScores.asMap().values()) {
             switch (score.state()) {
                 case GOOD -> good++;
                 case QUESTIONABLE -> questionable++;
@@ -924,18 +934,18 @@ public class RoutingTable {
     }
 
     private double scorePeer(String peerIdHex, Peer peer) {
-        PeerScore score = peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore());
+        PeerScore score = peerScores.get(peerIdHex, ignored -> new PeerScore());
         boolean online = peer != null && peer.isOnline();
         return score.value(peer, online);
     }
 
     private PeerQualityState qualityState(String peerIdHex) {
-        PeerScore score = peerScores.get(peerIdHex);
+        PeerScore score = peerScores.getIfPresent(peerIdHex);
         return score == null ? PeerQualityState.QUESTIONABLE : score.state();
     }
 
     private void recordPeerSuccess(String peerIdHex, Peer peer, long rttMillis, boolean lookupHelp) {
-        peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore())
+        peerScores.get(peerIdHex, ignored -> new PeerScore())
                 .success(peer, rttMillis, lookupHelp);
     }
 
@@ -943,7 +953,7 @@ public class RoutingTable {
         if (peerIdHex == null || peerIdHex.isBlank()) {
             return;
         }
-        peerScores.computeIfAbsent(peerIdHex, ignored -> new PeerScore()).failure(reason);
+        peerScores.get(peerIdHex, ignored -> new PeerScore()).failure(reason);
     }
 
     private static final class CandidatePeer {
@@ -1361,27 +1371,35 @@ public class RoutingTable {
         broadcastResource.setHeight(height);
         broadcastResource.setChainWork(chainWork == null ? UInt256.ZERO : chainWork);
         broadcastResource.setTimestampMillis(System.currentTimeMillis());
-        //将这个消息广播给所有的在线节点
-        List<Peer> onlineNodes = getOnlineNodes();
-        log.info("广播消息{}", onlineNodes.size());
-        for (Peer peer : onlineNodes) {
-            log.info("发送消息给节点{}", bytesToHex(peer.getId()));
-            staticSendData(bytesToHex(peer.getId()), ProtocolEnum.P2P_Broadcast_Simple_Resource,
-                    broadcastResource.toBytes(), 5000);
+        // 广播只需要在线连接的节点ID，避免每次消息都扫描完整路由表。
+        Set<String> onlinePeerIds = getOnlinePeerIds();
+        byte[] payload = broadcastResource.toBytes();
+        if (payload == null) {
+            return;
         }
-        log.info("全部发送完毕");
+        log.debug("广播消息{}", onlinePeerIds.size());
+        for (String peerId : onlinePeerIds) {
+            log.debug("发送消息给节点{}", peerId);
+            staticSendData(peerId, ProtocolEnum.P2P_Broadcast_Simple_Resource, payload, 5000);
+        }
+        log.debug("全部发送完毕");
         //将资源加入到已经存在的列表 保持
-        EXIST_RESOURCE_CACHE.put(bytesToHex(hash), i);
+        if (hash != null) {
+            EXIST_RESOURCE_CACHE.put(bytesToHex(hash), i);
+        }
     }
 
     public List<Peer> getOnlineNodes() {
         List<Peer> all = getAll();
         Set<String> onlinePeerIds = getOnlinePeerIds();//all的id一定要在onlinePeerIds中
-        all.forEach(peer -> peer.setOnline(onlinePeerIds.contains(bytesToHex(peer.getId()))));
         List<Peer> onlineNodes = all.stream()
-                .filter(peer -> onlinePeerIds.contains(bytesToHex(peer.getId())))
+                .filter(peer -> {
+                    String peerId = bytesToHex(peer.getId());
+                    boolean online = onlinePeerIds.contains(peerId);
+                    peer.setOnline(online);
+                    return online;
+                })
                 .toList();
-        //onlineNodes中的online字段改成true
         return onlineNodes;
     }
 
@@ -1702,11 +1720,11 @@ public class RoutingTable {
 
         // 2. 初始化核心容器（线程安全）
         // 待查询的节点队列（初始放入指定的targetId节点）
-        ConcurrentLinkedQueue<Peer> toQueryQueue = new ConcurrentLinkedQueue<>();
+        ArrayDeque<Peer> toQueryQueue = new ArrayDeque<>(MAX_DISCOVERED_PEERS);
         // 已查询过的节点ID（去重，避免重复查询）
         Set<String> queriedNodeIds = ConcurrentHashMap.newKeySet();
         // 最终收集到的所有有效节点
-        Set<Peer> discoveredPeers = ConcurrentHashMap.newKeySet();
+        Map<String, Peer> discoveredPeers = new LinkedHashMap<>();
 
         // 3. 初始化队列：获取初始targetId对应的节点并加入队列
         Peer initialPeer = getNode(targetId);
@@ -1745,12 +1763,16 @@ public class RoutingTable {
 
                         String peerIdHex = bytesToHex(peer.getId());
                         // 过滤已查询/已发现的节点
-                        if (queriedNodeIds.contains(peerIdHex) || discoveredPeers.contains(peer)) {
+                        if (queriedNodeIds.contains(peerIdHex) || discoveredPeers.containsKey(peerIdHex)) {
                             continue;
                         }
 
+                        if (discoveredPeers.size() >= MAX_DISCOVERED_PEERS) {
+                            break;
+                        }
+
                         // 7. 新增节点处理：加入发现列表+待查询队列+路由表
-                        discoveredPeers.add(peer);
+                        discoveredPeers.put(peerIdHex, peer);
                         addPeer(peer); // 加入本地路由表
                         queriedNodeIds.add(peerIdHex); // 标记为待查询（避免重复加入队列）
                         toQueryQueue.offer(peer); // 加入查询队列，继续迭代
@@ -1768,7 +1790,7 @@ public class RoutingTable {
         }
 
         // 8. 迭代结束：对结果按与searchId的距离升序排序
-        List<Peer> resultList = new ArrayList<>(discoveredPeers);
+        List<Peer> resultList = new ArrayList<>(discoveredPeers.values());
         resultList.sort((p1, p2) -> {
             byte[] d1 = calculateDistance(p1.getId(), searchId);
             byte[] d2 = calculateDistance(p2.getId(), searchId);
@@ -2002,7 +2024,7 @@ public class RoutingTable {
                 }
 
                 boolean sparseBucket = bucket.size() < Math.max(1, bucketSize / 4);
-                Long lastAccessTime = lastBucketAccessTime.get(bucketIndex);
+                Long lastAccessTime = lastBucketAccessTime.getIfPresent(bucketIndex);
                 boolean staleBucket = lastAccessTime == null ||
                         System.currentTimeMillis() - lastAccessTime > 30 * 60 * 1000;
                 if (!sparseBucket && !staleBucket) {

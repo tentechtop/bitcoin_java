@@ -12,6 +12,8 @@ import org.bouncycastle.util.encoders.Hex;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ public class Ed25519Signer {
             .withInitial(org.bouncycastle.crypto.signers.Ed25519Signer::new);
     private static final ThreadLocal<org.bouncycastle.crypto.signers.Ed25519Signer> VERIFIER_THREAD_LOCAL = ThreadLocal
             .withInitial(org.bouncycastle.crypto.signers.Ed25519Signer::new);
+    private static final ThreadLocal<byte[]> BYTE_BUFFER_SCRATCH = ThreadLocal.withInitial(() -> new byte[4096]);
 
     // CPU核心数（Ed25519是CPU密集型操作，线程数与核心数匹配）
     private static final int CPU_CORES = Runtime.getRuntime().availableProcessors();
@@ -46,7 +49,7 @@ public class Ed25519Signer {
             CPU_CORES,
             CPU_CORES,
             0L, TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(100000), // 大缓冲队列
+            new LinkedBlockingQueue<>(1024), // 有界缓冲队列
             new ThreadFactory() {
 
                 private final AtomicInteger seq = new AtomicInteger(0);
@@ -129,8 +132,8 @@ public class Ed25519Signer {
     static {
         Security.addProvider(new BouncyCastleProvider());
         SIGNATURE_CACHE = Caffeine.newBuilder()
-                .maximumSize(100_000_0) // 最大缓存10万条签名
-                .expireAfterWrite(10, TimeUnit.MINUTES) // 5秒
+                .maximumSize(100_000) // 最大缓存10万条签名
+                .expireAfterWrite(10, TimeUnit.MINUTES)
                 .recordStats() // 启用统计（便于监控命中率）
                 .build();
     }
@@ -391,11 +394,17 @@ public class Ed25519Signer {
     // ------------------------------ 缓存辅助方法 ------------------------------
 
     /**
-     * 生成缓存键：公钥哈希（前16字节） + 数据哈希（SHA-256前16字节），用冒号分隔
+     * 生成缓存键：公钥哈希（SHA-256） + 数据哈希（SHA-256），用冒号分隔
      * 注：哈希压缩是为了减少键的长度，避免内存占用过大
      */
     private static String generateCacheKey(byte[] publicKey, byte[] data) {
-        return Hex.toHexString(publicKey) + ":" + Hex.toHexString(data);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] publicKeyHash = digest.digest(publicKey);
+            return Hex.toHexString(publicKeyHash) + ":" + Hex.toHexString(digest.digest(data));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     /**
@@ -465,15 +474,12 @@ public class Ed25519Signer {
             signer.update(array, offset, length);
         } else {
             // DirectByteBuffer：使用临时缓冲区批量读取（复用ThreadLocal缓存的数组减少创建）
-            ThreadLocal<byte[]> directBufferCache = ThreadLocal.withInitial(() -> new byte[4096]); // 4KB默认缓存
-            byte[] tempBuf = directBufferCache.get();
-            int remaining = data.remaining();
-
-            while (remaining > 0) {
-                int readLength = Math.min(remaining, tempBuf.length);
-                data.get(tempBuf, 0, readLength);
+            ByteBuffer input = data.duplicate();
+            byte[] tempBuf = BYTE_BUFFER_SCRATCH.get();
+            while (input.hasRemaining()) {
+                int readLength = Math.min(input.remaining(), tempBuf.length);
+                input.get(tempBuf, 0, readLength);
                 signer.update(tempBuf, 0, readLength);
-                remaining -= readLength;
             }
         }
 
@@ -502,27 +508,39 @@ public class Ed25519Signer {
         org.bouncycastle.crypto.signers.Ed25519Signer verifier = VERIFIER_THREAD_LOCAL.get();
         Ed25519PublicKeyParameters keyParams = new Ed25519PublicKeyParameters(publicKey, 0);
         verifier.init(false, keyParams);
-        // 直接读取ByteBuffer，避免转换为byte[]
-        byte[] buf = new byte[data.remaining()];
-        data.get(buf); // 若data为DirectByteBuffer，可进一步优化
-        verifier.update(buf, 0, buf.length);
+        if (data.hasArray()) {
+            verifier.update(data.array(), data.arrayOffset() + data.position(), data.remaining());
+        } else {
+            ByteBuffer input = data.duplicate();
+            byte[] tempBuf = BYTE_BUFFER_SCRATCH.get();
+            while (input.hasRemaining()) {
+                int readLength = Math.min(input.remaining(), tempBuf.length);
+                input.get(tempBuf, 0, readLength);
+                verifier.update(tempBuf, 0, readLength);
+            }
+        }
         return verifier.verifySignature(signature);
     }
 
     // 批量签名（并行处理）
     public static List<byte[]> batchSign(List<byte[]> privateKeys, List<byte[]> dataList)
             throws InterruptedException, ExecutionException {
-        int size = privateKeys.size();
-        List<Future<byte[]>> futures = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            final byte[] key = privateKeys.get(i);
-            final byte[] data = dataList.get(i);
-            futures.add(EXECUTOR.submit(() -> fastSign(key, data)));
+        if (privateKeys.size() != dataList.size()) {
+            throw new IllegalArgumentException("privateKeys and dataList must have the same size");
         }
-        // 收集结果
+        int size = privateKeys.size();
         List<byte[]> signatures = new ArrayList<>(size);
-        for (Future<byte[]> future : futures) {
-            signatures.add(future.get());
+        for (int start = 0; start < size; start += 1024) {
+            int end = Math.min(size, start + 1024);
+            List<Future<byte[]>> futures = new ArrayList<>(end - start);
+            for (int i = start; i < end; i++) {
+                final byte[] key = privateKeys.get(i);
+                final byte[] data = dataList.get(i);
+                futures.add(EXECUTOR.submit(() -> fastSign(key, data)));
+            }
+            for (Future<byte[]> future : futures) {
+                signatures.add(future.get());
+            }
         }
         return signatures;
     }
@@ -530,18 +548,23 @@ public class Ed25519Signer {
     // 批量验签（并行处理）
     public static List<Boolean> batchVerify(List<byte[]> publicKeys, List<byte[]> dataList, List<byte[]> signatures)
             throws InterruptedException, ExecutionException {
-        int size = publicKeys.size();
-        List<Future<Boolean>> futures = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            final byte[] pubKey = publicKeys.get(i);
-            final byte[] data = dataList.get(i);
-            final byte[] sig = signatures.get(i);
-            futures.add(EXECUTOR.submit(() -> fastVerify(pubKey, data, sig)));
+        if (publicKeys.size() != dataList.size() || publicKeys.size() != signatures.size()) {
+            throw new IllegalArgumentException("publicKeys, dataList and signatures must have the same size");
         }
-        // 收集结果
+        int size = publicKeys.size();
         List<Boolean> results = new ArrayList<>(size);
-        for (Future<Boolean> future : futures) {
-            results.add(future.get());
+        for (int start = 0; start < size; start += 1024) {
+            int end = Math.min(size, start + 1024);
+            List<Future<Boolean>> futures = new ArrayList<>(end - start);
+            for (int i = start; i < end; i++) {
+                final byte[] pubKey = publicKeys.get(i);
+                final byte[] data = dataList.get(i);
+                final byte[] sig = signatures.get(i);
+                futures.add(EXECUTOR.submit(() -> fastVerify(pubKey, data, sig)));
+            }
+            for (Future<Boolean> future : futures) {
+                results.add(future.get());
+            }
         }
         return results;
     }
@@ -556,6 +579,9 @@ public class Ed25519Signer {
         BC_SIGNER_THREAD_LOCAL.remove();
         JDK_VERIFIER_THREAD_LOCAL.remove();
         BC_VERIFIER_THREAD_LOCAL.remove();
+        SIGNER_THREAD_LOCAL.remove();
+        VERIFIER_THREAD_LOCAL.remove();
+        BYTE_BUFFER_SCRATCH.remove();
     }
 
     public static void main(String[] args) {

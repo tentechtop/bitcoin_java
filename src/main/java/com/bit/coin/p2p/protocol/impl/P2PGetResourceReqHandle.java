@@ -25,7 +25,7 @@ public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHand
 
     @Override
     public void handleVoid(P2PMessage requestParams) throws IOException {
-        log.info("Received resource request");
+        log.debug("Received resource request");
         byte[] data = requestParams.getData();
         byte[] senderId = requestParams.getSenderId();
         BroadcastResource resource = BroadcastResource.fromBytes(data);
@@ -41,20 +41,20 @@ public class P2PGetResourceReqHandle implements ProtocolHandler.VoidProtocolHand
     }
 
     private void sendBlock(byte[] senderId, BroadcastResource resource) throws IOException {
-        log.info("Send block by hash: {}", bytesToHex(resource.getHash()));
+        log.debug("Send block by hash: {}", bytesToHex(resource.getHash()));
         Block block = blockChainService.getBlockByHash(resource.getHash());
         if (block == null) {
-            log.info("Requested block does not exist: {}", bytesToHex(resource.getHash()));
+            log.debug("Requested block does not exist: {}", bytesToHex(resource.getHash()));
             return;
         }
         staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Receive_Block, block.serialize(), 5000);
     }
 
     private void sendTransaction(byte[] senderId, BroadcastResource resource) throws IOException {
-        log.info("Send transaction by hash: {}", bytesToHex(resource.getHash()));
+        log.debug("Send transaction by hash: {}", bytesToHex(resource.getHash()));
         Transaction tx = blockChainService.getTxByHash(resource.getHash());
         if (tx == null) {
-            log.info("Requested transaction does not exist: {}", bytesToHex(resource.getHash()));
+            log.debug("Requested transaction does not exist: {}", bytesToHex(resource.getHash()));
             return;
         }
         staticSendData(bytesToHex(senderId), ProtocolEnum.P2P_Receive_Transaction, tx.serialize(), 5000);
