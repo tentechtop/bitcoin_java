@@ -17,6 +17,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
@@ -37,7 +38,8 @@ public class RocksDb implements DataBase, AutoCloseable {
      * 持久化可靠性（避免数据丢失）。
      */
     // 类中添加缓存实例（全局唯一）加速高频访问的完整业务对象查询  按照表隔离
-    private final Map<TableEnum, Cache<byte[], byte[]>> tableCaches = new ConcurrentHashMap<>();
+    /* Caffeine keys are immutable hex strings; using byte[] directly would use identity equality. */
+    private final Map<TableEnum, Cache<String, byte[]>> tableCaches = new ConcurrentHashMap<>();
 
     private volatile RocksDB db;
     private final Object lifecycleMonitor = new Object();
@@ -54,6 +56,72 @@ public class RocksDb implements DataBase, AutoCloseable {
     private final AtomicLong committedBatches = new AtomicLong();
     private final AtomicLong failedBatches = new AtomicLong();
     private final AtomicLong commitNanos = new AtomicLong();
+    /** Prevents an older read from overwriting a cache entry after a concurrent write. */
+    private final ReentrantReadWriteLock cacheConsistencyLock = new ReentrantReadWriteLock(true);
+
+    private void initializeCaches() {
+        for (TableEnum table : TableEnum.values()) {
+            TableEnum canonical = canonicalTable(table);
+            tableCaches.computeIfAbsent(canonical, ignored -> buildCache(canonical.getCacheTL(),
+                    Math.toIntExact(canonical.getCacheSize())));
+        }
+    }
+
+    /** Several legacy enum names point at one column family and must share one cache. */
+    private static TableEnum canonicalTable(TableEnum table) {
+        String columnFamily = table.getColumnFamilyName();
+        for (TableEnum candidate : TableEnum.values()) {
+            if (candidate.getColumnFamilyName().equals(columnFamily)) {
+                return candidate;
+            }
+        }
+        return table;
+    }
+
+    private Cache<String, byte[]> cacheFor(TableEnum table) {
+        if (table == null) {
+            throw new IllegalArgumentException("table must not be null");
+        }
+        TableEnum canonical = canonicalTable(table);
+        return tableCaches.computeIfAbsent(canonical, ignored -> buildCache(canonical.getCacheTL(),
+                Math.toIntExact(canonical.getCacheSize())));
+    }
+
+    private static Cache<String, byte[]> buildCache(long ttlMillis, int maxSize) {
+        if (ttlMillis < 0 || maxSize <= 0) {
+            throw new IllegalArgumentException("Invalid cache policy");
+        }
+        Caffeine<Object, Object> builder = Caffeine.newBuilder().maximumSize(maxSize);
+        if (ttlMillis > 0) {
+            builder.expireAfterWrite(ttlMillis, TimeUnit.MILLISECONDS);
+        }
+        @SuppressWarnings("unchecked")
+        Cache<String, byte[]> cache = (Cache<String, byte[]>) (Cache<?, ?>) builder.build();
+        return cache;
+    }
+
+    private static String cacheKey(byte[] key) {
+        if (key == null) {
+            throw new IllegalArgumentException("key must not be null");
+        }
+        return bytesToHex(key);
+    }
+
+    private static byte[] copy(byte[] value) {
+        return value == null ? null : value.clone();
+    }
+
+    private void applyCacheChanges(List<DbOperation> operations) {
+        for (DbOperation operation : operations) {
+            Cache<String, byte[]> cache = cacheFor(operation.table);
+            String key = cacheKey(operation.key);
+            if (operation.type == DbOperation.OpType.DELETE || operation.value == null) {
+                cache.invalidate(key);
+            } else {
+                cache.put(key, copy(operation.value));
+            }
+        }
+    }
 
     public long committedBatches() {
         return committedBatches.get();
@@ -179,6 +247,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 opening = false;
                 lifecycleMonitor.notifyAll();
             }
+            initializeCaches();
             return true;
         } catch (Exception e) {
             synchronized (lifecycleMonitor) {
@@ -225,6 +294,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     @Override
     public void insert(TableEnum table, byte[] key, byte[] value) {
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
@@ -234,10 +304,12 @@ public class RocksDb implements DataBase, AutoCloseable {
             try (WriteOptions options = new WriteOptions().setSync(syncWrites).setDisableWAL(false)) {
                 db.put(cfHandle, options, key, value);
             }
+            cacheFor(table).put(cacheKey(key), copy(value));
         } catch (RocksDBException e) {
             log.error("插入数据失败, table={}", table, e);
             throw new IllegalStateException("插入数据失败", e);
         } finally {
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
@@ -245,6 +317,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     @Override
     public void delete(TableEnum table, byte[] key) {
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
@@ -254,10 +327,12 @@ public class RocksDb implements DataBase, AutoCloseable {
             try (WriteOptions options = new WriteOptions().setSync(syncWrites).setDisableWAL(false)) {
                 db.delete(cfHandle, options, key);
             }
+            cacheFor(table).invalidate(cacheKey(key));
         } catch (RocksDBException e) {
             log.error("删除数据失败, table={}", table, e);
             throw new IllegalStateException("删除数据失败", e);
         } finally {
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
@@ -271,16 +346,28 @@ public class RocksDb implements DataBase, AutoCloseable {
     @Override
     public byte[] get(TableEnum table, byte[] key) {
         beginOperation();
+        cacheConsistencyLock.readLock().lock();
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
                 return null;
             }
-            return db.get(cfHandle, key);
+            Cache<String, byte[]> cache = cacheFor(table);
+            String cacheKey = cacheKey(key);
+            byte[] cached = cache.getIfPresent(cacheKey);
+            if (cached != null) {
+                return copy(cached);
+            }
+            byte[] value = db.get(cfHandle, key);
+            if (value != null) {
+                cache.put(cacheKey, copy(value));
+            }
+            return copy(value);
         } catch (RocksDBException e) {
             log.error("获取数据失败, table={}", table, e);
             throw new IllegalStateException("获取数据失败", e);
         } finally {
+            cacheConsistencyLock.readLock().unlock();
             endOperation();
         }
     }
@@ -328,6 +415,7 @@ public class RocksDb implements DataBase, AutoCloseable {
         }
 
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
         WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         try {
@@ -341,12 +429,17 @@ public class RocksDb implements DataBase, AutoCloseable {
             }
             requireWriteSpace();
             db.write(writeOptions, writeBatch);
+            Cache<String, byte[]> cache = cacheFor(table);
+            for (int i = 0; i < keys.length; i++) {
+                cache.put(cacheKey(keys[i]), copy(values[i]));
+            }
         } catch (RocksDBException e) {
             log.error("批量插入失败, table={}", table, e);
             throw new IllegalStateException("批量插入失败", e);
         } finally {
             writeBatch.close();
             writeOptions.close();
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
@@ -354,6 +447,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     @Override
     public void batchDelete(TableEnum table, byte[][] keys) {
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
         WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         try {
@@ -367,12 +461,17 @@ public class RocksDb implements DataBase, AutoCloseable {
             }
             requireWriteSpace();
             db.write(writeOptions, writeBatch);
+            Cache<String, byte[]> cache = cacheFor(table);
+            for (byte[] key : keys) {
+                cache.invalidate(cacheKey(key));
+            }
         } catch (RocksDBException e) {
             log.error("批量删除失败, table={}", table, e);
             throw new IllegalStateException("批量删除失败", e);
         } finally {
             writeBatch.close();
             writeOptions.close();
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
@@ -386,6 +485,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     @Override
     public byte[][] batchGet(TableEnum table, byte[][] keys) {
         beginOperation();
+        cacheConsistencyLock.readLock().lock();
         try {
             ColumnFamilyHandle cfHandle = getColumnFamilyHandle(table);
             if (cfHandle == null) {
@@ -396,7 +496,8 @@ public class RocksDb implements DataBase, AutoCloseable {
             try (ReadOptions readOptions = new ReadOptions().setSnapshot(snapshot)) {
                 List<byte[]> results = new ArrayList<>(keys.length);
                 for (byte[] key : keys) {
-                    results.add(db.get(cfHandle, readOptions, key));
+                    byte[] value = db.get(cfHandle, readOptions, key);
+                    results.add(copy(value));
                 }
                 return results.toArray(new byte[0][]);
             } finally {
@@ -406,6 +507,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             log.error("批量获取失败, table={}", table, e);
             throw new IllegalStateException("批量获取失败", e);
         } finally {
+            cacheConsistencyLock.readLock().unlock();
             endOperation();
         }
     }
@@ -448,6 +550,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 db.close();
                 db = null;
             }
+            tableCaches.clear();
         } finally {
             synchronized (lifecycleMonitor) {
                 closing = false;
@@ -933,6 +1036,7 @@ public class RocksDb implements DataBase, AutoCloseable {
         }
 
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         long started = System.nanoTime();
         WriteBatch writeBatch = null;
         WriteOptions writeOptions = null;
@@ -964,6 +1068,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             // 2. 执行事务（原子提交）
             requireWriteSpace();
             db.write(writeOptions, writeBatch);
+            applyCacheChanges(operations);
             log.debug("Transaction committed, operations={}", operations.size());
             committedBatches.incrementAndGet();
             return true;
@@ -981,6 +1086,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             if (writeOptions != null) {
                 writeOptions.close();
             }
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
@@ -1038,17 +1144,74 @@ public class RocksDb implements DataBase, AutoCloseable {
 
     @Override
     public void clearCache(TableEnum table) {
-
+        cacheConsistencyLock.writeLock().lock();
+        try {
+            if (table == null) {
+                tableCaches.values().forEach(Cache::invalidateAll);
+                return;
+            }
+            Cache<String, byte[]> cache = tableCaches.get(canonicalTable(table));
+            if (cache != null) {
+                cache.invalidateAll();
+            }
+        } finally {
+            cacheConsistencyLock.writeLock().unlock();
+        }
     }
 
     @Override
     public void setCachePolicy(TableEnum table, long ttl, int maxSize) {
-
+        cacheConsistencyLock.writeLock().lock();
+        try {
+            if (table == null) {
+                throw new IllegalArgumentException("table must not be null");
+            }
+            if (ttl < 0 || maxSize <= 0) {
+                throw new IllegalArgumentException("ttl must be >= 0 and maxSize must be positive");
+            }
+            TableEnum canonical = canonicalTable(table);
+            Cache<String, byte[]> replacement = buildCache(ttl, maxSize);
+            // Rebuild empty: preserving entries here can race with a concurrent write
+            // and reintroduce an older value after the new policy is installed.
+            tableCaches.put(canonical, replacement);
+        } finally {
+            cacheConsistencyLock.writeLock().unlock();
+        }
     }
 
     @Override
     public void refreshCache(TableEnum table, byte[] key) {
+        beginOperation();
+        cacheConsistencyLock.writeLock().lock();
+        try {
+            if (table == null) {
+                throw new IllegalArgumentException("table must not be null");
+            }
+            if (key != null) {
+                Cache<String, byte[]> cache = cacheFor(table);
+                // Remove the old entry first so this operation always reads RocksDB,
+                // even when a caller is repairing a stale cache after an external restore.
+                String cacheKey = cacheKey(key);
+                cache.invalidate(cacheKey);
+                byte[] value = get(table, key);
+                if (value == null) {
+                    cache.invalidate(cacheKey);
+                } else {
+                    cache.put(cacheKey, copy(value));
+                }
+                return;
+            }
 
+            Cache<String, byte[]> cache = cacheFor(table);
+            cache.invalidateAll();
+            iterate(table, (storedKey, value) -> {
+                cache.put(cacheKey(storedKey), copy(value));
+                return true;
+            });
+        } finally {
+            cacheConsistencyLock.writeLock().unlock();
+            endOperation();
+        }
     }
 
     private static final class PendingBatch {
@@ -1304,6 +1467,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             return;
         }
         beginOperation();
+        cacheConsistencyLock.writeLock().lock();
         WriteBatch writeBatch = new WriteBatch();
         WriteOptions writeOptions = new WriteOptions().setSync(syncWrites).setDisableWAL(false);
         try {
@@ -1315,6 +1479,9 @@ public class RocksDb implements DataBase, AutoCloseable {
             writeBatch.deleteRange(cfHandle, startKey, endKey);
             requireWriteSpace();
             db.write(writeOptions, writeBatch);
+            // The range may contain arbitrary cached keys; invalidating the table
+            // is safer than trying to reconstruct the iterator range in memory.
+            clearCache(table);
             log.info("表[{}]中范围[{}, {})的记录已批量删除", table, Arrays.toString(startKey), Arrays.toString(endKey));
         } catch (RocksDBException e) {
             log.error("批量删除范围失败", e);
@@ -1322,6 +1489,7 @@ public class RocksDb implements DataBase, AutoCloseable {
         } finally {
             writeBatch.close();
             writeOptions.close();
+            cacheConsistencyLock.writeLock().unlock();
             endOperation();
         }
     }
