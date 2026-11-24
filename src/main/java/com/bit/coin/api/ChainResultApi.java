@@ -70,6 +70,16 @@ public class ChainResultApi {
         return Result.OK(txsByAddress);
     }
 
+    /** 查询单笔交易详情，供钱包和其他链上客户端使用。 */
+    @GetMapping("/getTxByHash")
+    public Result<Transaction> getTxByHash(String hash) {
+        if (hash == null || !hash.matches("(?i)[0-9a-f]{64}")) {
+            return Result.error("交易哈希格式无效");
+        }
+        Transaction transaction = blockChainService.getTxAndQueryInputByHash(hexToBytes(hash));
+        return transaction == null ? Result.error("未找到交易") : Result.OK(transaction);
+    }
+
     /**
      * 查询地址下所有的UTXO
      */
