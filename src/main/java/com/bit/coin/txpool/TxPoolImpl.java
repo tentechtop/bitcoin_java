@@ -1133,7 +1133,18 @@ public class TxPoolImpl implements TxPool {
 
     @Override
     public synchronized Transaction[] getTxsByAddress(String address) {
-        byte[] decode = Base58.decode(address);
+        if (address == null || address.isBlank()) {
+            return new Transaction[0];
+        }
+        final byte[] decode;
+        try {
+            decode = Base58.decode(address);
+        } catch (IllegalArgumentException malformed) {
+            return new Transaction[0];
+        }
+        if (decode == null || decode.length != 32) {
+            return new Transaction[0];
+        }
         address = bytesToHex(Sha.applyRIPEMD160(Sha.applySHA256(decode)));
         Set<byte[]> txIds = addressToTxs.get(address);
         if (txIds == null || txIds.isEmpty()) {
@@ -1906,18 +1917,8 @@ public class TxPoolImpl implements TxPool {
             packingTxs.remove(txIdStr);
             unindexTransaction(txIdStr, tx);
 
-            // 移除地址映射
-            byte[] txId = tx.getTxId();
-            for (var output : tx.getOutputs()) {
-                String address = bytesToHex(output.getScriptPubKey());
-                Set<byte[]> txIds = addressToTxs.get(address);
-                if (txIds != null) {
-                    txIds.remove(txId);
-                    if (txIds.isEmpty()) {
-                        addressToTxs.remove(address);
-                    }
-                }
-            }
+            // 移除地址映射（包含输入引用的地址，保证支出交易历史也能查询到）
+            removeAddressMapping(tx);
             List<String> spendingKeys = tx.getSpendingUTXOKeyList();
             if (spendingKeys != null) {
                 spendingKeys.forEach(spendingSet::remove);
@@ -1933,8 +1934,24 @@ public class TxPoolImpl implements TxPool {
      * 构建地址到交易的映射
      */
     private void buildAddressMapping(Transaction tx, byte[] txId) {
+        Set<String> scripts = new HashSet<>();
         for (var output : tx.getOutputs()) {
-            String address = bytesToHex(output.getScriptPubKey());
+            if (output != null && output.getScriptPubKey() != null) {
+                scripts.add(bytesToHex(output.getScriptPubKey()));
+            }
+        }
+        if (tx.getInputs() != null && tx.getUtxoMap() != null) {
+            for (TxInput input : tx.getInputs()) {
+                if (input == null || input.getTxId() == null) {
+                    continue;
+                }
+                UTXO source = tx.getUtxoMap().get(UTXO.getKeyStr(input.getTxId(), input.getIndex()));
+                if (source != null && source.getScript() != null) {
+                    scripts.add(bytesToHex(source.getScript()));
+                }
+            }
+        }
+        for (String address : scripts) {
             log.info("地址到交易的索引{}", address);
             addressToTxs.computeIfAbsent(address, k -> ConcurrentHashMap.newKeySet()).add(txId);
         }
@@ -2132,9 +2149,27 @@ public class TxPoolImpl implements TxPool {
      * 删除交易的地址映射
      */
     private void removeAddressMapping(Transaction tx) {
+        Set<String> scripts = new HashSet<>();
+        if (tx.getOutputs() != null) {
+            for (var output : tx.getOutputs()) {
+                if (output != null && output.getScriptPubKey() != null) {
+                    scripts.add(bytesToHex(output.getScriptPubKey()));
+                }
+            }
+        }
+        if (tx.getInputs() != null && tx.getUtxoMap() != null) {
+            for (TxInput input : tx.getInputs()) {
+                if (input == null || input.getTxId() == null) {
+                    continue;
+                }
+                UTXO source = tx.getUtxoMap().get(UTXO.getKeyStr(input.getTxId(), input.getIndex()));
+                if (source != null && source.getScript() != null) {
+                    scripts.add(bytesToHex(source.getScript()));
+                }
+            }
+        }
         byte[] txId = tx.getTxId();
-        for (var output : tx.getOutputs()) {
-            String address = bytesToHex(output.getScriptPubKey());
+        for (String address : scripts) {
             Set<byte[]> txIds = addressToTxs.get(address);
             if (txIds != null) {
                 txIds.remove(txId);

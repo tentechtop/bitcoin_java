@@ -84,7 +84,13 @@ public class TxApi {
             utxos = filterUtxoExcludePool(utxos, utxoInPool);
 
             log.info("可用余额{}", utxos.size());
-            long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额
+            // Recompute the total after excluding outputs reserved by the
+            // mempool.  The cache total includes those outputs and could let
+            // the pre-check pass even though no spendable set can fund it.
+            long totalAvailable = utxos.stream()
+                    .filter(Objects::nonNull)
+                    .mapToLong(UTXO::getValue)
+                    .reduce(0L, Math::addExact);
 
             // 4. 预校验：总可用余额是否足够覆盖 转账金额 + 最小预估手续费（避免白忙活）
             // 最小预估手续费：假设1个输入+1个输出的场景（最基础场景）
@@ -258,7 +264,10 @@ public class TxApi {
 
             List<UTXO> utxos = (List<UTXO>) utxOs.get("utxos");
             log.info("可用余额{}", utxos.size());
-            long totalAvailable = (long) utxOs.get("total"); // 账户总可用余额
+            long totalAvailable = utxos.stream()
+                    .filter(Objects::nonNull)
+                    .mapToLong(UTXO::getValue)
+                    .reduce(0L, Math::addExact);
 
             // 4. 预校验：总可用余额是否足够覆盖 转账金额 + 最小预估手续费（避免白忙活）
             // 最小预估手续费：假设1个输入+1个输出的场景（最基础场景）
@@ -420,11 +429,13 @@ public class TxApi {
 
         // 1. 提取交易池中UTXO的key字符串，存入Set（O(1)查找效率）
         Set<String> poolUtxoKeySet = utxoInPool.stream()
+                .filter(Objects::nonNull)
                 .map(UTXO::getKeyStr)  // 使用UTXO自带的getKeyStr()方法获取key字符串
                 .collect(Collectors.toSet());
 
         // 2. 过滤原始列表，保留不在交易池中的UTXO
         return originalUtxos.stream()
+                .filter(Objects::nonNull)
                 .filter(utxo -> !poolUtxoKeySet.contains(utxo.getKeyStr()))
                 .collect(Collectors.toList());
     }

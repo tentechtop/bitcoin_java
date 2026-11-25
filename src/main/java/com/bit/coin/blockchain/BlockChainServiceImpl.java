@@ -713,6 +713,9 @@ public class BlockChainServiceImpl implements BlockChainService {
      * @return 找到的 Transaction 对象，如果未找到或发生错误则返回 null
      */
     public Transaction getTxByHash(byte[] txId) {
+        if (txId == null || txId.length != Transaction.TX_ID_LENGTH) {
+            return null;
+        }
         //先查询是否在交易池中
         Transaction tx = txPool.getTx(txId);
         if (tx != null) {
@@ -740,8 +743,14 @@ public class BlockChainServiceImpl implements BlockChainService {
             return null; // 区块数据不存在
         }
         BlockBody deserialize = BlockBody.deserialize(blockBodyData);
-        assert deserialize != null;
+        if (deserialize == null || deserialize.getTransactions() == null
+                || txIndexInBlock < 0 || txIndexInBlock >= deserialize.getTransactions().size()) {
+            return null;
+        }
         Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
+        if (transaction == null) {
+            return null;
+        }
         long status = 0;
         //交易所在的区块是否主连区块
         boolean isMainBlock = isMainBlock(blockHash);
@@ -757,6 +766,12 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public Transaction getTxAndQueryInputByHash(byte[] txId) {
+        // API callers can provide malformed hashes.  Avoid passing null or a
+        // short key into the database and avoid exposing an internal parsing
+        // exception as a 500 response.
+        if (txId == null || txId.length != Transaction.TX_ID_LENGTH) {
+            return null;
+        }
         //先查询是否在交易池中
         Transaction tx = txPool.getTx(txId);
         if (tx != null) {
@@ -785,15 +800,23 @@ public class BlockChainServiceImpl implements BlockChainService {
             return null; // 区块数据不存在
         }
         BlockBody deserialize = BlockBody.deserialize(blockBodyData);
-        assert deserialize != null;
+        if (deserialize == null || deserialize.getTransactions() == null
+                || txIndexInBlock < 0 || txIndexInBlock >= deserialize.getTransactions().size()) {
+            return null;
+        }
         Transaction transaction = deserialize.getTransactions().get(txIndexInBlock);
+        if (transaction == null) {
+            return null;
+        }
         //带出输入对应的输出
         List<TxInput> inputs = transaction.getInputs();
         for (TxInput txInput : inputs) {
             if (!txInput.isCoinbase() && deserialize.getHeight() != 0) {
                 Transaction txByHash = getTxByHash(txInput.getTxId());
-                TxOutput txOutput = txByHash.getOutputs().get(txInput.getIndex());
-                txInput.setOutput(txOutput);
+                if (txByHash != null && txByHash.getOutputs() != null
+                        && txInput.getIndex() >= 0 && txInput.getIndex() < txByHash.getOutputs().size()) {
+                    txInput.setOutput(txByHash.getOutputs().get(txInput.getIndex()));
+                }
             }
         }
         transaction.setInputs(inputs);
@@ -969,8 +992,11 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public UTXO getUtxo(String key) {
+        if (key == null || !key.matches("(?i)[0-9a-f]{72}")) {
+            return null;
+        }
         byte[] bytes = dataBase.get(TUTXO, hexToBytes(key));
-        return UTXO.deserialize(bytes);
+        return bytes == null ? null : UTXO.deserialize(bytes);
     }
 
     /**
