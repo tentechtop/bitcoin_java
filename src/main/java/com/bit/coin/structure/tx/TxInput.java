@@ -76,6 +76,9 @@ public class TxInput {
 
     public String getScriptSigString() {
         WeakReference<Script> scriptSigWk1 = getScriptSigWk();
+        if (scriptSigWk1 == null) {
+            return "";
+        }
         Script script = scriptSigWk1.get();
         if (script == null) {
             return "";

@@ -84,7 +84,11 @@ public class BlockchainManager {
     }
 
     Block getMainLatestBlock() {
-        return store.storedBlock(hexToBytes(mainTip.getHash()));
+        var tip = mainTip;
+        if (store == null || tip == null || tip.getHash() == null) {
+            return null;
+        }
+        return store.storedBlock(hexToBytes(tip.getHash()));
     }
 
     Block getHeaderContext(byte[] hash) {
