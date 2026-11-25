@@ -1,6 +1,6 @@
-# 保留此旧配置作为共识版本 2 的隔离沙箱。部署时请显式指定 prod 配置。
+# 隔离回归配置使用共识版本 3。部署时请显式指定 prod 配置。
 system:
-  path: ${NODE_DATA_DIR:./data/test2-v2}
+  path: ${NODE_DATA_DIR:./data/test2-v3}
   net-params: RegressionNetParams
   mining-type: 1
   miner-address-list: ${NODE_MINER_ADDRESSES:}

@@ -484,7 +484,8 @@ class ChainWorkSyncTest {
     private static ParamsConfig.Params retargetParams() {
         ParamsConfig.Params regtest = ParamsConfig.RegressionNetParams;
         return new ParamsConfig.Params(regtest.getName(), regtest.getNet(), regtest.getDefaultPort(),
-                regtest.getGenesisHash(), regtest.getPowLimit(), regtest.getPowLimitBits(), false, 10, 150,
+                regtest.getRpcPort(), regtest.getNetworkMagic(), regtest.getGenesisHash(), regtest.getGenesisTime(),
+                regtest.getGenesisNonce(), regtest.getPowLimit(), regtest.getPowLimitBits(), false, 10, 150,
                 Duration.ofSeconds(8), Duration.ofSeconds(4), 4, false, Duration.ZERO);
     }
 

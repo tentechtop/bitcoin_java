@@ -32,7 +32,7 @@ node:
     read-token: ${NODE_READ_TOKEN:}
     public-read: false
 system:
-  path: ${NODE_DATA_DIR:./data/local-v2}
+  path: ${NODE_DATA_DIR:./data/local-v3}
   net-params: RegressionNetParams
   quic-port: ${NODE_P2P_PORT:18444}
   p2p-bind-address: ${NODE_P2P_ADDRESS:127.0.0.1}

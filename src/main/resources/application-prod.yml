@@ -1,10 +1,10 @@
-# 使用共识版本 2 的独立网络。HTTP 接口默认不对外开放。
+# 使用共识版本 3 的独立网络。HTTP 接口默认不对外开放。
 node:
   api:
     public-read: false
 system:
   readiness-min-peers: ${NODE_READINESS_MIN_PEERS:1}
-  path: ${NODE_DATA_DIR:./data/mainnet-v2}
+  path: ${NODE_DATA_DIR:./data/mainnet-v3}
   net-params: MainNetParams
   quic-port: ${NODE_P2P_PORT:8333}
   p2p-bind-address: ${NODE_P2P_ADDRESS:0.0.0.0}

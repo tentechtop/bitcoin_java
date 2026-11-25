@@ -3,5 +3,5 @@ node:
   api:
     public-read: true
 system:
-  path: ${NODE_DATA_DIR:./data/local-v2}
+  path: ${NODE_DATA_DIR:./data/local-v3}
   net-params: RegressionNetParams

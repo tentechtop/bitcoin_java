@@ -77,6 +77,47 @@ public class BlockchainManager {
         return tip == null ? -1 : tip.getHeight();
     }
 
+    /** 查询已生效主链指定高度的区块。高度对外从创世块记为 0。 */
+    public Block getMainChainBlockByHeight(int height) {
+        if (height < 0 || store == null) {
+            return null;
+        }
+        BlockHeaderWrapper cursor = mainTip;
+        while (cursor != null && cursor.getHeight() - 1 > height) {
+            cursor = blockHeaderWrappers.get(cursor.getParentHash());
+        }
+        if (cursor == null || cursor.getHeight() - 1 != height || !cursor.isFullChain()) {
+            return null;
+        }
+        return store.storedBlock(hexToBytes(cursor.getHash()));
+    }
+
+    public BlockHeader getMainChainHeaderByHeight(int height) {
+        Block block = getMainChainBlockByHeight(height);
+        return block == null ? null : block.getBlockHeader();
+    }
+
+    public byte[] getMainChainHashByHeight(int height) {
+        Block block = getMainChainBlockByHeight(height);
+        return block == null ? null : block.getHash();
+    }
+
+    public int getHeightByHash(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return -1;
+        }
+        BlockHeaderWrapper wrapper = blockHeaderWrappers.get(HexFormat.of().formatHex(hash));
+        return wrapper == null || wrapper.getHeight() < 1 ? -1 : wrapper.getHeight() - 1;
+    }
+
+    public UInt256 getChainWorkByHash(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return UInt256.ZERO;
+        }
+        BlockHeaderWrapper wrapper = blockHeaderWrappers.get(HexFormat.of().formatHex(hash));
+        return wrapper == null ? UInt256.ZERO : UInt256.fromBigInteger(wrapper.getChainWork());
+    }
+
     public ChainTipSnapshot getMainTipSnapshot() {
         var tip = mainTip;
         return tip == null ? null : new ChainTipSnapshot(tip.getHeight() - 1, hexToBytes(tip.getHash()),

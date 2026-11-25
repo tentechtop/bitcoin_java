@@ -7,10 +7,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.net.*;
 import java.net.http.*;
+import java.math.BigInteger;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -70,6 +71,70 @@ class MultiNodeIT {
         }
     }
 
+    @Test
+    @Timeout(240)
+    void concurrentMinersRaceAndHigherWorkBranchWinsAcrossThreeNodes() throws Exception {
+        root = Files.createTempDirectory(Path.of("target"), "mining-competition-").toAbsolutePath();
+        try (Node a = new Node("a"); Node b = new Node("b"); Node observer = new Node("observer")) {
+            a.start();
+            b.start();
+            observer.start();
+            a.awaitReady();
+            b.awaitReady();
+            observer.awaitReady();
+
+            ExecutorService miners = Executors.newFixedThreadPool(2);
+            JsonNode aFirst;
+            JsonNode bFirst;
+            try {
+                Future<JsonNode> aResult = miners.submit(() -> a.call("POST", "/chain/mingOneBlock"));
+                Future<JsonNode> bResult = miners.submit(() -> b.call("POST", "/chain/mingOneBlock"));
+                aFirst = aResult.get(60, TimeUnit.SECONDS);
+                bFirst = bResult.get(60, TimeUnit.SECONDS);
+            } finally {
+                miners.shutdownNow();
+            }
+
+            assertEquals(1, aFirst.path("height").asInt());
+            assertEquals(1, bFirst.path("height").asInt());
+            assertEquals(aFirst.path("hash").asText(), a.info().path("tip").asText());
+            assertEquals(bFirst.path("hash").asText(), b.info().path("tip").asText());
+            assertNotEquals(aFirst.path("hash").asText(), bFirst.path("hash").asText(),
+                    "Different miners must produce distinct competing blocks");
+            JsonNode aFirstStored = a.call("GET", "/chain/getBlockByHash?hash=" + aFirst.path("hash").asText());
+            JsonNode bFirstStored = b.call("GET", "/chain/getBlockByHash?hash=" + bFirst.path("hash").asText());
+            assertEquals(aFirstStored.path("chainWorkDecimal").asText(),
+                    bFirstStored.path("chainWorkDecimal").asText());
+
+            JsonNode aSecond = a.call("POST", "/chain/mingOneBlock");
+            assertEquals(2, aSecond.path("height").asInt());
+            JsonNode aSecondStored = a.call("GET", "/chain/getBlockByHash?hash=" + aSecond.path("hash").asText());
+            assertTrue(new BigInteger(aSecondStored.path("chainWorkDecimal").asText())
+                    .compareTo(new BigInteger(bFirstStored.path("chainWorkDecimal").asText())) > 0,
+                    "The extension of A's branch must have more cumulative work: a="
+                            + aSecondStored.path("chainWorkDecimal") + ", b=" + bFirstStored.path("chainWorkDecimal"));
+
+            b.connect(a);
+            observer.connect(a);
+            b.call("POST", "/chain/sync/startHeadersFirst");
+            observer.call("POST", "/chain/sync/startHeadersFirst");
+            awaitSameTip(a, b, 2);
+            awaitSameTip(a, observer, 2);
+
+            String winningTip = aSecond.path("hash").asText();
+            assertEquals(winningTip, b.info().path("tip").asText());
+            assertEquals(winningTip, observer.info().path("tip").asText());
+            HttpResponse<String> losingBlock = b.raw("GET",
+                    "/chain/getBlockByHash?hash=" + bFirst.path("hash").asText(), true);
+            assertEquals(200, losingBlock.statusCode(), losingBlock.body());
+            assertEquals(bFirst.path("hash").asText(), JSON.readTree(losingBlock.body()).path("hash").asText());
+            Files.writeString(root.resolve("competition-result.txt"),
+                    "PASS: two isolated miners created distinct height-1 blocks; "
+                            + "the higher-work height-2 branch won after three-node synchronization.\n"
+                            + "A first=" + aFirst + "\nB first=" + bFirst + "\nA winner=" + aSecond + "\n");
+        }
+    }
+
     private void awaitSameTip(Node a, Node b, int height) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(50);
         while (System.nanoTime() < deadline) {
@@ -87,12 +152,16 @@ class MultiNodeIT {
     private final class Node implements AutoCloseable {
 
         private final String name;
+        private final String minerAddress;
         private final int httpPort, udpPort;
         private Process process;
         private int launch;
 
         Node(String name) throws Exception {
             this.name = name;
+            byte[] rewardKey = new byte[32];
+            rewardKey[31] = (byte) name.charAt(0);
+            minerAddress = org.bitcoinj.base.Base58.encode(rewardKey);
             try (java.net.ServerSocket tcp = new java.net.ServerSocket(0); DatagramSocket udp = new DatagramSocket(0)) {
                 httpPort = tcp.getLocalPort();
                 udpPort = udp.getLocalPort();
@@ -109,7 +178,7 @@ class MultiNodeIT {
                     "--system.mining-type=1", "--system.bootstrap=", "--node.api.public-read=false",
                     "--logging.level.com.bit.coin.web=DEBUG", "--node.api.requests-per-second=100",
                     "--logging.file.path=" + root.resolve(name + "-logs"),
-                    "--system.miner-address-list=11111111111111111111111111111111");
+                    "--system.miner-address-list=" + minerAddress);
             builder.environment().put("NODE_ADMIN_TOKEN", token);
             builder.environment().remove("NODE_READ_TOKEN");
             builder.redirectErrorStream(true).redirectOutput(root.resolve(name + "-" + (++launch) + ".log").toFile());
@@ -170,6 +239,20 @@ class MultiNodeIT {
         void kill() throws Exception {
             process.destroyForcibly();
             assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            awaitDatabaseUnlock();
+        }
+
+        private void awaitDatabaseUnlock() throws Exception {
+            Path lock = root.resolve(name).resolve("LOCK");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (Files.exists(lock) && System.nanoTime() < deadline) {
+                try {
+                    Files.deleteIfExists(lock);
+                } catch (java.io.IOException stillOpen) {
+                    Thread.sleep(100);
+                }
+            }
+            assertFalse(Files.exists(lock), "RocksDB lock was not released: " + lock);
         }
 
         @Override

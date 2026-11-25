@@ -1,4 +1,4 @@
-# 节点部署与恢复手册（共识修订 2）
+# 节点部署与恢复手册（共识修订 3）
 
 这是使用 Ed25519 和自定义 UDP 协议的独立链，**不兼容 Bitcoin 主网、bitcoinj 钱包或标准 QUIC/TLS 客户端**。`MainNetParams` 是本项目主网络的名称。新的创世块、交易验证、数据库和握手规则与旧代码不兼容。
 
@@ -22,7 +22,7 @@ CI 配置 Windows 和 Linux 验证，Linux 作业还构建并启动容器。配�
 
 ## 启动与认证
 
-默认 `local`：HTTP `127.0.0.1:18333`、UDP `127.0.0.1:18444`、数据目录 `./data/local-v2`。首次启动生成并持久化节点身份。默认不自动挖矿，没有硬编码引导节点或收益地址。
+默认 `local`：HTTP `127.0.0.1:18333`、UDP `127.0.0.1:18444`、数据目录 `./data/local-v3`。首次启动生成并持久化节点身份。默认不自动挖矿，没有硬编码引导节点或收益地址。
 
 生成两个独立随机令牌并通过环境传入，避免写进命令行、日志或 Git：
 
@@ -44,7 +44,7 @@ Invoke-RestMethod http://127.0.0.1:18333/node/info -Headers @{Authorization="Bea
 
 ## 生产配置与网络
 
-设置 `SPRING_PROFILES_ACTIVE=prod` 后使用 `./data/mainnet-v2`、UDP `0.0.0.0:8333`，HTTP 仍绑定本机。历史 `dev/test2/txy` 配置已改为独立回归目录，不再自动连接旧远端。`dev` 实验接口在同时启用 `prod` 时也关闭。
+设置 `SPRING_PROFILES_ACTIVE=prod` 后使用 `./data/mainnet-v3`、UDP `0.0.0.0:8333`，HTTP 仍绑定本机。使用 `testnet` profile 可启动 Testnet3 参数和 UDP `18333`。历史 `dev/test2/txy` 配置使用独立修订 3 目录，不再自动连接旧远端。`dev` 实验接口在同时启用 `prod` 时也关闭。
 
 | 环境变量 | 用途与默认值 |
 |---|---|
@@ -52,7 +52,7 @@ Invoke-RestMethod http://127.0.0.1:18333/node/info -Headers @{Authorization="Bea
 | `NODE_HTTP_ADDRESS` / `NODE_HTTP_PORT` | `127.0.0.1` / `18333` |
 | `NODE_P2P_ADDRESS` / `NODE_P2P_PORT` | prod：`0.0.0.0` / `8333`；local：`127.0.0.1` / `18444` |
 | `NODE_NETWORKING_ENABLED` | 默认 true；离线节点可设 false |
-| `NODE_BOOTSTRAP` | prod 中以逗号分隔的修订 2 多地址 |
+| `NODE_BOOTSTRAP` | prod/testnet 中以逗号分隔的修订 3 多地址 |
 | `NODE_MINER_ADDRESSES` | prod 收益公钥列表：Base58 编码 32 字节 Ed25519 公钥，不接受私钥 |
 | `NODE_READINESS_MIN_PEERS` | prod 默认 1，local 默认 0；有意隔离的节点设 0 |
 | `NODE_READINESS_MAX_SYNC_LAG` | 默认 2，超过已知最佳节点高度差时 readiness 失败 |
@@ -113,9 +113,9 @@ healthcheck 使用 JAR 中的 `NodeProbe`，无需 curl。readiness 检查链状
 
 ```powershell
 $nodeJar = (Resolve-Path target/bitcoin_java-0.0.1-SNAPSHOT.jar).Path
-java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher checkpoint ./data/mainnet-v2 ./backups/mainnet-v2-20260908 MainNetParams
-java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher restore ./backups/mainnet-v2-20260908 ./data/mainnet-restored-v2 MainNetParams
-java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher reindex ./data/mainnet-v2 ./data/mainnet-rebuilt-v2 MainNetParams
+java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher checkpoint ./data/mainnet-v3 ./backups/mainnet-v3-20260908 MainNetParams
+java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher restore ./backups/mainnet-v3-20260908 ./data/mainnet-restored-v3 MainNetParams
+java '-Dloader.main=com.bit.coin.ops.DatabaseTool' -cp $nodeJar org.springframework.boot.loader.launch.PropertiesLauncher reindex ./data/mainnet-v3 ./data/mainnet-rebuilt-v3 MainNetParams
 ```
 
 Linux 使用同样的 Java 参数和实际路径。回归网的最后一个参数用 `RegressionNetParams`，测试网用 `TestNet3Params`。Compose 维护时先停止 node，再用同镜像的 maintenance 入口挂载源卷与新的备份/恢复卷，确保 UID/GID 10001 可写。
@@ -129,7 +129,7 @@ Linux 使用同样的 Java 参数和实际路径。回归网的最后一个参�
 - 磁盘不足或提交/内存协调失败时，先恢复空间或排查存储，再重启并核对状态。进程终止测试不能替代宿主掉电和磁盘控制器持久性验证。
 - 中断可能留下未完成的新目标目录。保留源目录，选择另一个新目标重试，确认失败目录路径后再清理。
 
-升级前保存旧 JAR/镜像 digest、配置和可恢复备份。修订 1 数据必须原样保留；修订 2 拒绝直接打开或重建为新规则。另建数据目录启动修订 2 网络，不能静默迁入旧余额。回滚旧程序时使用对应旧备份与配置，禁止旧 RocksDB 版本直接写升级后的目录。
+升级前保存旧 JAR/镜像 digest、配置和可恢复备份。修订 1/2 数据必须原样保留，修订 3 会拒绝直接打开或重建旧规则。另建数据目录启动修订 3 网络，不能静默迁入旧余额。回滚旧程序时使用对应旧备份与配置，禁止旧 RocksDB 版本直接写升级后的目录。
 
 ## 监控与环境验收
 

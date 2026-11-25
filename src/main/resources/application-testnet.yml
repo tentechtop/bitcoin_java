@@ -1,0 +1,13 @@
+# Bitcoin Testnet3 对齐参数。HTTP 接口仍使用本项目 REST API，不提供 Bitcoin JSON-RPC wire 兼容层。
+server:
+  port: ${NODE_HTTP_PORT:18332}
+node:
+  api:
+    public-read: false
+system:
+  path: ${NODE_DATA_DIR:./data/testnet3-v3}
+  net-params: TestNet3Params
+  quic-port: ${NODE_P2P_PORT:18333}
+  p2p-bind-address: ${NODE_P2P_ADDRESS:0.0.0.0}
+  miner-address-list: ${NODE_MINER_ADDRESSES:}
+  bootstrap: ${NODE_BOOTSTRAP:}

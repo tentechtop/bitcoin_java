@@ -107,7 +107,7 @@ class ChainStateStoreIT {
         Block first = next(tip);
         accept(first);
         UTXO source = first.getUTXOs().getFirst();
-        while (tip.getHeight() < 10) {
+        while (tip.getHeight() < params.getCoinbaseMaturity()) {
             accept(next(tip));
         }
         Block ancestor = tip;
@@ -139,11 +139,46 @@ class ChainStateStoreIT {
     }
 
     @Test
+    void reorgRestoresDisconnectedTransactionsBeforeMempoolRevalidation() {
+        Block first = next(tip);
+        accept(first);
+        UTXO source = first.getUTXOs().getFirst();
+        while (tip.getHeight() < params.getCoinbaseMaturity()) {
+            accept(next(tip));
+        }
+        Block ancestor = tip;
+        Transaction disconnectedTx = spend(source, 90_000);
+        Block old = next(ancestor, disconnectedTx);
+        accept(old);
+
+        Block fork = next(ancestor);
+        accept(fork);
+        Block winner = next(fork);
+
+        BlockChainServiceImpl chain = queryService();
+        com.bit.coin.txpool.TxPool pool = mock(com.bit.coin.txpool.TxPool.class);
+        when(pool.addTx(any(Transaction.class))).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "txPool", pool);
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "utxoCache",
+                mock(com.bit.coin.cache.UTXOCache.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(chain, "routingTable",
+                mock(com.bit.coin.p2p.kad.RoutingTable.class));
+
+        assertTrue(chain.verifyBlock(winner));
+
+        org.mockito.InOrder order = inOrder(pool);
+        order.verify(pool).addTx(org.mockito.ArgumentMatchers.<Transaction>argThat(tx ->
+                Arrays.equals(tx.getTxId(), disconnectedTx.getTxId())));
+        order.verify(pool).revalidate();
+        verify(pool, atLeastOnce()).onBlockConfirmed(any(Transaction[].class), anyInt());
+    }
+
+    @Test
     void coinbaseMaturityUsesCandidateHeightIncludingBoundary() {
         Block first = next(tip);
         accept(first);
         Transaction spend = spend(first.getUTXOs().getFirst(), 10_000);
-        while (tip.getHeight() < 9) {
+        while (tip.getHeight() < params.getCoinbaseMaturity() - 1) {
             accept(next(tip));
         }
         assertThrows(IllegalArgumentException.class, () -> accept(next(tip, spend)));
@@ -345,7 +380,7 @@ class ChainStateStoreIT {
     void balanceUsesDurableIndexSurvivesEvictionAndPropagatesCorruption() {
         accept(next(tip));
         UTXO expected = tip.getUTXOs().getFirst();
-        while (tip.getHeight() < 10) {
+        while (tip.getHeight() < params.getCoinbaseMaturity()) {
             accept(next(tip));
         }
         BlockChainServiceImpl chain = queryService();
@@ -416,7 +451,7 @@ class ChainStateStoreIT {
     void arbitraryScriptCannotPoisonPublicKeyAddressPrefixes() {
         Block first = next(tip);
         accept(first);
-        while (tip.getHeight() < 10) {
+        while (tip.getHeight() < params.getCoinbaseMaturity()) {
             accept(next(tip));
         }
         UTXO source = first.getUTXOs().getFirst();

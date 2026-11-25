@@ -99,7 +99,9 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public long medianBeforeHeight(int sourceHeight) {
-        Block ancestor = getHeaderContext(dataBase.get(HEIGHT_TO_HASH, Math.max(0, sourceHeight - 1)));
+        BlockchainManager manager = blockchainManager;
+        Block ancestor = manager == null ? null
+                : manager.getMainChainBlockByHeight(Math.max(0, sourceHeight - 1));
         if (ancestor == null) {
             throw new IllegalStateException("Missing relative-lock ancestry");
         }
@@ -144,19 +146,13 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public UInt256 getChainWorkByHash(byte[] hash) {
-        Block context = getHeaderContext(hash);
-        return context == null ? UInt256.ZERO : context.getChainWork();
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? UInt256.ZERO : manager.getChainWorkByHash(hash);
     }
 
     public BlockHeader getBlockHeaderByHeight(int height) {
-        if (height < 0) {
-            return null;
-        }
-        byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
-        if (hash == null || hash.length != 32) {
-            return null;
-        }
-        return getBlockHeaderByHash(hash);
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getMainChainHeaderByHeight(height);
     }
 
     /** 追溯仅有区块头的祖先区块时，使用本地记录的高度和累计工作量。 */
@@ -254,16 +250,18 @@ public class BlockChainServiceImpl implements BlockChainService {
                 for (Block confirmed : accepted.connected()) {
                     removeConfirmedTxsFromPool(confirmed);
                 }
-                txPool.revalidate();
                 List<Block> disconnected = new ArrayList<>(accepted.disconnected());
                 Collections.reverse(disconnected);
                 for (Block old : disconnected) {
                     for (Transaction tx : old.getTransactions()) {
                         if (!tx.isCoinbase()) {
+                            // 先按旧链的祖先到后代顺序恢复交易，再统一重验证，
+                            // 避免交易池中的子交易在父交易恢复前被误删。
                             txPool.addTx(tx);
                         }
                     }
                 }
+                txPool.revalidate();
             } catch (Exception memoryFailure) {
                 stateHealthy = false;
                 log.error("Block committed but memory reconciliation failed; restart to recover", memoryFailure);
@@ -410,7 +408,8 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     private byte[] getBlockHashByHeight(int height) {
-        return dataBase.get(HEIGHT_TO_HASH, height);
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getMainChainHashByHeight(height);
     }
 
     private byte[] getHashByHeightFromChain(Block chainTip, long targetHeight) {
@@ -439,17 +438,8 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     private int getBlockHeightByHash(byte[] hash) {
-        if (hash == null || hash.length != 32) {
-            log.error("区块哈希无效：hash为null或长度不是32字节");
-            return -1;
-        }
-        byte[] heightBytes = dataBase.get(HASH_TO_HEIGHT, hash);
-        // 新增null校验
-        if (heightBytes == null) {
-            log.error("区块哈希在HASH_TO_HEIGHT表中无对应高度，hash={}", bytesToHex(hash));
-            return -1;
-        }
-        return RocksDb.bytesToInt(dataBase.get(HASH_TO_HEIGHT, hash));
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? -1 : manager.getHeightByHash(hash);
     }
 
     private boolean processingOrphans;
@@ -517,7 +507,7 @@ public class BlockChainServiceImpl implements BlockChainService {
     public static Block createGenesisBlock(ParamsConfig.Params params) {
         Transaction coinbase = createGenesisCoinbaseTransaction();
         coinbase.getInputs().getFirst()
-                .setScriptSig(("bitcoin_java/consensus-2/" + params.getName()).getBytes(StandardCharsets.UTF_8));
+                .setScriptSig(("bitcoin_java/consensus-3/" + params.getName()).getBytes(StandardCharsets.UTF_8));
         coinbase.getOutputs().getFirst().setValue(0); // 不向开发钱包分配预挖奖励。
         coinbase.getOutputs().getFirst().setScriptPubKey(new byte[20]);
         coinbase.setTxId(coinbase.calculateTxId());
@@ -525,14 +515,23 @@ public class BlockChainServiceImpl implements BlockChainService {
         genesis.setHeight(0);
         genesis.setTransactions(List.of(coinbase));
         genesis.setTxCount(1);
+        long genesisTime = params.getGenesisTime();
+        long genesisNonce = params.getGenesisNonce();
+        // 保留旧构造器创建的测试参数兼容性。它们复用对应内置网络的创世向量，
+        // 只覆盖难度调整或成熟度等单项规则。
+        if (genesisNonce < 0) {
+            ParamsConfig.Params base = switch (params.getName()) {
+                case "mainnet" -> ParamsConfig.MainNetParams;
+                case "testnet3" -> ParamsConfig.TestNet3Params;
+                case "regtest" -> ParamsConfig.RegressionNetParams;
+                default -> throw new IllegalArgumentException("Genesis nonce is not configured for " + params.getName());
+            };
+            genesisTime = base.getGenesisTime();
+            genesisNonce = base.getGenesisNonce();
+        }
         BlockHeader header = new BlockHeader(1, new byte[32], calculateMerkleRoot(genesis.getTransactions()),
-                1754287472L, (int) params.getPowLimitBits(), 0);
-        header.setNonce(switch (params.getName()) {
-            case "mainnet" -> 6655;
-            case "testnet3" -> 83708;
-            case "regtest" -> 1;
-            default -> throw new IllegalArgumentException("Unknown network");
-        });
+                genesisTime, (int) params.getPowLimitBits(), 0);
+        header.setNonce((int) genesisNonce);
         if (!header.verifyProofOfWork(false) || !Arrays.equals(header.calculateHash(), params.getGenesisHash())) {
             throw new IllegalStateException("Genesis vector mismatch");
         }
@@ -693,8 +692,12 @@ public class BlockChainServiceImpl implements BlockChainService {
         byte[] header_bytes = dataBase.get(TBLOCK_HEADER, hash);
         byte[] body_bytes = dataBase.get(TBLOCK_BODY, hash);
         if (header_bytes != null && body_bytes != null) {
-            byte[] chainwork_bytes = dataBase.get(HASH_TO_CHAIN_WORK, hash);
-            UInt256 uInt256 = UInt256.fromBytes(chainwork_bytes);
+            // 运行期间的累计工作量由 BlockchainManager 的头索引提供；启动恢复时管理器尚未发布，
+            // 仅由持久化回调读取已提交值，供管理器完成初始化。
+            BlockchainManager manager = blockchainManager;
+            UInt256 uInt256 = manager == null
+                    ? UInt256.fromBytes(dataBase.get(HASH_TO_CHAIN_WORK, hash))
+                    : manager.getChainWorkByHash(hash);
             BlockHeader blockHeader = BlockHeader.deserialize(header_bytes);
             BlockBody blockBody = BlockBody.deserialize(body_bytes);
             Block block = Block.buildBlock(blockHeader, blockBody);
@@ -875,11 +878,8 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public Block getBlockByHeight(int height) {
-        byte[] blockHash = dataBase.get(HEIGHT_TO_HASH, height);
-        if (blockHash == null) {
-            return null;
-        }
-        return getBlockByHash(blockHash);
+        BlockchainManager manager = blockchainManager;
+        return manager == null ? null : manager.getMainChainBlockByHeight(height);
     }
 
     /**
@@ -1168,16 +1168,7 @@ public class BlockChainServiceImpl implements BlockChainService {
     //区块是否主链
     @Override
     public boolean isMainBlock(String blockHexHash) {
-        byte[] blockHash = hexToBytes(blockHexHash);
-        //是否32字节
-        assert blockHash != null;
-        if (blockHash.length != 32) {
-            return false;
-        }
-        //hash到高度的映射得到高度 再从高度到hash 检查是否一致即可 只有主链区块才有高度到hash
-        byte[] height = dataBase.get(HASH_TO_HEIGHT, blockHash);
-        byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
-        return Arrays.equals(blockHash, hash);
+        return blockHexHash != null && isMainBlock(hexToBytes(blockHexHash));
     }
 
     @Override
@@ -1293,15 +1284,12 @@ public class BlockChainServiceImpl implements BlockChainService {
     }
 
     public boolean isMainBlock(byte[] blockHash) {
-        //是否32字节
-        assert blockHash != null;
-        if (blockHash.length != 32) {
+        BlockchainManager manager = blockchainManager;
+        if (manager == null || blockHash == null || blockHash.length != 32) {
             return false;
         }
-        //hash到高度的映射得到高度 再从高度到hash 检查是否一致即可 只有主链区块才有高度到hash
-        byte[] height = dataBase.get(HASH_TO_HEIGHT, blockHash);
-        byte[] hash = dataBase.get(HEIGHT_TO_HASH, height);
-        return Arrays.equals(blockHash, hash);
+        int height = manager.getHeightByHash(blockHash);
+        return height >= 0 && Arrays.equals(blockHash, manager.getMainChainHashByHeight(height));
     }
 
     /**

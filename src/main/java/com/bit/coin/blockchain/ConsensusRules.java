@@ -13,7 +13,7 @@ import java.util.function.Function;
 /** 上下文校验以候选区块的祖先为依据，与当前主链顶端无关。 */
 public final class ConsensusRules {
 
-    public static final int REVISION = 2;  // 链数据库记录的共识版本，启动时检查兼容性
+    public static final int REVISION = 3;  // 网络参数对齐 Bitcoin Core 后的链数据库共识版本
     public static final int MAX_BLOCK_BYTES = 8_000_000;  // 共识允许的单块序列化字节数上限
     public static final int MAX_BLOCK_TRANSACTIONS = 20_000;  // 单块交易数上限，含 coinbase
 

@@ -49,12 +49,12 @@ class UTXOCacheStatusTest {
         Arrays.fill(publicKey, (byte) 9);
         byte[] script = Sha.applyRIPEMD160(Sha.applySHA256(publicKey));
         UTXO ordinary = utxo(1, 11L, false, 10, script);
-        UTXO immature = utxo(2, 22L, true, 2, script);
+        UTXO immature = utxo(2, 22L, true, 99, script);
         UTXO mature = utxo(3, 33L, true, 1, script);
         List<UTXO> records = List.of(ordinary, immature, mature);
 
         when(chains.getObject()).thenReturn(chain);
-        when(chain.getMainTipSnapshot()).thenReturn(new ChainTipSnapshot(10, new byte[32], null));
+        when(chain.getMainTipSnapshot()).thenReturn(new ChainTipSnapshot(100, new byte[32], null));
         when(chain.isStateHealthy()).thenReturn(true);
         when(pools.getObject()).thenReturn(txPool);
         when(dataBase.get(eq(TableEnum.TUTXO), any(byte[].class))).thenAnswer(invocation -> {

@@ -23,11 +23,19 @@ public class NodeInfoApi {
     @GetMapping("/node/info")
     public Map<String, Object> info() {
         var tip = chain.getMainTipSnapshot();
-        return Map.of("network", config.getParams().getName(), "consensusRevision", ConsensusRules.REVISION,
-                "peerId", org.bitcoinj.base.Base58.encode(SystemConfig.SelfPeer.getId()), "p2pPort",
-                SystemConfig.SelfPeer.getPort(),
-                "height", tip == null ? 0 : tip.height(), "tip",
-                tip == null ? "" : SerializeUtils.bytesToHex(tip.hash()),
-                "ready", chain.isStateHealthy());
+        var params = config.getParams();
+        return Map.ofEntries(Map.entry("network", params.getName()),
+                Map.entry("consensusRevision", ConsensusRules.REVISION),
+                Map.entry("peerId", org.bitcoinj.base.Base58.encode(SystemConfig.SelfPeer.getId())),
+                Map.entry("p2pPort", SystemConfig.SelfPeer.getPort()), Map.entry("rpcPort", params.getRpcPort()),
+                Map.entry("networkMagic", SerializeUtils.bytesToHex(params.getNetworkMagic())),
+                Map.entry("coinbaseMaturity", params.getCoinbaseMaturity()),
+                Map.entry("subsidyHalvingInterval", params.getSubsidyReductionInterval()),
+                Map.entry("targetSpacingSeconds", params.getTargetTimePerBlock().toSeconds()),
+                Map.entry("difficultyAdjustmentInterval", params.getDifficultyAdjustmentInterval()),
+                Map.entry("powLimitBits", Long.toHexString(params.getPowLimitBits())),
+                Map.entry("height", tip == null ? 0 : tip.height()),
+                Map.entry("tip", tip == null ? "" : SerializeUtils.bytesToHex(tip.hash())),
+                Map.entry("ready", chain.isStateHealthy()));
     }
 }
