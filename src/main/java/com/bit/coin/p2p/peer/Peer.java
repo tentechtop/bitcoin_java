@@ -154,6 +154,7 @@ public class Peer {
     public record ChainTip(String hashHex, int height, UInt256 chainWork) {}
 
     // 衍生字段（无需序列化，通过address+port动态构建）
+    @JsonIgnore
     private InetSocketAddress inetSocketAddress;
 
     public void setInetSocketAddress(InetSocketAddress inetSocketAddress) {
@@ -255,8 +256,11 @@ public class Peer {
             Peer peer = new Peer();
 
             // 3. 反序列化核心标识字段
-            peer.setId(deserializeByteArray(buffer));
-            peer.setPrivateKey(deserializeByteArray(buffer));
+            peer.setId(deserializeByteArray(buffer, 32));
+            // An encrypted identity contains a 4-byte marker, 12-byte nonce,
+            // 32-byte key and GCM tag.  It is still tightly bounded and is
+            // unsealed only by SystemConfig after loading this record.
+            peer.setPrivateKey(deserializeByteArray(buffer, 96));
 
             // 4. 反序列化网络信息字段
             peer.setAddress(deserializeString(buffer));
@@ -284,7 +288,10 @@ public class Peer {
 
             // 8. 衍生字段初始化（inetSocketAddress由address+port构建）
             if (peer.getAddress() != null && peer.getPort() > 0) {
-                peer.setInetSocketAddress(new InetSocketAddress(peer.getAddress(), peer.getPort()));
+                // Never resolve attacker-controlled host names while decoding a
+                // peer record.  Connection code can resolve only when it is
+                // ready to initiate a bounded network operation.
+                peer.inetSocketAddress = InetSocketAddress.createUnresolved(peer.getAddress(), peer.getPort());
             }
 
             if (peer.getId() == null || peer.getId().length != 32 || peer.getPort() < 1 || peer.getPort() > 65535
@@ -365,12 +372,12 @@ public class Peer {
     /**
      * 辅助方法：从ByteBuffer反序列化byte[]
      */
-    private static byte[] deserializeByteArray(ByteBuffer buffer) {
+    private static byte[] deserializeByteArray(ByteBuffer buffer, int maxLength) {
         int length = buffer.getInt();
         if (length == -1) {
             return null;
         }
-        if (length < 0 || length > 32 || length > buffer.remaining()) {
+        if (length < 0 || length > maxLength || length > buffer.remaining()) {
             throw new IllegalArgumentException("Invalid peer key length");
         }
         byte[] array = new byte[length];

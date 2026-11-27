@@ -1,8 +1,11 @@
 # 使用共识版本 3 的独立网络。HTTP 接口默认不对外开放。
 node:
   api:
+    require-tokens: true
     public-read: false
 system:
+  require-identity-encryption: true
+  identity-encryption-key: ${NODE_IDENTITY_ENCRYPTION_KEY:}
   readiness-min-peers: ${NODE_READINESS_MIN_PEERS:1}
   path: ${NODE_DATA_DIR:./data/mainnet-v3}
   net-params: MainNetParams

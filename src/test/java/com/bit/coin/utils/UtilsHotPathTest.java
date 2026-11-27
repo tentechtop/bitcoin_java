@@ -3,6 +3,8 @@ package com.bit.coin.utils;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -89,5 +91,18 @@ class UtilsHotPathTest {
         assertTrue(Ed25519Signer.fastVerify(publicKey, data, signature));
         assertEquals(position, data.position());
         assertFalse(Arrays.equals(signature, new byte[signature.length]));
+    }
+
+    @Test
+    void lengthPrefixedPayloadWorksWhenStreamAvailableIsZero() throws Exception {
+        byte[] encoded = new byte[] {3, 'a', 'b', 'c'};
+        DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded) {
+            @Override
+            public int available() {
+                return 0;
+            }
+        });
+
+        assertArrayEquals(new byte[] {'a', 'b', 'c'}, SerializeUtils.readBytesWithLength(input));
     }
 }

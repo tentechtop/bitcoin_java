@@ -39,7 +39,7 @@ public class UTXOCacheImpl implements UTXOCache {
             .expireAfterAccess(1, TimeUnit.HOURS).build();
 
     @Override
-    public synchronized void invalidateAll() {
+    public void invalidateAll() {
         mainCache.invalidateAll();
     }
 
@@ -54,7 +54,7 @@ public class UTXOCacheImpl implements UTXOCache {
     }
 
     @Override
-    public synchronized UTXO getUTXO(byte[] key) {
+    public UTXO getUTXO(byte[] key) {
         if (key == null || key.length != 36) {
             throw new IllegalArgumentException("Invalid outpoint");
         }
@@ -66,7 +66,7 @@ public class UTXOCacheImpl implements UTXOCache {
     }
 
     @Override
-    public synchronized void addUTXO(UTXO value) {
+    public void addUTXO(UTXO value) {
         mainCache.put(bytesToHex(value.getKey()), value.serialize());
     }
 

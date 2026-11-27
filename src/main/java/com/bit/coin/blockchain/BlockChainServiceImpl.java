@@ -1104,7 +1104,7 @@ public class BlockChainServiceImpl implements BlockChainService {
         if (cursor != null && (cursor.length != 52 || !Arrays.equals(prefix, Arrays.copyOf(cursor, 20)))) {
             throw new IllegalArgumentException("Invalid address cursor");
         }
-        PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, prefix, pageSize, cursor);
+        PageResult<byte[]> page = dataBase.pageKeyByPrefix(ADDR_TO_TX, prefix, pageSize, cursor);
         List<Transaction> transactions = new ArrayList<>();
         for (Object value : page.getData()) {
             byte[] key = (byte[]) value;
@@ -1147,7 +1147,7 @@ public class BlockChainServiceImpl implements BlockChainService {
         if (last != null && (last.length != 56 || !Arrays.equals(prefix, Arrays.copyOf(last, 20)))) {
             throw new IllegalArgumentException("Invalid UTXO cursor");
         }
-        PageResult<Object> page = dataBase.pageKeyByPrefix(ADDR_TO_UTXO, prefix, limit, last);
+        PageResult<byte[]> page = dataBase.pageKeyByPrefix(ADDR_TO_UTXO, prefix, limit, last);
         List<UTXO> result = new ArrayList<>();
         for (Object item : page.getData()) {
             byte[] key = (byte[]) item;

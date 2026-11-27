@@ -12,6 +12,11 @@ import java.net.InetSocketAddress;
 @Data
 public class NetworkHandshake {
 
+    /** Handshakes are deliberately tiny; cap untrusted protobuf input before parsing. */
+    public static final int MAX_SERIALIZED_BYTES = 64 * 1024;
+    private static final int MAX_HARDWARE_INFO_BYTES = 512;
+    private static final int MAX_NODE_VERSION_BYTES = 128;
+
     /**
      * 网络魔法值：固定字节数组（如Solana主网为0x5eyy...）
      * 作用：区分测试网/主网/私有链，防止节点接入错误网络
@@ -77,8 +82,15 @@ public class NetworkHandshake {
      * @throws IOException 反序列化失败时抛出
      */
     public static NetworkHandshake deserialize(byte[] data) throws IOException {
-        Structure.ProtoNetworkHandshake proto = Structure.ProtoNetworkHandshake.parseFrom(data);
-        return fromProto(proto);
+        if (data == null || data.length == 0 || data.length > MAX_SERIALIZED_BYTES) {
+            throw new IOException("Handshake exceeds the maximum allowed size");
+        }
+        try {
+            Structure.ProtoNetworkHandshake proto = Structure.ProtoNetworkHandshake.parseFrom(data);
+            return fromProto(proto);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid handshake fields", e);
+        }
     }
 
     // ========================== Protobuf 转换方法 ==========================
@@ -112,9 +124,8 @@ public class NetworkHandshake {
             builder.setNodeVersion(nodeVersion);
         }
 
-        if (sharedSecret != null && sharedSecret.length > 0) {
-            builder.setSharedSecret(ByteString.copyFrom(sharedSecret));
-        }
+        // sharedSecret is negotiated locally and must never be serialized into a
+        // handshake or any other public representation.
 
         if (latestHash != null && latestHash.length > 0) {
             builder.setLatestHash(ByteString.copyFrom(latestHash));
@@ -135,6 +146,19 @@ public class NetworkHandshake {
      * @return NetworkHandshake 实例
      */
     public static NetworkHandshake fromProto(Structure.ProtoNetworkHandshake proto) {
+        if (proto == null) {
+            throw new IllegalArgumentException("Handshake cannot be null");
+        }
+        requireLength(proto.getNetworkMagic().size(), 4, "networkMagic");
+        requireLength(proto.getNodeId().size(), 32, "nodeId");
+        requireLength(proto.getNonceId().size(), 16, "nonceId");
+        requireLength(proto.getSignature().size(), 64, "signature");
+        requireLength(proto.getLatestHash().size(), 32, "latestHash");
+        requireLength(proto.getTotalWork().size(), 32, "totalWork");
+        if (proto.getHardwareInfoBytes().size() > MAX_HARDWARE_INFO_BYTES
+                || proto.getNodeVersionBytes().size() > MAX_NODE_VERSION_BYTES) {
+            throw new IllegalArgumentException("Handshake text field exceeds its limit");
+        }
         NetworkHandshake handshake = new NetworkHandshake();
 
         // 处理字节数组字段（Protobuf的ByteString转字节数组）
@@ -154,10 +178,17 @@ public class NetworkHandshake {
         // 处理字符串字段
         handshake.setHardwareInfo(proto.getHardwareInfo());
         handshake.setNodeVersion(proto.getNodeVersion());
-        handshake.setSharedSecret(proto.getSharedSecret().toByteArray());
+        // sharedSecret is local key material.  It is intentionally ignored even
+        // if a peer sends the legacy field in a protobuf payload.
         handshake.setLatestHash(proto.getLatestHash().toByteArray());
         handshake.setLatestHeight(proto.getLatestHeight());
         handshake.setChainWork(UInt256.fromBytes(proto.getTotalWork().toByteArray()));
         return handshake;
+    }
+
+    private static void requireLength(int actual, int expected, String field) {
+        if (actual != 0 && actual != expected) {
+            throw new IllegalArgumentException(field + " must be " + expected + " bytes");
+        }
     }
 }

@@ -13,6 +13,8 @@ public class NodeApiProperties {
 
     private String adminToken = "";
     private String readToken = "";
+    /** Production profiles must provide an admin token; local/test may stay locked down without one. */
+    private boolean requireTokens;
     private boolean publicRead;
     private List<String> allowedOrigins = List.of();
     private int requestsPerSecond = 20;  // 每个来源 IP 每秒可发起的请求数
@@ -20,6 +22,9 @@ public class NodeApiProperties {
     private int maxRequestBytes = 2_100_000;  // 单个请求体的字节上限，读取请求流时也会检查
 
     public void validate() {
+        if (requireTokens && adminToken.isEmpty()) {
+            throw new IllegalStateException("API admin token must be configured when require-tokens is enabled");
+        }
         if ((!adminToken.isEmpty() && (adminToken.length() < 32 || adminToken.length() > 4096))
                 || (!readToken.isEmpty() && (readToken.length() < 32 || readToken.length() > 4096))) {
             throw new IllegalStateException("API tokens must contain at least 32 characters");

@@ -110,15 +110,15 @@ public interface DataBase {
      * @param <T> 分页数据的类型（如 byte[]、UTXO、Block 等）
      * @return 分页结果（包含当前页数据、最后一个键、是否为最后一页）
      */
-    <T> PageResult<T> page(TableEnum table, int pageSize, byte[] lastKey);
+    PageResult<byte[]> page(TableEnum table, int pageSize, byte[] lastKey);
 
-    <T> PageResult<T> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
+    PageResult<byte[]> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
 
-    <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey);
+    PageResult<byte[]> pageKey(TableEnum table, int pageSize, byte[] lastKey);
 
-    <T> PageResult<T> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
+    PageResult<byte[]> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
 
-    <T> PageResult<T> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
+    PageResult<byte[]> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey);
 
     boolean existsByPrefix(TableEnum table, byte[] prefix);
 

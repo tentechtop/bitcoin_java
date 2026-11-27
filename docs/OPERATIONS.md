@@ -29,6 +29,8 @@ CI 配置 Windows 和 Linux 验证，Linux 作业还构建并启动容器。配�
 ```powershell
 $env:NODE_ADMIN_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 $env:NODE_READ_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+# prod 必填；密钥只放在秘密管理系统，不要与数据目录备份放在一起
+$env:NODE_IDENTITY_ENCRYPTION_KEY = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 java -Xms256m -Xmx1536m -XX:MaxDirectMemorySize=128m -XX:+ExitOnOutOfMemoryError -jar target/bitcoin_java-0.0.1-SNAPSHOT.jar
 ```
 
@@ -57,6 +59,7 @@ Invoke-RestMethod http://127.0.0.1:18333/node/info -Headers @{Authorization="Bea
 | `NODE_READINESS_MIN_PEERS` | prod 默认 1，local 默认 0；有意隔离的节点设 0 |
 | `NODE_READINESS_MAX_SYNC_LAG` | 默认 2，超过已知最佳节点高度差时 readiness 失败 |
 | `NODE_MIN_FREE_DISK_BYTES` | 默认 256 MiB，Compose 默认 1 GiB；低于阈值拒绝写入 |
+| `NODE_IDENTITY_ENCRYPTION_KEY` | prod 必填的 Base64 32 字节密钥；用于 AES-GCM 封装节点私钥，必须独立备份 |
 | `LOGGING_FILE_PATH` | 默认 `./logs`，滚动日志目录 |
 
 多地址格式：`/ip4/主机IP/quic/UDP端口/p2p/Base58节点公钥`。从另一台同修订、同网络节点的 `/node/info` 获取公钥。握手校验预期公钥、端点、网络、签名、时间与 nonce；服务器时钟需正常同步。防火墙只开放指定 UDP 端口，管理 HTTP 经 VPN/内网或 HTTPS 反向代理访问。认证只接受 `Authorization: Bearer ...` 请求头，不接受 URL 参数与 Cookie。
@@ -107,7 +110,7 @@ healthcheck 使用 JAR 中的 `NodeProbe`，无需 curl。readiness 检查链状
 
 ## 备份、恢复、重建与回滚
 
-数据目录含节点身份私钥，备份应具有同等访问控制并在外部存储加密。SHA-256 清单用于检查损坏，不提供备份加密或发布者身份签名。
+prod 数据目录中的节点私钥以 AES-GCM 封装保存；`NODE_IDENTITY_ENCRYPTION_KEY` 不写入数据目录，并应通过秘密管理系统单独备份和轮换。备份仍需具有严格访问控制并在外部存储加密。SHA-256 清单用于检查损坏，不提供备份加密或发布者身份签名。
 
 先停止节点。维护工具独占数据库；目标必须不存在且在源目录之外，不覆盖或删除源目录。PowerShell：
 

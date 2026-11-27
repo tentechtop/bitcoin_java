@@ -55,10 +55,13 @@ public class MiningServiceImpl {
     @Autowired
     private SystemConfig systemConfig;
 
-    volatile public static boolean isMining = false;
+    /** Mining state belongs to this node instance; keeping it static makes independent
+     * Spring contexts (tests, embedded nodes, or rolling restarts) interfere with one
+     * another and can leave a newly-created service attached to a shut-down executor. */
+    public volatile boolean isMining = false;
     private volatile boolean isResourcesInitialized = false;
     private boolean isExecutorsInitialized = false;
-    private static ExecutorService executor;
+    private ExecutorService executor;
     // 用于GPU挖矿 和 CPU挖矿 超时控制的调度器
     private ThreadPoolExecutor miningExecutor;
     private volatile Block currentMiningBlock;
@@ -541,6 +544,11 @@ public class MiningServiceImpl {
         } catch (InterruptedException stop) {
             Thread.currentThread().interrupt();
         }
+        miningLoop = null;
+        miningExecutor = null;
+        executor = null;
+        isExecutorsInitialized = false;
+        isResourcesInitialized = false;
         cleanCudaResources();
     }
 }

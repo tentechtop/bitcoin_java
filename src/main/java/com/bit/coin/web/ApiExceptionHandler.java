@@ -43,4 +43,18 @@ public class ApiExceptionHandler {
     ResponseEntity<Map<String, String>> tooLarge() {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("error", "request_too_large"));
     }
+
+    /** Keep malformed query/body parameters on the API's documented 4xx path. */
+    @ExceptionHandler({
+            org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.web.bind.MethodArgumentNotValidException.class })
+    ResponseEntity<Map<String, String>> malformedRequest(Exception ignored) {
+        return badRequest();
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<Map<String, String>> methodNotAllowed() {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of("error", "method_not_allowed"));
+    }
 }

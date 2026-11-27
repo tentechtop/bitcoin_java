@@ -233,4 +233,11 @@ class ApiSecurityTest {
         properties.setAdminToken("weak");
         assertThrows(IllegalStateException.class, properties::validate);
     }
+
+    @Test
+    void productionTokenRequirementFailsClosedWhenAdminTokenIsMissing() {
+        NodeApiProperties properties = new NodeApiProperties();
+        properties.setRequireTokens(true);
+        assertThrows(IllegalStateException.class, properties::validate);
+    }
 }

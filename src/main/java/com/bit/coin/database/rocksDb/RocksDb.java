@@ -492,12 +492,36 @@ public class RocksDb implements DataBase, AutoCloseable {
                 return new byte[0][];
             }
 
+            // Keep the same cache-consistency read lock used by get(): a cache hit is
+            // guaranteed to reflect the current DB state because writers cannot
+            // invalidate/update entries while this batch is in progress. This avoids
+            // bypassing the hot UTXO/transaction caches for paginated API reads.
+            Cache<String, byte[]> cache = cacheFor(table);
+            List<byte[]> results = new ArrayList<>(keys.length);
+            List<Integer> misses = new ArrayList<>();
+            for (int i = 0; i < keys.length; i++) {
+                String key = cacheKey(keys[i]);
+                byte[] cached = cache.getIfPresent(key);
+                if (cached != null) {
+                    results.add(copy(cached));
+                } else {
+                    results.add(null);
+                    misses.add(i);
+                }
+            }
+            if (misses.isEmpty()) {
+                return results.toArray(new byte[0][]);
+            }
+
             Snapshot snapshot = db.getSnapshot();
             try (ReadOptions readOptions = new ReadOptions().setSnapshot(snapshot)) {
-                List<byte[]> results = new ArrayList<>(keys.length);
-                for (byte[] key : keys) {
-                    byte[] value = db.get(cfHandle, readOptions, key);
-                    results.add(copy(value));
+                for (int index : misses) {
+                    byte[] value = db.get(cfHandle, readOptions, keys[index]);
+                    byte[] result = copy(value);
+                    results.set(index, result);
+                    if (result != null) {
+                        cache.put(cacheKey(keys[index]), copy(result));
+                    }
                 }
                 return results.toArray(new byte[0][]);
             } finally {
@@ -594,7 +618,7 @@ public class RocksDb implements DataBase, AutoCloseable {
      * 注意：实际使用时需根据 T 的类型进行反序列化（这里以 byte[] 为例，如需其他类型需扩展）
      */
     @Override
-    public <T> PageResult<T> page(TableEnum table, int pageSize, byte[] lastKey) {
+    public PageResult<byte[]> page(TableEnum table, int pageSize, byte[] lastKey) {
         // 校验参数
         if (pageSize <= 0 || pageSize > 1000) {
             throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
@@ -613,7 +637,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             }
 
             iterator = db.newIterator(cfHandle);
-            List<T> dataList = new ArrayList<>(pageSize);
+            List<byte[]> dataList = new ArrayList<>(pageSize);
             byte[] currentLastKey = null;
 
             // 定位迭代器起始位置
@@ -634,7 +658,7 @@ public class RocksDb implements DataBase, AutoCloseable {
 
                 // 关键：根据 T 的类型处理 value（这里以 byte[] 为例，如需其他类型需反序列化）
                 // 若 T 是自定义对象（如 UTXO），需用 SerializeUtils.deSerialize(value) 转换
-                T data = (T) value; // 类型转换（实际使用时需根据 T 调整，避免强转异常）
+                byte[] data = value.clone(); // 类型转换（实际使用时需根据 T 调整，避免强转异常）
                 dataList.add(data);
 
                 currentLastKey = key.clone(); // 保存当前页最后一个键
@@ -651,7 +675,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     }
 
     @Override
-    public <T> PageResult<T> pageKey(TableEnum table, int pageSize, byte[] lastKey) {
+    public PageResult<byte[]> pageKey(TableEnum table, int pageSize, byte[] lastKey) {
         // 校验参数
         if (pageSize <= 0 || pageSize > 1000) {
             throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
@@ -670,7 +694,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             }
 
             iterator = db.newIterator(cfHandle);
-            List<T> dataList = new ArrayList<>(pageSize);
+            List<byte[]> dataList = new ArrayList<>(pageSize);
             byte[] currentLastKey = null;
 
             // 定位迭代器起始位置
@@ -687,7 +711,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             int count = 0;
             while (iterator.isValid() && count < pageSize) {
                 byte[] key = iterator.key();
-                dataList.add((T) key);
+                dataList.add(key);
                 currentLastKey = key.clone(); // 保存当前页最后一个键
                 iterator.next();
                 count++;
@@ -710,7 +734,7 @@ public class RocksDb implements DataBase, AutoCloseable {
      * @return 分页结果（包含数据列表、当前页最后一个键、是否最后一页）
      */
     @Override
-    public <T> PageResult<T> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+    public PageResult<byte[]> pageByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
         // 1. 参数校验
         if (pageSize <= 0 || pageSize > 1000) {
             throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
@@ -732,7 +756,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             readOptions = new ReadOptions().setPrefixSameAsStart(true);
             iterator = db.newIterator(cfHandle, readOptions);
 
-            List<T> dataList = new ArrayList<>(pageSize);
+            List<byte[]> dataList = new ArrayList<>(pageSize);
             byte[] currentLastKey = null;
 
             // 3. 定位迭代器起始位置
@@ -758,7 +782,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 }
 
                 // 封装数据（value需根据泛型T反序列化，这里保持与原有page方法一致的强转逻辑）
-                T data = (T) iterator.value();
+                byte[] data = iterator.value().clone();
                 dataList.add(data);
 
                 // 记录当前页最后一个键
@@ -792,7 +816,7 @@ public class RocksDb implements DataBase, AutoCloseable {
      * @return 分页结果（包含键列表、当前页最后一个键、是否最后一页）
      */
     @Override
-    public <T> PageResult<T> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+    public PageResult<byte[]> pageKeyByPrefix(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
         // 1. 参数校验
         if (pageSize <= 0 || pageSize > 1000) {
             throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
@@ -814,7 +838,7 @@ public class RocksDb implements DataBase, AutoCloseable {
             readOptions = new ReadOptions().setPrefixSameAsStart(true);
             iterator = db.newIterator(cfHandle, readOptions);
 
-            List<T> keyList = new ArrayList<>(pageSize);
+            List<byte[]> keyList = new ArrayList<>(pageSize);
             byte[] currentLastKey = null;
 
             // 3. 定位迭代器起始位置
@@ -838,7 +862,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 }
 
                 // 仅添加键数据
-                keyList.add((T) currentKey.clone());
+                keyList.add(currentKey.clone());
 
                 // 记录当前页最后一个键
                 currentLastKey = currentKey.clone();
@@ -870,7 +894,7 @@ public class RocksDb implements DataBase, AutoCloseable {
     //Next 迭代器移动到下一个key
     //Prev迭代器移动到上一个key
     @Override
-    public <T> PageResult<T> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
+    public PageResult<byte[]> pageKeyByPrefixReverse(TableEnum table, byte[] prefix, int pageSize, byte[] lastKey) {
         // 1. 参数校验（和原逻辑一致）
         if (pageSize <= 0 || pageSize > 1000) {
             throw new IllegalArgumentException("pageSize 必须在 1-1000 之间");
@@ -888,25 +912,30 @@ public class RocksDb implements DataBase, AutoCloseable {
                 return new PageResult<>(Collections.emptyList(), null, true);
             }
 
-            // 2. 配置扫描选项（仅保留prefix配置，无setReverse）
-            readOptions = new ReadOptions().setPrefixSameAsStart(true);
+            // Reverse scans cannot use prefixSameAsStart when the prefix is all
+            // 0xff (there is no representable upper bound).  We bound the loop
+            // explicitly below, so a normal ReadOptions is both correct and safe.
+            readOptions = new ReadOptions();
             iterator = db.newIterator(cfHandle, readOptions);
 
-            List<T> keyList = new ArrayList<>(pageSize);
+            List<byte[]> keyList = new ArrayList<>(pageSize);
             byte[] currentLastKey = null;
 
             // 3. 定位迭代器起始位置（修正seekForPrev参数）
             if (lastKey != null && lastKey.length > 0) {
                 // 有上一页的lastKey：定位到该key → prev()跳过（反向遍历）
-                iterator.seek(lastKey);
+                iterator.seekForPrev(lastKey);
                 if (iterator.isValid() && Arrays.equals(iterator.key(), lastKey)) {
                     iterator.prev(); // 跳过上一页最后一个key，准备读取下一批
                 }
             } else {
                 // 无lastKey（第一页）：定位到前缀的最后一个key
                 byte[] prefixUpper = getPrefixUpperBound(prefix);
-                // 关键修正：seekForPrev必须传入参数（前缀上限key）
-                iterator.seekForPrev(prefixUpper);
+                if (prefixUpper == null) {
+                    iterator.seekToLast();
+                } else {
+                    iterator.seekForPrev(prefixUpper);
+                }
 
                 // 边界校验：如果定位后的key不匹配前缀，说明前缀下无数据
                 if (iterator.isValid() && !startsWith(iterator.key(), prefix)) {
@@ -926,7 +955,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 }
 
                 // 添加当前key（克隆避免引用泄露）
-                keyList.add((T) currentKey.clone());
+                keyList.add(currentKey.clone());
 
                 // 记录当前页最后一个key（供下一页查询使用）
                 currentLastKey = currentKey.clone();
@@ -1021,7 +1050,14 @@ public class RocksDb implements DataBase, AutoCloseable {
                 break;
             }
         }
-        return upperBound;
+        // An all-0xff prefix spans to the end of the key space and has no
+        // finite lexicographic upper bound.
+        for (byte value : prefix) {
+            if (value != (byte) 0xFF) {
+                return upperBound;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1111,7 +1147,10 @@ public class RocksDb implements DataBase, AutoCloseable {
             }
 
             iterator = db.newIterator(cfHandle);
-            List<KeyValue<T>> result = new ArrayList<>(limit);
+            // rangeQuery() passes Integer.MAX_VALUE to mean "unbounded".  Do
+            // not use that as an eager ArrayList capacity: it can reserve
+            // multiple gigabytes before the first record is read.
+            List<KeyValue<T>> result = new ArrayList<>(Math.min(limit, 256));
 
             // 定位起始位置
             if (startKey != null && startKey.length > 0) {
@@ -1131,7 +1170,7 @@ public class RocksDb implements DataBase, AutoCloseable {
                 // 封装键值对（支持泛型转换）
                 KeyValue<T> kv = new KeyValue<>();
                 kv.setKey(currentKey.clone()); // 克隆避免迭代器复用导致的数组覆盖
-                kv.setValue((T) iterator.value()); // 实际使用时需反序列化（如：SerializeUtils.deSerialize(iterator.value())）
+                kv.setValue((T) iterator.value().clone()); // 实际使用时需反序列化（如：SerializeUtils.deSerialize(iterator.value())）
                 result.add(kv);
 
                 iterator.next();
@@ -1618,7 +1657,10 @@ public class RocksDb implements DataBase, AutoCloseable {
     }
 
     public static long bytesToLong(byte[] bytes, int offset) {
-        return ByteBuffer.wrap(bytes, offset, 8).getInt();
+        if (bytes == null || offset < 0 || offset > bytes.length - 8) {
+            throw new IllegalArgumentException("At least 8 bytes are required at the offset");
+        }
+        return ByteBuffer.wrap(bytes, offset, 8).getLong();
     }
 
     // 手动位运算实现（备选方案）

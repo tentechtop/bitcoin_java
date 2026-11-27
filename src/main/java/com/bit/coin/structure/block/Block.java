@@ -218,7 +218,9 @@ public class Block {
             }
             return block;
         } catch (Exception e) {
-            throw new IllegalArgumentException("区块反序列化失败");
+            // Preserve the cause for diagnostics while keeping the external
+            // message generic; malformed peer data must never expose internals.
+            throw new IllegalArgumentException("区块反序列化失败", e);
         }
     }
 

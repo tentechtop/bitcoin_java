@@ -273,12 +273,12 @@ public class UTXO {
     //克隆
     public UTXO clone() {
         UTXO utxo = new UTXO();
-        utxo.setTxId(txId);
+        utxo.setTxId(txId == null ? null : txId.clone());
         utxo.setIndex(index);
         utxo.setValue(value);
         utxo.setCoinbase(coinbase);
         utxo.setHeight(height);
-        utxo.setScript(script);
+        utxo.setScript(script == null ? null : script.clone());
         utxo.setStatus(status);
         return utxo;
     }

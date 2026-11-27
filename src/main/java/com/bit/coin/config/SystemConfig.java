@@ -16,9 +16,15 @@ import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.security.GeneralSecurityException;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import static com.bit.coin.utils.Ed25519HDWallet.generateMnemonic;
 import static com.bit.coin.utils.Ed25519HDWallet.getSolanaKeyPair;
@@ -56,6 +62,16 @@ public class SystemConfig {
     //网络参数 MainNetParams TestNet3Params RegressionNetParams
     private String netParams;
 
+    /** Base64 encoded 256-bit key used to seal the node identity at rest. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.ToString.Exclude
+    private String identityEncryptionKey;
+    /** Production profile enables this fail-closed requirement. */
+    private boolean requireIdentityEncryption;
+
+    private static final byte[] IDENTITY_MAGIC = new byte[] { 'I', 'D', 'K', '1' };
+    private static final int IDENTITY_IV_BYTES = 12;
+
     //网络参数配置
     private ParamsConfig.Params params;
 
@@ -92,6 +108,9 @@ public class SystemConfig {
         if (quicPort == null || quicPort < 1 || quicPort > 65535 || path == null || path.isBlank()) {
             throw new IllegalArgumentException("Invalid node port or data directory");
         }
+        if (requireIdentityEncryption) {
+            identityKey(); // fail before opening the database when production is misconfigured
+        }
         log.info("端口{}", quicPort);
         log.info("系统数据路径:{}", path);
 
@@ -110,24 +129,20 @@ public class SystemConfig {
             byte[] alicePublicKey = Ed25519Signer.extractPublicKeyCore(keys.getPublic());
             SelfPeer.setId(alicePublicKey);
             SelfPeer.setPrivateKey(alicePrivateKey);
-            //保存到本地数据库
-            byte[] serialize = SelfPeer.serializeLocal();
-            if (serialize == null) {
-                //报异常
-                throw new RuntimeException("节点信息序列化失败");
-            }
-            persistIdentity(serialize);
+            //保存到本地数据库（persistIdentity seals the private key copy）
+            persistIdentity();
         } else {
             //反序列化
             SelfPeer = Peer.deserialize(peerData);
             if (SelfPeer != null) {
+                SelfPeer.setPrivateKey(unsealIdentityKey(SelfPeer.getPrivateKey()));
                 SelfPeer.setPort(getQuicPort());
                 if (SelfPeer.getPrivateKey() == null || SelfPeer.getPrivateKey().length != 32
                         || !java.util.Arrays.equals(SelfPeer.getId(),
                                 Ed25519Signer.derivePublicKeyFromPrivateKey(SelfPeer.getPrivateKey()))) {
                     throw new IllegalStateException("Stored node identity is invalid");
                 }
-                persistIdentity(SelfPeer.serializeLocal());
+                persistIdentity();
             } else {
                 //报异常
                 throw new RuntimeException("节点信息反序列化失败");
@@ -137,11 +152,121 @@ public class SystemConfig {
 
     }
 
-    private void persistIdentity(byte[] encoded) {
+    private void persistIdentity() {
+        byte[] privateKey = SelfPeer.getPrivateKey();
+        byte[] sealed = sealIdentityKey(privateKey);
+        byte[] encoded;
+        try {
+            // Keep the in-memory identity raw for signing; only the persisted
+            // Peer record contains the sealed private-key field.
+            SelfPeer.setPrivateKey(sealed);
+            encoded = SelfPeer.serializeLocal();
+        } finally {
+            SelfPeer.setPrivateKey(privateKey);
+            java.util.Arrays.fill(sealed, (byte) 0);
+        }
+        if (encoded == null) {
+            throw new IllegalStateException("Node identity serialization failed");
+        }
         var operation = new com.bit.coin.database.rocksDb.RocksDb.DbOperation(TableEnum.PEER, PEER_KEY, encoded,
                 com.bit.coin.database.rocksDb.RocksDb.DbOperation.OpType.INSERT);
         if (!dataBase.dataTransaction(java.util.List.of(operation))) {
             throw new IllegalStateException("Cannot persist node identity");
+        }
+    }
+
+    private byte[] identityKey() {
+        if (identityEncryptionKey == null || identityEncryptionKey.isBlank()) {
+            throw new IllegalStateException("NODE_IDENTITY_ENCRYPTION_KEY must be configured");
+        }
+        try {
+            byte[] decoded = Base64.getDecoder().decode(identityEncryptionKey);
+            if (decoded.length != 32) {
+                throw new IllegalArgumentException("Identity encryption key must decode to 32 bytes");
+            }
+            int nonZero = 0;
+            for (byte value : decoded) {
+                nonZero |= value & 0xff;
+            }
+            if (nonZero == 0) {
+                java.util.Arrays.fill(decoded, (byte) 0);
+                throw new IllegalArgumentException("Identity encryption key must not be all zero");
+            }
+            return decoded;
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalStateException("Invalid NODE_IDENTITY_ENCRYPTION_KEY", invalid);
+        }
+    }
+
+    private byte[] sealIdentityKey(byte[] privateKey) {
+        if (privateKey == null || privateKey.length != 32) {
+            throw new IllegalStateException("Node identity private key is invalid");
+        }
+        if (identityEncryptionKey == null || identityEncryptionKey.isBlank()) {
+            if (requireIdentityEncryption) {
+                identityKey();
+            }
+            return privateKey.clone();
+        }
+        byte[] key = identityKey();
+        byte[] iv = new byte[IDENTITY_IV_BYTES];
+        new java.security.SecureRandom().nextBytes(iv);
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+            cipher.updateAAD(IDENTITY_MAGIC);
+            byte[] ciphertext = cipher.doFinal(privateKey);
+            byte[] result = new byte[IDENTITY_MAGIC.length + iv.length + ciphertext.length];
+            System.arraycopy(IDENTITY_MAGIC, 0, result, 0, IDENTITY_MAGIC.length);
+            System.arraycopy(iv, 0, result, IDENTITY_MAGIC.length, iv.length);
+            System.arraycopy(ciphertext, 0, result, IDENTITY_MAGIC.length + iv.length, ciphertext.length);
+            java.util.Arrays.fill(key, (byte) 0);
+            java.util.Arrays.fill(iv, (byte) 0);
+            java.util.Arrays.fill(ciphertext, (byte) 0);
+            return result;
+        } catch (GeneralSecurityException failure) {
+            java.util.Arrays.fill(key, (byte) 0);
+            java.util.Arrays.fill(iv, (byte) 0);
+            throw new IllegalStateException("Unable to seal node identity", failure);
+        }
+    }
+
+    private byte[] unsealIdentityKey(byte[] stored) {
+        if (stored == null) {
+            throw new IllegalStateException("Stored node identity is missing");
+        }
+        boolean sealed = stored.length >= IDENTITY_MAGIC.length
+                && java.util.Arrays.equals(IDENTITY_MAGIC, java.util.Arrays.copyOf(stored, IDENTITY_MAGIC.length));
+        if (!sealed) {
+            if (stored.length != 32 || (requireIdentityEncryption
+                    && (identityEncryptionKey == null || identityEncryptionKey.isBlank()))) {
+                throw new IllegalStateException("Stored node identity is not encrypted");
+            }
+            return stored.clone();
+        }
+        if (stored.length != IDENTITY_MAGIC.length + IDENTITY_IV_BYTES + 32 + 16) {
+            throw new IllegalStateException("Stored node identity has invalid sealed length");
+        }
+        byte[] key = identityKey();
+        byte[] iv = java.util.Arrays.copyOfRange(stored, IDENTITY_MAGIC.length,
+                IDENTITY_MAGIC.length + IDENTITY_IV_BYTES);
+        byte[] ciphertext = java.util.Arrays.copyOfRange(stored, IDENTITY_MAGIC.length + IDENTITY_IV_BYTES,
+                stored.length);
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+            cipher.updateAAD(IDENTITY_MAGIC);
+            byte[] plaintext = cipher.doFinal(ciphertext);
+            if (plaintext.length != 32) {
+                throw new IllegalStateException("Stored node identity has invalid plaintext length");
+            }
+            return plaintext;
+        } catch (GeneralSecurityException failure) {
+            throw new IllegalStateException("Unable to unseal node identity", failure);
+        } finally {
+            java.util.Arrays.fill(key, (byte) 0);
+            java.util.Arrays.fill(iv, (byte) 0);
+            java.util.Arrays.fill(ciphertext, (byte) 0);
         }
     }
 

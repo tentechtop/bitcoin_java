@@ -18,6 +18,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.Security;
+import java.util.Objects;
 
 import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 
@@ -85,11 +86,29 @@ public class ECCWithAESGCM {
      * @return 共享密钥（32字节）
      */
     public static byte[] generateSharedSecret(byte[] privateKey, byte[] publicKey) {
+        requireKeyLength(privateKey, "privateKey");
+        requireKeyLength(publicKey, "publicKey");
         X25519PrivateKeyParameters localPrivate = new X25519PrivateKeyParameters(privateKey, 0);
         X25519PublicKeyParameters remotePublic = new X25519PublicKeyParameters(publicKey, 0);
 
         byte[] sharedSecret = new byte[32];
-        localPrivate.generateSecret(remotePublic, sharedSecret, 0);
+        try {
+            localPrivate.generateSecret(remotePublic, sharedSecret, 0);
+        } catch (IllegalStateException invalidPeerKey) {
+            java.util.Arrays.fill(sharedSecret, (byte) 0);
+            throw new IllegalArgumentException("Invalid X25519 public key", invalidPeerKey);
+        }
+        // RFC 7748 requires rejecting the all-zero shared secret.  Otherwise a
+        // low-order public key lets an attacker force every session to derive a
+        // predictable key from the fixed HKDF context.
+        int nonZero = 0;
+        for (byte value : sharedSecret) {
+            nonZero |= value & 0xff;
+        }
+        if (nonZero == 0) {
+            java.util.Arrays.fill(sharedSecret, (byte) 0);
+            throw new IllegalArgumentException("X25519 produced an invalid all-zero shared secret");
+        }
         return sharedSecret;
     }
 
@@ -97,14 +116,25 @@ public class ECCWithAESGCM {
      * 使用HKDF从共享密钥派生AES-256密钥（确定性算法，确保双方一致）
      */
     public static SecretKey deriveAesKey(byte[] sharedSecret) throws Exception {
+        requireKeyLength(sharedSecret, "sharedSecret");
+        int nonZero = 0;
+        for (byte value : sharedSecret) {
+            nonZero |= value & 0xff;
+        }
+        if (nonZero == 0) {
+            throw new IllegalArgumentException("sharedSecret must not be all zero");
+        }
         // 使用HKDF算法派生密钥
         HKDFBytesGenerator hkdf = new HKDFBytesGenerator(new SHA256Digest());
         hkdf.init(new HKDFParameters(sharedSecret, HKDF_SALT, "AES-GCM-256".getBytes(StandardCharsets.UTF_8)));
 
         byte[] aesKeyBytes = new byte[32]; // 256位AES密钥
-        hkdf.generateBytes(aesKeyBytes, 0, 32);
-
-        return new SecretKeySpec(aesKeyBytes, "AES");
+        try {
+            hkdf.generateBytes(aesKeyBytes, 0, 32);
+            return new SecretKeySpec(aesKeyBytes, "AES");
+        } finally {
+            java.util.Arrays.fill(aesKeyBytes, (byte) 0);
+        }
     }
 
     /**
@@ -115,6 +145,8 @@ public class ECCWithAESGCM {
      * @throws Exception 加密异常
      */
     public static byte[] aesGcmEncrypt(SecretKey key, byte[] plaintext) throws Exception {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(plaintext, "plaintext");
         // 从线程局部获取随机数生成器
         SecureRandom random = SECURE_RANDOM.get();
 
@@ -144,6 +176,7 @@ public class ECCWithAESGCM {
      * @throws Exception 解密异常（包含认证失败）
      */
     public static byte[] aesGcmDecrypt(SecretKey key, byte[] encryptedData) throws Exception {
+        Objects.requireNonNull(key, "key");
         if (encryptedData == null || encryptedData.length < GCM_IV_LENGTH + GCM_TAG_LENGTH / 8) {
             throw new IllegalArgumentException("AES-GCM密文长度不足");
         }
@@ -160,6 +193,12 @@ public class ECCWithAESGCM {
 
         // 执行解密（自动验证标签）
         return cipher.doFinal(encryptedData, GCM_IV_LENGTH, encryptedData.length - GCM_IV_LENGTH);
+    }
+
+    private static void requireKeyLength(byte[] key, String name) {
+        if (key == null || key.length != 32) {
+            throw new IllegalArgumentException(name + " must be exactly 32 bytes");
+        }
     }
 
     // 测试示例

@@ -15,7 +15,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import static com.bit.coin.blockchain.BlockChainServiceImpl.*;
@@ -77,30 +76,127 @@ public final class ChainStateStore {
     }
 
     BlockchainManager readBlockIndex(ParamsConfig.Params params, byte[] preferredTip) {
-        Map<String, BlockHeader> headers = new ConcurrentHashMap<>();
+        // 只流式校验持久化的区块头，不把整张头表复制到 Java 堆。
         database.iterate(TBLOCK_HEADER, (key, value) -> {
             BlockHeader header = BlockHeader.deserialize(value);
             if (!Arrays.equals(key, header.calculateHash())
                     || new BigInteger(1, key).compareTo(header.getTargetFromBits()) > 0) {
                 throw new IllegalStateException("Invalid stored block header");
             }
-            headers.put(HexFormat.of().formatHex(key), header);
             return true;
         });
-        // 区块体与验证结果原子入库。只读取键即可区分完整区块与同步预取的区块头。
-        Set<String> fullBlocks = new HashSet<>();
+        String bestHash = bestStoredCompleteHash(preferredTip, params.getGenesisHash());
+        var index = new BlockchainManager(HexFormat.of().formatHex(params.getGenesisHash()), this, params);
+        index.loadStoredIndex(bestHash);
+        return index;
+    }
+
+    private String bestStoredCompleteHash(byte[] preferredTip, byte[] genesisHash) {
+        String preferred = preferredTip == null ? null : HexFormat.of().formatHex(preferredTip);
+        String best = null;
+        BigInteger bestWork = BigInteger.ZERO;
+        int bestHeight = -1;
+        Map<String, BigInteger> computedWork = new HashMap<>();
         byte[] cursor = null;
         PageResult<byte[]> page;
         do {
             page = database.pageKey(TBLOCK_BODY, 1000, cursor);
             for (byte[] key : page.getData()) {
-                fullBlocks.add(HexFormat.of().formatHex(key));
+                String candidate = HexFormat.of().formatHex(key);
+                BigInteger work = storedOrComputedWork(key, computedWork);
+                int candidateHeight = storedHeight(key);
+                boolean preferredCandidate = candidate.equals(preferred);
+                boolean preferredBest = candidate.equals(best) || best != null && best.equals(preferred);
+                boolean betterTie = preferredCandidate && !preferredBest
+                        || preferredCandidate == preferredBest
+                                && (candidateHeight > bestHeight
+                                        || candidateHeight == bestHeight && (best == null || candidate.compareTo(best) > 0));
+                if (best == null || work.compareTo(bestWork) > 0 || work.equals(bestWork) && betterTie) {
+                    best = candidate;
+                    bestWork = work;
+                    bestHeight = candidateHeight;
+                }
             }
             cursor = page.getLastKey();
         } while (!page.isLastPage());
-        var index = new BlockchainManager(HexFormat.of().formatHex(params.getGenesisHash()), this, params);
-        index.loadStoredHeaders(headers, fullBlocks, SerializeUtils.bytesToHex(preferredTip));
-        return index;
+        if (best == null) {
+            throw new IllegalStateException("No complete block stored");
+        }
+        if (!hasCompleteBodyChain(SerializeUtils.hexToBytes(best), genesisHash)) {
+            throw new IllegalStateException("Stored complete block does not connect to genesis");
+        }
+        return best;
+    }
+
+    private boolean hasCompleteBodyChain(byte[] tip, byte[] genesisHash) {
+        byte[] cursor = tip;
+        for (int depth = 0; depth <= 10_000_000; depth++) {
+            if (!storedBodyExists(cursor)) {
+                return false;
+            }
+            if (Arrays.equals(cursor, genesisHash)) {
+                return true;
+            }
+            BlockHeader header = storedHeader(cursor);
+            if (header == null) {
+                return false;
+            }
+            cursor = header.getPreviousHash();
+        }
+        throw new IllegalStateException("Excessive stored ancestry");
+    }
+
+    private BigInteger storedOrComputedWork(byte[] hash, Map<String, BigInteger> computedWork) {
+        Deque<byte[]> path = new ArrayDeque<>();
+        byte[] cursor = hash;
+        BigInteger work = null;
+        while (work == null) {
+            String key = HexFormat.of().formatHex(cursor);
+            BigInteger cached = computedWork.get(key);
+            if (cached != null) {
+                work = cached;
+                break;
+            }
+            byte[] workBytes = database.get(HASH_TO_CHAIN_WORK, cursor);
+            if (workBytes != null) {
+                work = UInt256.fromBytes(workBytes).toBigInteger();
+                break;
+            }
+            byte[] encodedHeader = database.get(TBLOCK_HEADER, cursor);
+            if (encodedHeader == null) {
+                work = BigInteger.ZERO;
+                break;
+            }
+            BlockHeader header = BlockHeader.deserialize(encodedHeader);
+            path.push(cursor);
+            byte[] parent = header.getPreviousHash();
+            if (isZeroHash(parent)) {
+                work = BigInteger.ZERO;
+                break;
+            }
+            cursor = parent;
+        }
+        while (!path.isEmpty()) {
+            byte[] current = path.pop();
+            BlockHeader header = BlockHeader.deserialize(database.get(TBLOCK_HEADER, current));
+            work = work.add(header.getWork());
+            if (computedWork.size() < 8_192) {
+                computedWork.put(HexFormat.of().formatHex(current), work);
+            }
+        }
+        return work;
+    }
+
+    private static boolean isZeroHash(byte[] hash) {
+        if (hash == null || hash.length != 32) {
+            return false;
+        }
+        for (byte value : hash) {
+            if (value != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 离线重建也从完整分支中选链，源库的链尖只用于同工作量时保留原分支。 */
@@ -119,6 +215,102 @@ public final class ChainStateStore {
             throw new IllegalStateException("Missing stored block");
         }
         return block;
+    }
+
+    BlockHeader storedHeader(byte[] hash) {
+        byte[] encoded = database.get(TBLOCK_HEADER, hash);
+        return encoded == null ? null : BlockHeader.deserialize(encoded);
+    }
+
+    byte[] storedHashAtHeight(int height) {
+        return height < 0 ? null : database.get(HEIGHT_TO_HASH, height);
+    }
+
+    int storedHeight(byte[] hash) {
+        byte[] encoded = database.get(HASH_TO_HEIGHT, hash);
+        return encoded == null || encoded.length != Integer.BYTES ? -1 : ByteBuffer.wrap(encoded).getInt();
+    }
+
+    BigInteger storedChainWork(byte[] hash) {
+        byte[] encoded = database.get(HASH_TO_CHAIN_WORK, hash);
+        return encoded == null ? BigInteger.ZERO : UInt256.fromBytes(encoded).toBigInteger();
+    }
+
+    boolean storedBodyExists(byte[] hash) {
+        return database.get(TBLOCK_BODY, hash) != null;
+    }
+
+    List<BlockchainManager.HeaderSegmentSummary> loadHeaderSummaries() {
+        List<BlockchainManager.HeaderSegmentSummary> result = new ArrayList<>();
+        database.iterate(CHECKPOINT, (key, value) -> {
+            if (key == null || key.length != 12 || value == null || (value.length != 108 && value.length != 109)
+                    || ByteBuffer.wrap(key).getInt() != 0x48445253) {
+                return true;
+            }
+            ByteBuffer encoded = ByteBuffer.wrap(value);
+            int start = encoded.getInt();
+            int end = encoded.getInt();
+            int count = encoded.getInt();
+            byte[] startHash = new byte[32];
+            byte[] endHash = new byte[32];
+            byte[] root = new byte[32];
+            encoded.get(startHash).get(endHash).get(root);
+            result.add(new BlockchainManager.HeaderSegmentSummary(start, end, count,
+                    SerializeUtils.bytesToHex(startHash), SerializeUtils.bytesToHex(endHash), root,
+                    value.length == 109 && encoded.get() != 0));
+            return true;
+        });
+        return result;
+    }
+
+    /** 保存区块段摘要。原始区块头仍保留在 TBLOCK_HEADER。 */
+    void commitHeaderSummary(BlockchainManager.HeaderSegmentSummary summary) {
+        commitHeaderSummaries(List.of(summary));
+    }
+
+    void commitHeaderSummaries(Collection<BlockchainManager.HeaderSegmentSummary> summaries) {
+        List<DbOperation> operations = new ArrayList<>(summaries.size());
+        for (BlockchainManager.HeaderSegmentSummary summary : summaries) {
+            operations.add(summaryInsert(summary));
+        }
+        if (!operations.isEmpty() && !database.dataTransaction(operations)) {
+            throw new IllegalStateException("Could not persist header segment summary");
+        }
+    }
+
+    void replaceHeaderSummaries(BlockchainManager.HeaderSegmentSummary first,
+            BlockchainManager.HeaderSegmentSummary second, BlockchainManager.HeaderSegmentSummary merged) {
+        List<DbOperation> operations = List.of(
+                new DbOperation(CHECKPOINT, summaryKey(first), null, DELETE),
+                new DbOperation(CHECKPOINT, summaryKey(second), null, DELETE),
+                summaryInsert(merged));
+        if (!database.dataTransaction(operations)) {
+            throw new IllegalStateException("Could not merge header segment summaries");
+        }
+    }
+
+    private static DbOperation summaryInsert(BlockchainManager.HeaderSegmentSummary summary) {
+        ByteBuffer value = ByteBuffer.allocate(12 + 32 + 32 + 32 + 1)
+                .putInt(summary.startHeight())
+                .putInt(summary.endHeight())
+                .putInt(summary.blockCount())
+                .put(hex(summary.startHash()))
+                .put(hex(summary.endHash()))
+                .put(summary.merkleRoot())
+                .put((byte) (summary.aggregate() ? 1 : 0));
+        return new DbOperation(CHECKPOINT, summaryKey(summary), value.array(), INSERT);
+    }
+
+    private static byte[] summaryKey(BlockchainManager.HeaderSegmentSummary summary) {
+        return ByteBuffer.allocate(12)
+                .putInt(0x48445253) // HDRS
+                .putInt(summary.startHeight())
+                .putInt(summary.endHeight())
+                .array();
+    }
+
+    private static byte[] hex(String hash) {
+        return SerializeUtils.hexToBytes(hash);
     }
 
     void commitHeader(byte[] hash, BlockHeader header, int height, UInt256 work) {

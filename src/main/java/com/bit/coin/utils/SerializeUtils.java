@@ -167,7 +167,10 @@ public class SerializeUtils {
         if (length == 0) {
             return new byte[0];
         }
-        if (length < 0 || length > 8_000_000 || length > dis.available()) {
+        // InputStream.available() is only a non-blocking estimate and is commonly
+        // zero for sockets even when bytes are available later. Enforce the hard
+        // allocation ceiling here and let readFully report a truncated payload.
+        if (length < 0 || length > 8_000_000) {
             throw new IOException("Invalid byte array length");
         }
         byte[] bytes = new byte[length];
@@ -180,7 +183,8 @@ public class SerializeUtils {
      */
     public static void writeFixedBytes(DataOutputStream dos, byte[] bytes, int fixedLength) throws IOException {
         if (bytes == null || bytes.length != fixedLength) {
-            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength + "当前是" + bytes.length);
+            throw new IllegalArgumentException("字节数组长度必须为" + fixedLength + "当前是"
+                    + (bytes == null ? "null" : bytes.length));
         }
         dos.write(bytes);
     }

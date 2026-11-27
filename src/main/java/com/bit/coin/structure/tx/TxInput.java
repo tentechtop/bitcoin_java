@@ -27,6 +27,9 @@ import static com.bit.coin.utils.SerializeUtils.bytesToHex;
 @JsonPropertyOrder({ "txId", "index", "sequence", "scriptSig", "output" })  // 按指定顺序输出
 public class TxInput {
 
+    /** This chain's consensus encoding uses a zero output index for coinbase inputs. */
+    public static final int COINBASE_INDEX = 0;
+
     /**
      * [32字节] 交易ID
      */
@@ -169,8 +172,10 @@ public class TxInput {
         TxInput input = new TxInput();
         // Coinbase交易的txId为全0
         input.setTxId(new byte[TX_ID_LENGTH]);
-        // Coinbase交易的index为0xFFFFFFFF
-        input.setIndex(0xFFFFFFFF);
+        // Keep the helper aligned with Transaction.isCoinbase() and the genesis
+        // encoding used by this network.  A different sentinel would make a
+        // freshly-created coinbase look like a normal spend.
+        input.setIndex(COINBASE_INDEX);
         // 使用提供的脚本
         input.setScriptSig(scriptSig != null ? scriptSig : new byte[0]);
         return input;
@@ -190,7 +195,7 @@ public class TxInput {
                 return false;
             }
         }
-        return index == 0;
+        return index == COINBASE_INDEX;
     }
 
     /** 按交易 ID、索引、序号和带长度前缀的解锁脚本编码。 */

@@ -143,7 +143,13 @@ public class QuicConnectionManager {
     private static final int X25519_KEY_LENGTH = 32;
 
     //全局UDP通道
-    public static DatagramChannel Global_Channel = null;// UDP通道
+    /**
+     * The Netty event loop publishes the bound channel while request and
+     * maintenance threads read it.  Volatile is required here: without a
+     * happens-before edge those threads can observe a stale/null channel and
+     * incorrectly report the transport as unavailable.
+     */
+    public static volatile DatagramChannel Global_Channel = null;// UDP通道
 
     // 所有连接共享同一出站流量预算。
     private static final P2PGlobalTrafficController GLOBAL_OUTBOUND_TRAFFIC = P2PGlobalTrafficController
@@ -170,18 +176,29 @@ public class QuicConnectionManager {
             });
 
     // 握手回调独立排队，避免阻塞收包线程。
-    private static final ThreadPoolExecutor HANDSHAKE_CALLBACK_EXECUTOR = new ThreadPoolExecutor(
-            2,
-            4,
-            60,
-            TimeUnit.SECONDS,
-            new ArrayBlockingQueue<>(1024),
-            runnable -> {
-                Thread thread = new Thread(runnable, "quic-handshake-callback-thread");
-                thread.setDaemon(true);
-                return thread;
-            },
-            new ThreadPoolExecutor.AbortPolicy());
+    private static volatile ThreadPoolExecutor HANDSHAKE_CALLBACK_EXECUTOR = newHandshakeCallbackExecutor();
+
+    private static ThreadPoolExecutor newHandshakeCallbackExecutor() {
+        return new ThreadPoolExecutor(
+                2,
+                4,
+                60,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(1024),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "quic-handshake-callback-thread");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    private static synchronized ThreadPoolExecutor handshakeCallbackExecutor() {
+        if (HANDSHAKE_CALLBACK_EXECUTOR == null || HANDSHAKE_CALLBACK_EXECUTOR.isShutdown()) {
+            HANDSHAKE_CALLBACK_EXECUTOR = newHandshakeCallbackExecutor();
+        }
+        return HANDSHAKE_CALLBACK_EXECUTOR;
+    }
 
     private static final int MAX_GLOBAL_CONNECTIONS = 100;  // 连接总数上限，同时用于限制等待完成的握手数量
     // 同一来源 IP 在一秒计数窗口内允许的握手请求数。
@@ -263,7 +280,24 @@ public class QuicConnectionManager {
         shutdownExecutor(connectionHealthExecutor, "connection-health");
         // 关闭发送检查线程池
         shutdownExecutor(connectionSendExecutor, "connection-send");
-        shutdownExecutor(HANDSHAKE_CALLBACK_EXECUTOR, "handshake-callback");
+        ThreadPoolExecutor callbacks = HANDSHAKE_CALLBACK_EXECUTOR;
+        if (callbacks != null) {
+            shutdownExecutor(callbacks, "handshake-callback");
+            HANDSHAKE_CALLBACK_EXECUTOR = null;
+        }
+        // All connection maps are static for the transport API.  Clear them on
+        // context shutdown so an embedded restart cannot reuse released Netty
+        // channels or pending handshake state from the previous node instance.
+        PENDING_HANDSHAKES.values().forEach(pending ->
+                pending.reply().completeExceptionally(new CancellationException("node shutting down")));
+        PENDING_HANDSHAKES.clear();
+        HANDSHAKE_NONCES.invalidateAll();
+        IP_REQUEST_LIMIT.invalidateAll();
+        PEER_REQUEST_LIMIT.invalidateAll();
+        IP_BLACKLIST.invalidateAll();
+        clearAllConnections();
+        ROUTING_TABLE_REF = null;
+        CHAIN_REF = null;
     }
 
     // 抽取通用关闭逻辑
@@ -288,7 +322,7 @@ public class QuicConnectionManager {
      */
     private static void submitHandshakeCallback(Runnable task) {
         try {
-            HANDSHAKE_CALLBACK_EXECUTOR.execute(task);
+            handshakeCallbackExecutor().execute(task);
         } catch (RejectedExecutionException e) {
             log.warn("[握手回调提交失败] 队列已满或线程池已关闭", e);
         }
@@ -326,7 +360,7 @@ public class QuicConnectionManager {
 
     //获取所有节??
     public static Set<String> getAllPeers() {
-        return PEER_CONNECTION.keySet();
+        return Set.copyOf(PEER_CONNECTION.keySet());
     }
 
     static boolean isValidSharedSecretMaterial(byte[] keyMaterial) {
@@ -351,7 +385,16 @@ public class QuicConnectionManager {
             return null;
         }
 
-        byte[] sharedSecret = generateSharedSecret(localPrivateKey, remotePublicKey);
+        byte[] sharedSecret;
+        try {
+            sharedSecret = generateSharedSecret(localPrivateKey, remotePublicKey);
+        } catch (RuntimeException invalidPeerKey) {
+            // Malformed/low-order X25519 keys are expected from untrusted peers;
+            // reject the handshake without propagating into the transport loop.
+            log.warn("[reject connection] invalid X25519 key, connectionId={}, remote={}",
+                    connectionId, remoteAddress);
+            return null;
+        }
         if (!isValidSharedSecretMaterial(sharedSecret)) {
             log.warn("[reject connection] sharedSecret negotiation failed, connectionId={}, remote={}",
                     connectionId, remoteAddress);
@@ -436,7 +479,11 @@ public class QuicConnectionManager {
      * 获取所有连接ID
      */
     public static Set<Long> getAllConnectionIds() {
-        return CONNECTION_MAP.keySet();
+        // Do not expose the live ConcurrentHashMap view to callers.  A caller
+        // iterating this set while a connection is removed would otherwise see
+        // weakly-consistent, mutable state and could accidentally remove a
+        // connection through Set.remove().
+        return Set.copyOf(CONNECTION_MAP.keySet());
     }
 
     public static List<QuicConnectionStats> getConnectionStats() {
@@ -483,7 +530,8 @@ public class QuicConnectionManager {
      * 通过连接ID获取节点
      */
     public static String getPeerId(long connectionId) {
-        return CONNECTION_MAP.get(connectionId).getPeerId();
+        QuicConnection connection = CONNECTION_MAP.get(connectionId);
+        return connection == null ? null : connection.getPeerId();
     }
 
     /**

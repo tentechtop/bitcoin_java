@@ -58,6 +58,10 @@ import static com.bit.coin.utils.SerializeUtils.hexToBytes;
 @Order(1)
 public class RoutingTable {
 
+    private static final int MAX_PEER_RECORD_BYTES = 4096;
+    private static final int MAX_PEER_HINT_BYTES = 1_000_000;
+    private static final int MAX_PEERS_PER_RESPONSE = 1024;
+
     private int bucketSize = 20;
     private int findNodeSize = 20;
     private int identifierSize = 256;//256位 256个桶 32*8
@@ -1307,19 +1311,33 @@ public class RoutingTable {
      * @return 节点列表
      */
     public List<Peer> deserializePeers(byte[] bytes) throws Exception {
+        if (bytes == null || bytes.length == 0) {
+            return List.of();
+        }
+        if (bytes.length > MAX_PEER_HINT_BYTES) {
+            throw new IllegalArgumentException("Peer hint payload exceeds the size limit");
+        }
         List<Peer> peers = new ArrayList<>();
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         while (buffer.remaining() >= 4) {
             // 先读取长度
             int len = buffer.getInt();
-            if (buffer.remaining() < len) {
-                break;
+            if (len <= 0 || len > MAX_PEER_RECORD_BYTES || buffer.remaining() < len) {
+                throw new IllegalArgumentException("Invalid peer record length");
             }
             // 读取节点数据
             byte[] peerBytes = new byte[len];
             buffer.get(peerBytes);
             Peer peer = Peer.deserialize(peerBytes);
-            peers.add(peer);
+            if (peer != null) {
+                peers.add(peer);
+            }
+            if (peers.size() > MAX_PEERS_PER_RESPONSE) {
+                throw new IllegalArgumentException("Peer hint payload contains too many records");
+            }
+        }
+        if (buffer.hasRemaining()) {
+            throw new IllegalArgumentException("Trailing peer hint bytes");
         }
         return peers;
     }
